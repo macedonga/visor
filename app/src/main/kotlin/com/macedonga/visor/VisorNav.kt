@@ -168,6 +168,7 @@ data object WifiNetworksKey : NavKey
 
 @Serializable
 data object AccountsKey : NavKey
+data object WebAppsKey : NavKey
 
 /** The app's graph: the home, and every screen it opens. */
 @Composable
@@ -291,6 +292,7 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
                 entry<CaptionsKey> { com.macedonga.visor.display.CaptionsScreen() }
                 entry<WifiNetworksKey> { com.macedonga.visor.settings.WifiNetworksScreen() }
                 entry<AccountsKey> { com.macedonga.visor.settings.AccountsScreen() }
+                entry<WebAppsKey> { com.macedonga.visor.settings.WebAppsScreen() }
                 entry<MetaAiKey> {
                     MetaAiScreen(
                         onSettings = { backStack.add(AssistantSettingsKey) },

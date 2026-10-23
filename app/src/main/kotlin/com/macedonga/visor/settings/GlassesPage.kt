@@ -29,6 +29,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.OnboardingKey
+import com.macedonga.visor.WebAppsKey
 import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
@@ -230,6 +231,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         }
                     }.toTypedArray(),
                     if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) }, locked = !ready) } else null,
+                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) }, locked = !ready) } else null,
                 )
             }
         }

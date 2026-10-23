@@ -158,6 +158,7 @@ object ConnectionModule {
         placeSearch: com.macedonga.visor.connection.PlaceSearch,
         mapsSupport: com.macedonga.visor.connection.MapsSupport,
         mapsQuiet: com.macedonga.visor.connection.MapsQuiet,
+        webApps: com.macedonga.visor.connection.WebApps,
     ): SessionHostFactory = RealSessionHostFactory(
         transports,
         responders = mapOf(
@@ -187,6 +188,7 @@ object ConnectionModule {
             com.macedonga.visor.connection.MapsSupport.SVC to mapsSupport,
             com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE),
             com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION),
+            com.macedonga.visor.connection.WebApps.SVC to webApps,
             SVC_HEARING to Responder { message, mux -> hearing.get().respond(message, mux) },
             ServiceId.CONN_DEVICE_LEASE.value to Responder { message, mux -> lease.get().respond(message, mux) },
         ),
