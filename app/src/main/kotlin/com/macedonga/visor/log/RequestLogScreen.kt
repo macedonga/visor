@@ -95,6 +95,7 @@ private fun RequestRow(r: GlassesRequest) {
                 -3 -> stringResource(R.string.requests_location)
                 -4 -> stringResource(R.string.requests_sms)
                 -5 -> stringResource(R.string.requests_calls)
+                -6 -> stringResource(R.string.navigation_requests_maps)
                 else -> stringResource(R.string.requests_source, r.source)
             },
             r.options.ifEmpty { null },

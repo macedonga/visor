@@ -154,6 +154,10 @@ object ConnectionModule {
         media: com.macedonga.visor.connection.PhoneMedia,
         captureState: com.macedonga.visor.connection.CaptureState,
         leases: com.macedonga.visor.connection.LeaseService,
+        navigation: com.macedonga.visor.connection.Navigation,
+        placeSearch: com.macedonga.visor.connection.PlaceSearch,
+        mapsSupport: com.macedonga.visor.connection.MapsSupport,
+        mapsQuiet: com.macedonga.visor.connection.MapsQuiet,
     ): SessionHostFactory = RealSessionHostFactory(
         transports,
         responders = mapOf(
@@ -178,6 +182,11 @@ object ConnectionModule {
             com.macedonga.visor.connection.PhoneMedia.SVC to media,
             com.macedonga.visor.connection.CaptureState.SVC to captureState,
             com.macedonga.visor.connection.LeaseService.SVC to leases,
+            com.macedonga.visor.connection.Navigation.SVC to navigation,
+            com.macedonga.visor.connection.PlaceSearch.SVC to placeSearch,
+            com.macedonga.visor.connection.MapsSupport.SVC to mapsSupport,
+            com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE),
+            com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION),
             SVC_HEARING to Responder { message, mux -> hearing.get().respond(message, mux) },
             ServiceId.CONN_DEVICE_LEASE.value to Responder { message, mux -> lease.get().respond(message, mux) },
         ),
