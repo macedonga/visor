@@ -1,6 +1,7 @@
 package com.macedonga.visor.display
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -35,11 +37,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.Captions
+import com.macedonga.visor.core.connection.CaptionLine
 import com.macedonga.visor.core.connection.CaptionsMode
 import com.macedonga.visor.core.connection.CaptionsPhase
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.gallery.RoundIcon
 import com.macedonga.visor.settings.ChoiceSheet
 import com.macedonga.visor.settings.PillsRow
 import com.macedonga.visor.settings.Rows
@@ -48,9 +52,13 @@ import com.macedonga.visor.settings.SettingsPage
 import com.macedonga.visor.settings.Spinner
 import com.macedonga.visor.settings.ValueRow
 import com.macedonga.visor.settings.row
+import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.rememberHaptics
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -123,7 +131,9 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
     LaunchedEffect(feature, ready) { if (ready) model.packs.look(feature) }
     var picking by remember { mutableStateOf<Side?>(null) }
     val haptics = rememberHaptics()
+    val context = LocalContext.current
     val list = rememberLazyListState()
+    val transcript = state.earlier + state.lines
     val last = state.lines.lastOrNull()
     // Follow the newest turn, unless the transcript was scrolled back to read.
     LaunchedEffect(state.lines.size, last?.text) {
@@ -134,6 +144,9 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
     SettingsPage(
         stringResource(R.string.captions_title),
         list = list,
+        actions = {
+            if (transcript.isNotEmpty()) RoundIcon(VisorIcons.Share, stringResource(R.string.transcript_share), { share(context, transcript) })
+        },
         sheet = {
             CaptionsBar(
                 ready = ready,
@@ -188,6 +201,18 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
 }
 
 private enum class Side { SELF, OTHER }
+
+private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Plain text, one turn per line as `HH:mm  said`; a translation goes on the line under it. */
+private fun share(context: Context, lines: List<CaptionLine>) {
+    val text = lines.joinToString("\n") { line ->
+        val time = CLOCK.format(Instant.ofEpochMilli(line.time).atZone(ZoneId.systemDefault()))
+        if (line.source == null) "$time  ${line.text}" else "$time  ${line.source}\n${line.text}"
+    }
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+    context.startActivity(Intent.createChooser(send, null))
+}
 
 /** One turn: the newest one bright while the glasses listen, what was said under a translation. */
 @Composable

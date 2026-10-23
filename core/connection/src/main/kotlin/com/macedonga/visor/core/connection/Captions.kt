@@ -20,15 +20,16 @@ enum class CaptionsPhase { IDLE, STARTING, LIVE, STOPPING }
 
 enum class CaptionsMode { CAPTIONS, TRANSLATION }
 
-/** One speech turn as the glasses last sent it: [text] to read, [source] what was said when it is a translation. */
-data class CaptionLine(val id: String, val text: String, val source: String?, val done: Boolean)
+/** One speech turn as the glasses last sent it: [text] to read, [source] what was said when it is a translation. [time] is when it arrived. */
+data class CaptionLine(val id: String, val text: String, val source: String?, val done: Boolean, val time: Long)
 
-/** [refusal] is the app manager's code when the glasses would not start it. */
+/** [refusal] is the app manager's code when the glasses would not start it. [earlier] is the turns of the session before. */
 data class CaptionsState(
     val phase: CaptionsPhase = CaptionsPhase.IDLE,
     val mode: CaptionsMode = CaptionsMode.CAPTIONS,
     val refusal: Long? = null,
     val lines: List<CaptionLine> = emptyList(),
+    val earlier: List<CaptionLine> = emptyList(),
 )
 
 /**
@@ -64,7 +65,7 @@ class Captions(private val connection: GlassesConnection) {
         if (connection.state.value.link != LinkState.READY) return
         val data = intent("action.lst_lc.self_lang", self) + intent("action.lst_lc.other_lang", other) +
             intent("action.lst_lc.request_id", UUID.randomUUID().toString()) + intent("action.lst_lc.action", action(mode, "start"))
-        _state.value = CaptionsState(CaptionsPhase.STARTING, mode)
+        _state.value = _state.value.restart(CaptionsPhase.STARTING, mode)
         connection.submit { it.sendOnService(SVC_COMPANION, MT_START_APP, Wire.fieldVarint(1, APP_TRANSLATION) + data) }
         settleAfter { if (it.phase == CaptionsPhase.STARTING) it.copy(phase = CaptionsPhase.LIVE) else it }
     }
@@ -98,18 +99,22 @@ class Captions(private val connection: GlassesConnection) {
             MT_TWO_WAY_TRANSLATION -> turn(fields, _state.value.mode)?.let { line ->
                 _state.update { now ->
                     val at = now.lines.indexOfLast { it.id == line.id }
-                    val lines = if (at >= 0) now.lines.toMutableList().also { it[at] = line } else (now.lines + line).takeLast(MAX_LINES)
+                    val lines = if (at >= 0) now.lines.toMutableList().also { it[at] = line.copy(time = now.lines[at].time) } else (now.lines + line).takeLast(MAX_LINES)
                     now.copy(phase = if (now.phase == CaptionsPhase.IDLE) CaptionsPhase.LIVE else now.phase, lines = lines)
                 }
             }
             // Also how a session the wearer started on the glasses shows here. Its category is 1 for captions as well.
             MT_INVITE_TO_JOIN -> _state.update {
-                if (it.phase == CaptionsPhase.IDLE) CaptionsState(CaptionsPhase.LIVE) else it.copy(phase = CaptionsPhase.LIVE)
+                if (it.phase == CaptionsPhase.IDLE) it.restart(CaptionsPhase.LIVE) else it.copy(phase = CaptionsPhase.LIVE)
             }
             MT_SESSION_STATUS -> if (fields.varint(1) == STATUS_IDLE) ended()
             MT_END_FROM_FRAME, MT_STOPPING_FROM_FRAME -> ended()
         }
     }
+
+    // The turns so far become the earlier session's, so a restart keeps the transcript.
+    private fun CaptionsState.restart(phase: CaptionsPhase, mode: CaptionsMode = CaptionsMode.CAPTIONS) =
+        CaptionsState(phase, mode, earlier = lines.ifEmpty { earlier })
 
     // A start makes the glasses end the session before it first; that end is not this one's.
     private fun ended() {
@@ -132,7 +137,7 @@ class Captions(private val connection: GlassesConnection) {
         if (text.isEmpty() || text == PENDING && heard.isEmpty()) return null
         val id = s(1).ifEmpty { "t${f.varint(6)}" }
         val done = f.varint(13) != 0L || s(11).isEmpty() && s(9).isEmpty() && s(5).isEmpty()
-        return CaptionLine(id, text, heard.takeIf { mode == CaptionsMode.TRANSLATION && it.isNotEmpty() && it != text }, done)
+        return CaptionLine(id, text, heard.takeIf { mode == CaptionsMode.TRANSLATION && it.isNotEmpty() && it != text }, done, System.currentTimeMillis())
     }
 
     private fun settleAfter(change: (CaptionsState) -> CaptionsState) {
