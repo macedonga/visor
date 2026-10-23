@@ -1,73 +1,59 @@
 package com.macedonga.visor.connection
 
-import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.webkit.CookieManager
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.media.ConfigState
-import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.core.settings.ProtoField
 import com.macedonga.visor.core.settings.encodeProto
 import com.macedonga.visor.core.settings.parseProto
 import com.macedonga.visor.log.EventLog
-import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONArray
-import org.json.JSONObject
 
-/** [manifest] is Meta's signed manifest, base64, for a catalogue app; a developer app has none. */
-data class WebApp(val key: String, val name: String, val url: String, val manifest: String? = null)
+/** A web app on the glasses: its partner_app_settings key, title, page and icon. */
+data class WebApp(val key: String, val name: String, val url: String, val icon: String = "")
 
-enum class AddResult { ADDED, EXISTS, NOT_HTTPS, FULL }
-
-/** Whether the glasses open a page from the phone: the two MobileConfig switches the browser checks. */
-enum class OpenGate { UNREAD, UNAVAILABLE, OFF, ON }
-
-val OPEN_GATES = listOf("web_on_hn.web_app", "web_on_hn.web_app_connections")
-
-fun gateOf(cfg: ConfigState): OpenGate = when {
-    cfg.params.isEmpty() -> OpenGate.UNREAD
-    OPEN_GATES.any { it !in cfg.params } -> OpenGate.UNAVAILABLE
-    OPEN_GATES.all { cfg.values[it] == true } -> OpenGate.ON
-    else -> OpenGate.OFF
-}
+enum class AddResult { ADDED, EXISTS, NOT_HTTPS, FULL, NOT_CONNECTED, UNREADABLE }
 
 /**
  * svc55074, the browser's phone service: the Display's web-app manager (type 15: CREATE 1, DELETE 2, LIST 3, UPDATE 4,
  * OPEN 5, DEV MODE STATUS 6, answered with 16), cookies (11, answered with 9) and a BLE scan (17, answered with 20 and
- * no devices). Visor keeps its own list in a file and writes it to the glasses' partner_app_settings, one
- * dev_mode_web_app_<n> entry each, as the Meta app does. [open] sends OPEN to the glasses.
+ * no devices). The list is the glasses' own partner_app_settings, one dev_mode_web_app_<n> entry each, so the web apps
+ * added with the Meta app are in it; Visor changes only the entry it adds, removes or renames. [open] sends OPEN.
  */
 @Singleton
 class WebApps @Inject constructor(
-    @ApplicationContext context: Context,
     private val connection: Provider<GlassesConnection>,
     private val settings: Provider<GlassesSettings>,
     private val log: Provider<EventLog>,
 ) : Responder {
-    private val file = File(context.filesDir, "web_apps.json")
-    private val _apps = MutableStateFlow(load())
-    val apps: StateFlow<List<WebApp>> = _apps.asStateFlow()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val apps: StateFlow<List<WebApp>> by lazy {
+        settings.get().state.map { appsIn(inForce(it)) }.stateIn(scope, SharingStarted.Eagerly, appsIn(inForce(settings.get().state.value)))
+    }
     private val lock = Any()
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
@@ -83,45 +69,58 @@ class WebApps @Inject constructor(
         }
     }
 
-    /** Add a page, from the Display's CREATE or the Add sheet. The glasses take it with [push]. */
+    /** Add a page, from the Display's CREATE or the Add sheet, with Meta's [manifest] (base64) for a catalogue app. */
     fun add(name: String, url: String, manifest: String? = null): AddResult {
         val uri = Uri.parse(url)
         if (uri.scheme != "https" || uri.host.isNullOrEmpty()) return AddResult.NOT_HTTPS
         synchronized(lock) {
-            val list = _apps.value
+            val fields = current() ?: return if (ready()) AddResult.UNREADABLE else AddResult.NOT_CONNECTED
+            val list = apps(fields)
             if (list.any { it.url == url }) return AddResult.EXISTS
             if (list.size >= MAX_APPS) return AddResult.FULL
-            val key = generateSequence(0) { it + 1 }.map { "$PREFIX$it" }.first { k -> list.none { it.key == k } }
-            save(list + WebApp(key, name.ifEmpty { uri.host.orEmpty() }, url, manifest))
+            val keys = fields.mapNotNull(::entryKey).toSet()
+            val key = generateSequence(0) { it + 1 }.map { "$PREFIX$it" }.first { it !in keys }
+            // DisplayConfig {1 item {1 title}, 2 url, 3 signedWebAppManifest}: the manifest goes in as the catalogue sent it.
+            val config = listOfNotNull(
+                message(1, listOf(text(1, name.ifEmpty { uri.host.orEmpty() }))),
+                text(2, url),
+                manifest?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }?.let { ProtoField(3, 2, bytes = it) },
+            )
+            if (!write(fields + message(DISPLAY_CONFIGS, listOf(text(1, key), message(2, config))))) return AddResult.NOT_CONNECTED
         }
         log.get().add("Web apps: added ${uri.host}")
         return AddResult.ADDED
     }
 
     fun remove(key: String): Boolean = synchronized(lock) {
-        val list = _apps.value
-        val rest = list.filterNot { it.key == key }
-        if (rest.size == list.size) return false
-        save(rest)
-        true
+        val fields = current() ?: return false
+        val rest = fields.filterNot { it.number == DISPLAY_CONFIGS && entryKey(it) == key }
+        rest.size != fields.size && write(rest)
     }
 
     private fun rename(key: String, name: String): Boolean = synchronized(lock) {
-        if (name.isEmpty() || _apps.value.none { it.key == key }) return false
-        save(_apps.value.map { if (it.key == key) it.copy(name = name) else it })
-        true
+        val fields = current() ?: return false
+        if (name.isEmpty() || fields.none { entryKey(it) == key }) return false
+        write(fields.map { f -> if (entryKey(f) == key) renamed(f, name) else f })
     }
 
-    /**
-     * Write the list into the glasses' partner_app_settings, with developer mode on. False when the glasses cannot take
-     * it now (not connected, or their settings not read yet).
-     */
-    fun push(): Boolean {
-        val glasses = connection.get()
+    private fun ready() = connection.get().state.value.link == LinkState.READY && settings.get().state.value.readAt != null
+
+    /** The setting as it is now, read into fields; null when it cannot be changed safely (not connected, unreadable). */
+    private fun current(): List<ProtoField>? {
+        if (!ready()) return null
+        val value = inForce(settings.get().state.value)
+        if (value.isEmpty()) return emptyList()
+        return runCatching { Base64.decode(value, Base64.NO_WRAP) }.getOrNull()?.let(::parseProto)
+    }
+
+    /** The value written last if the glasses have not confirmed it yet, else what they hold. */
+    private fun inForce(state: SettingsState): String = state.pending[SETTING] ?: state.stored[SETTING].orEmpty()
+
+    private fun write(fields: List<ProtoField>): Boolean {
         val s = settings.get()
-        if (glasses.state.value.link != LinkState.READY || s.state.value.readAt == null) return false
-        val value = Base64.encodeToString(partnerSettings(s.value(SETTING).orEmpty(), _apps.value), Base64.NO_WRAP)
-        val sent = s.write(SETTING, value) && s.write(DEVELOPER_MODE, "true")
+        val sent = s.write(SETTING, Base64.encodeToString(encodeProto(fields), Base64.NO_WRAP)) &&
+            (s.value(DEVELOPER_MODE) == "true" || s.write(DEVELOPER_MODE, "true"))
         if (!sent) log.get().add("Web apps: the list did not go to the glasses")
         return sent
     }
@@ -163,19 +162,17 @@ class WebApps @Inject constructor(
         val name = f.bytes(3).decodeToString()
         return when (f.varint(2)) {
             ACTION_CREATE -> when (add(name, f.bytes(4).decodeToString())) {
-                AddResult.ADDED, AddResult.EXISTS -> {
-                    push()
-                    answer()
-                }
+                AddResult.ADDED, AddResult.EXISTS -> answer()
                 AddResult.NOT_HTTPS -> answer("Only https pages can be web apps")
                 AddResult.FULL -> answer("Up to $MAX_APPS web apps")
+                AddResult.NOT_CONNECTED, AddResult.UNREADABLE -> answer("The web apps could not be read")
             }
-            ACTION_DELETE -> if (remove(key)) { push(); answer() } else answer("No such web app")
-            ACTION_LIST -> answer(apps = _apps.value)
-            ACTION_UPDATE -> if (rename(key, name)) { push(); answer() } else answer("No such web app")
+            ACTION_DELETE -> if (remove(key)) answer() else answer("No such web app")
+            ACTION_LIST -> answer(apps = apps.value)
+            ACTION_UPDATE -> if (rename(key, name)) answer() else answer("No such web app")
             // The glasses open pages through the phone, not the other way round.
             ACTION_OPEN -> answer("Web apps open from the phone")
-            // Visor keeps the list, so developer mode is always on for it.
+            // Developer mode goes on with the first web app Visor adds.
             ACTION_DEV_MODE_STATUS -> answer()
             else -> answer("Unknown action")
         }
@@ -199,47 +196,40 @@ class WebApps @Inject constructor(
     /** WebappAppInfo {1 partnerKey, 2 appName, 3 appUrl, 4 iconUrl}. */
     private fun info(app: WebApp): ByteArray =
         Wire.fieldBytes(1, app.key.encodeToByteArray()) + Wire.fieldBytes(2, app.name.encodeToByteArray()) +
-            Wire.fieldBytes(3, app.url.encodeToByteArray()) + Wire.fieldBytes(4, ByteArray(0))
+            Wire.fieldBytes(3, app.url.encodeToByteArray()) + Wire.fieldBytes(4, app.icon.encodeToByteArray())
 
-    /**
-     * The stored PartnerAppSettings with its dev entries replaced by ours. PartnerAppSettings {3 displayConfigs: map
-     * entry {1 key, 2 DisplayConfig {1 Item {1 title}, 2 url}}}. Everything else in the setting is kept as it was.
-     */
-    private fun partnerSettings(current: String, apps: List<WebApp>): ByteArray {
-        val old = runCatching { parseProto(Base64.decode(current, Base64.NO_WRAP)) }.getOrNull().orEmpty()
-        val kept = old.filterNot { it.number == DISPLAY_CONFIGS && entryKey(it)?.startsWith(PREFIX) == true }
-        val ours = apps.map { app ->
-            // DisplayConfig {1 item, 2 url, 3 signedWebAppManifest}: the manifest goes in as the catalogue sent it.
-            val config = listOfNotNull(
-                message(1, listOf(text(1, app.name))),
-                text(2, app.url),
-                app.manifest?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }?.let { ProtoField(3, 2, bytes = it) },
-            )
-            message(DISPLAY_CONFIGS, listOf(text(1, app.key), message(2, config)))
-        }
-        return encodeProto(kept + ours)
+    /** PartnerAppSettings {3 displayConfigs: map entry {1 key, 2 DisplayConfig {1 Item {1 title, 2 icon}, 2 url}}}. */
+    private fun appsIn(value: String): List<WebApp> =
+        value.takeIf { it.isNotEmpty() }?.let { runCatching { Base64.decode(it, Base64.NO_WRAP) }.getOrNull() }?.let(::parseProto)?.let(::apps).orEmpty()
+
+    private fun apps(fields: List<ProtoField>): List<WebApp> = fields.filter { it.number == DISPLAY_CONFIGS }.mapNotNull { entry ->
+        val e = parseProto(entry.bytes) ?: return@mapNotNull null
+        val key = e.firstOrNull { it.number == 1 }?.bytes?.decodeToString() ?: return@mapNotNull null
+        val config = e.firstOrNull { it.number == 2 }?.bytes?.let(::parseProto) ?: return@mapNotNull null
+        val url = config.firstOrNull { it.number == 2 }?.bytes?.decodeToString()?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
+        val item = config.firstOrNull { it.number == 1 }?.bytes?.let(::parseProto).orEmpty()
+        val name = item.firstOrNull { it.number == 1 }?.bytes?.decodeToString().orEmpty()
+        WebApp(key, name.ifEmpty { Uri.parse(url).host.orEmpty() }, url, item.firstOrNull { it.number == 2 }?.bytes?.decodeToString().orEmpty())
+    }
+
+    /** [entry] with its item's title set to [name]; every other field kept as it was. */
+    private fun renamed(entry: ProtoField, name: String): ProtoField {
+        val e = parseProto(entry.bytes) ?: return entry
+        return message(DISPLAY_CONFIGS, e.map { f ->
+            val config = if (f.number == 2) parseProto(f.bytes) else null
+            if (config == null) f else message(2, config.map { c ->
+                val item = if (c.number == 1) parseProto(c.bytes) else null
+                if (item == null) c else message(1, listOf(text(1, name)) + item.filterNot { it.number == 1 })
+            })
+        })
     }
 
     private fun entryKey(entry: ProtoField): String? =
-        parseProto(entry.bytes)?.firstOrNull { it.number == 1 }?.bytes?.decodeToString()
+        entry.takeIf { it.number == DISPLAY_CONFIGS }?.let { parseProto(it.bytes) }?.firstOrNull { it.number == 1 }?.bytes?.decodeToString()
 
     private fun text(number: Int, value: String) = ProtoField(number, 2, bytes = value.encodeToByteArray())
 
     private fun message(number: Int, fields: List<ProtoField>) = ProtoField(number, 2, bytes = encodeProto(fields))
-
-    private fun save(list: List<WebApp>) {
-        _apps.value = list
-        runCatching {
-            file.writeText(JSONArray(list.map { app ->
-                JSONObject().put("key", app.key).put("name", app.name).put("url", app.url).also { o -> app.manifest?.let { o.put("manifest", it) } }
-            }).toString())
-        }
-    }
-
-    private fun load(): List<WebApp> = runCatching {
-        val a = JSONArray(file.readText())
-        List(a.length()) { i -> a.getJSONObject(i).let { WebApp(it.getString("key"), it.getString("name"), it.getString("url"), it.optString("manifest", "").ifEmpty { null }) } }
-    }.getOrDefault(emptyList())
 
     companion object {
         const val SVC = 55074

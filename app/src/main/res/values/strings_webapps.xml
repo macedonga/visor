@@ -12,14 +12,10 @@
     <string name="webapps_on_glasses">On the glasses</string>
     <string name="webapps_catalogue_failed">Could not load the catalogue</string>
     <string name="webapps_catalogue_none">No web apps for these glasses</string>
-    <string name="webapps_turn_on">Turn on web apps</string>
-    <string name="webapps_unavailable">The glasses do not have this switch</string>
-    <string name="webapps_unread">Connect the glasses to read this</string>
-    <string name="webapps_saved_on_phone">Saved on the phone. The glasses get it when connected.</string>
     <string name="webapps_opened">Opened on the glasses</string>
     <string name="webapps_not_opened">The glasses did not open it</string>
-    <string name="webapps_restart">Restart the glasses to use web apps</string>
-    <string name="webapps_switch_not_sent">The switch was not sent</string>
     <string name="webapps_not_https">Use an https address</string>
     <string name="webapps_full">Up to 20 web apps</string>
+    <string name="webapps_not_connected">Connect the glasses first</string>
+    <string name="webapps_unreadable">Could not read the glasses\' web apps</string>
 </resources>

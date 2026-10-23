@@ -12,14 +12,10 @@
     <string name="webapps_on_glasses">Sugli occhiali</string>
     <string name="webapps_catalogue_failed">Impossibile caricare il catalogo</string>
     <string name="webapps_catalogue_none">Nessuna app web per questi occhiali</string>
-    <string name="webapps_turn_on">Attiva le app web</string>
-    <string name="webapps_unavailable">Gli occhiali non hanno questo interruttore</string>
-    <string name="webapps_unread">Collega gli occhiali per leggerlo</string>
-    <string name="webapps_saved_on_phone">Salvata sul telefono. Gli occhiali la ricevono quando sono collegati.</string>
     <string name="webapps_opened">Aperta sugli occhiali</string>
     <string name="webapps_not_opened">Gli occhiali non l\'hanno aperta</string>
-    <string name="webapps_restart">Riavvia gli occhiali per usare le app web</string>
-    <string name="webapps_switch_not_sent">L\'interruttore non è stato inviato</string>
     <string name="webapps_not_https">Usa un indirizzo https</string>
     <string name="webapps_full">Massimo 20 app web</string>
+    <string name="webapps_not_connected">Collega prima gli occhiali</string>
+    <string name="webapps_unreadable">Impossibile leggere le app web degli occhiali</string>
 </resources>

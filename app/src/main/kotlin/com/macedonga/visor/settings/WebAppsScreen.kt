@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,30 +21,23 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.AddResult
-import com.macedonga.visor.connection.OPEN_GATES
-import com.macedonga.visor.connection.OpenGate
 import com.macedonga.visor.connection.WebApp
 import com.macedonga.visor.connection.WebApps
-import com.macedonga.visor.connection.gateOf
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.appstore.CatalogueApp
 import com.macedonga.visor.core.identity.appstore.fetchAppCatalogue
-import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.login.MetaLogin
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-enum class WebAppNote { SAVED_ON_PHONE, OPENED, NOT_OPENED, RESTART, SWITCH_NOT_SENT, NOT_HTTPS, FULL }
+enum class WebAppNote { NOT_CONNECTED, UNREADABLE, OPENED, NOT_OPENED, NOT_HTTPS, FULL }
 
 sealed interface CatalogueState {
     data object Idle : CatalogueState
@@ -58,11 +50,9 @@ sealed interface CatalogueState {
 class WebAppsModel @Inject constructor(
     private val webApps: WebApps,
     val connection: GlassesConnection,
-    private val config: GlassesConfig,
     private val login: MetaLogin,
 ) : ViewModel() {
     val apps: StateFlow<List<WebApp>> = webApps.apps
-    val gate: StateFlow<OpenGate> = config.state.map { gateOf(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, gateOf(config.state.value))
 
     private val _note = MutableStateFlow<WebAppNote?>(null)
     val note: StateFlow<WebAppNote?> = _note.asStateFlow()
@@ -70,16 +60,8 @@ class WebAppsModel @Inject constructor(
     private val _catalogue = MutableStateFlow<CatalogueState>(CatalogueState.Idle)
     val catalogue: StateFlow<CatalogueState> = _catalogue.asStateFlow()
 
-    fun sync() {
-        webApps.push()
-    }
-
     fun add(name: String, url: String) {
-        _note.value = when (webApps.add(name, url)) {
-            AddResult.ADDED, AddResult.EXISTS -> if (webApps.push()) null else WebAppNote.SAVED_ON_PHONE
-            AddResult.NOT_HTTPS -> WebAppNote.NOT_HTTPS
-            AddResult.FULL -> WebAppNote.FULL
-        }
+        _note.value = noteOf(webApps.add(name, url))
     }
 
     /** Fetch Meta's list for these glasses, with the user's Meta login. */
@@ -98,16 +80,19 @@ class WebAppsModel @Inject constructor(
     }
 
     fun addFromCatalogue(app: CatalogueApp) {
-        _note.value = when (webApps.add(app.name, app.url, app.manifest)) {
-            AddResult.ADDED, AddResult.EXISTS -> if (webApps.push()) null else WebAppNote.SAVED_ON_PHONE
-            AddResult.NOT_HTTPS -> WebAppNote.NOT_HTTPS
-            AddResult.FULL -> WebAppNote.FULL
-        }
+        _note.value = noteOf(webApps.add(app.name, app.url, app.manifest))
     }
 
     fun remove(key: String) {
-        webApps.remove(key)
-        _note.value = if (webApps.push()) null else WebAppNote.SAVED_ON_PHONE
+        _note.value = if (webApps.remove(key)) null else WebAppNote.NOT_CONNECTED
+    }
+
+    private fun noteOf(result: AddResult): WebAppNote? = when (result) {
+        AddResult.ADDED, AddResult.EXISTS -> null
+        AddResult.NOT_HTTPS -> WebAppNote.NOT_HTTPS
+        AddResult.FULL -> WebAppNote.FULL
+        AddResult.NOT_CONNECTED -> WebAppNote.NOT_CONNECTED
+        AddResult.UNREADABLE -> WebAppNote.UNREADABLE
     }
 
     fun open(app: WebApp) {
@@ -115,27 +100,18 @@ class WebAppsModel @Inject constructor(
             _note.value = if (webApps.open(app)) WebAppNote.OPENED else WebAppNote.NOT_OPENED
         }
     }
-
-    /** Switch the two gates on by MobileConfig: the glasses need a restart to use them. */
-    fun turnOn() {
-        viewModelScope.launch {
-            _note.value = if (config.send(OPEN_GATES.associateWith { true }) == null) WebAppNote.RESTART else WebAppNote.SWITCH_NOT_SENT
-        }
-    }
 }
 
-/** The web apps Visor lists for the Display, and opening one on the glasses. */
+/** The Display's web apps, as the glasses list them, and opening one on the glasses. */
 @Composable
 fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val ready = glasses.link == LinkState.READY
     val apps by model.apps.collectAsStateWithLifecycle()
-    val gate by model.gate.collectAsStateWithLifecycle()
     val note by model.note.collectAsStateWithLifecycle()
     val catalogue by model.catalogue.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
-    LaunchedEffect(ready) { if (ready) model.sync() }
 
     SettingsPage(stringResource(R.string.webapps_title), light = 0f) {
         item(key = "apps") {
@@ -146,24 +122,18 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                             RowFrame(app.name, onClick = null, sub = app.url) {
                                 ActionPill(
                                     stringResource(R.string.webapps_open), { model.open(app) }, quiet = true,
-                                    modifier = Modifier.padding(start = 12.dp), enabled = ready && gate == OpenGate.ON,
+                                    modifier = Modifier.padding(start = 12.dp), enabled = ready,
                                 )
                                 ActionPill(
                                     stringResource(R.string.webapps_remove), { model.remove(app.key) }, quiet = true,
-                                    modifier = Modifier.padding(start = 12.dp),
+                                    modifier = Modifier.padding(start = 12.dp), enabled = ready,
                                 )
                             }
                         }
                     }.toTypedArray(),
-                    { ValueRow(stringResource(R.string.webapps_add), null, onClick = { adding = true }) },
+                    { ValueRow(stringResource(R.string.webapps_add), null, onClick = { adding = true }, locked = !ready) },
                     { ValueRow(stringResource(R.string.webapps_browse), null, onClick = { browsing = true; model.browse() }, locked = !ready) },
-                    if (gate == OpenGate.OFF) row { ValueRow(stringResource(R.string.webapps_turn_on), null, onClick = { model.turnOn() }, locked = !ready) } else null,
                 )
-                when (gate) {
-                    OpenGate.UNAVAILABLE -> Footnote(stringResource(R.string.webapps_unavailable))
-                    OpenGate.UNREAD -> Footnote(stringResource(R.string.webapps_unread))
-                    OpenGate.OFF, OpenGate.ON -> Unit
-                }
                 note?.let { Footnote(stringResource(noteText(it))) }
                 if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
             }
@@ -218,11 +188,10 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
 }
 
 private fun noteText(note: WebAppNote): Int = when (note) {
-    WebAppNote.SAVED_ON_PHONE -> R.string.webapps_saved_on_phone
+    WebAppNote.NOT_CONNECTED -> R.string.webapps_not_connected
+    WebAppNote.UNREADABLE -> R.string.webapps_unreadable
     WebAppNote.OPENED -> R.string.webapps_opened
     WebAppNote.NOT_OPENED -> R.string.webapps_not_opened
-    WebAppNote.RESTART -> R.string.webapps_restart
-    WebAppNote.SWITCH_NOT_SENT -> R.string.webapps_switch_not_sent
     WebAppNote.NOT_HTTPS -> R.string.webapps_not_https
     WebAppNote.FULL -> R.string.webapps_full
 }
