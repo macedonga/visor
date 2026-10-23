@@ -83,7 +83,7 @@ internal class LiveAi(private val context: Context, private val scope: Coroutine
         delay(20)
         host.event(EV_SERVER_CONNECTION_STATUS, ThriftWriter().str(1, id).bool(2, true).bool(3, false).i32(4, 2).done())
         delay(20)
-        host.event(EV_KEEP_AIR_SESSION_ALIVE, ThriftWriter().str(1, "AsrStartListening").i32(2, 20_000).i32(3, nonce.getAndIncrement()).done())
+        host.event(EV_KEEP_AIR_SESSION_ALIVE, ThriftWriter().str(1, "AsrStartListening").i32(2, 20_000).i32(3, nonce.getAndIncrement()).str(4, id).done())
         ears?.stop()
         ears = GlassesEars(context, locale, continuous = true, onUtterance = ::heard, onProblem = { host.note("Live AI: $it") }).also { it.start() }
         keepalive?.cancel()
@@ -144,7 +144,7 @@ internal class LiveAi(private val context: Context, private val scope: Coroutine
         while (scope.isActive && active) {
             delay(KEEPALIVE_MS)
             host.event(EV_FRAME_KEEP_ALIVE, ThriftWriter().i64(1, System.currentTimeMillis()).i32(2, nonce.getAndIncrement()).done())
-            host.event(EV_KEEP_AIR_SESSION_ALIVE, ThriftWriter().str(1, "LiveAiSession").i32(2, 20_000).i32(3, nonce.getAndIncrement()).done())
+            host.event(EV_KEEP_AIR_SESSION_ALIVE, ThriftWriter().str(1, "LiveAiSession").i32(2, 20_000).i32(3, nonce.getAndIncrement()).str(4, interaction).done())
         }
     }
 
