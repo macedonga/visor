@@ -40,11 +40,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  * each IP packet as one message (type 1), framed `1c fb`, its length, its ethertype and two spare bytes; replies go
  * back the same way on the same channel. The phone ends the connections itself: each TCP connection from the Display
  * becomes a socket of the phone's, each UDP flow a datagram socket, so the Display's traffic is the phone's own.
+ * Other types go to [PhoneHttpRelay]: a single HTTP request (type 8) answered on its own channel.
  */
 @Singleton
 class PhoneInternet @Inject constructor(
     private val requests: RequestLog,
     private val log: Provider<EventLog>,
+    private val relay: PhoneHttpRelay,
 ) : Responder {
     // A connection that fails ends alone; nothing in here may take the app down.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Internet: a connection failed: $e") })
@@ -55,6 +57,7 @@ class PhoneInternet @Inject constructor(
         val channel = info.channelId
         if (info.flags.isClosed && message.payload.isEmpty()) {
             sessions.remove(channel)?.close()
+            relay.forget(channel)
             return
         }
         when (info.messageType) {
@@ -64,6 +67,7 @@ class PhoneInternet @Inject constructor(
                 log.get().add("Internet: the Display's apps are using the phone's internet")
             }
             MT_FRAME -> sessions.getOrPut(channel) { Session(connection, DataXConnection.mirror(channel)) }.inbound(message.payload)
+            else -> relay.handle(message, connection)
         }
     }
 
