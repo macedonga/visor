@@ -17,6 +17,8 @@ import com.macedonga.visor.core.protocol.Band
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.login.MetaLogin
+import com.macedonga.visor.setup.BondFailed
+import com.macedonga.visor.setup.NearbyGlasses
 import com.macedonga.visor.setup.words
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -40,6 +42,7 @@ class BandSetup @Inject constructor(
     private val store: IdentityStore,
     private val bands: Bands,
     private val link: BandLink,
+    private val nearby: NearbyGlasses,
     private val login: MetaLogin,
     private val log: EventLog,
 ) {
@@ -65,7 +68,8 @@ class BandSetup @Inject constructor(
             if (glasses == null || !owned) return@launch fail(Reason.NO_GLASSES)
             link.release()
             try {
-                val candidates = bondedBands()
+                // Not bonded yet: the band heard nearby is bonded here, as the glasses are.
+                val candidates = bondedBands().ifEmpty { listOfNotNull(nearby.bandNearby()?.let { nearby.bond(it) }) }
                 if (candidates.isEmpty()) return@launch fail(Reason.NOT_PAIRED)
                 // A band paired more than once leaves a bond per pairing; the one that answers is the band.
                 val address = candidates.firstOrNull { reachable(it) } ?: return@launch fail(Reason.NO_ANSWER)
@@ -84,6 +88,8 @@ class BandSetup @Inject constructor(
                 val from = if (result.deviceEcPublicKey != null) "receipt" else if (publicKey != null) "certificate" else "none"
                 log.add("Band setup: owner changed. Serial ${result.serial}, device key from $from")
                 _status.value = Status.Done(result.serial)
+            } catch (failed: BondFailed) {
+                fail(if (failed.why == BondFailed.Why.NO_ANSWER) Reason.NO_ANSWER else Reason.FAILED, failed.why.name)
             } catch (error: Exception) {
                 val wrong = error is WrongOwnerError
                 fail(if (wrong) Reason.WRONG_OWNER else Reason.FAILED, error.message ?: error.javaClass.simpleName)

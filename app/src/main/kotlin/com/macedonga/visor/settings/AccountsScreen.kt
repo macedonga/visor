@@ -30,6 +30,7 @@ enum class AccountRow { META, WHATSAPP, FACEBOOK, INSTAGRAM }
 class AccountsModel @Inject constructor(
     val connection: GlassesConnection,
     private val linking: AccountLinking,
+    private val log: com.macedonga.visor.log.EventLog,
 ) : ViewModel() {
 
     // Null until the glasses answer.
@@ -71,6 +72,11 @@ class AccountsModel @Inject constructor(
         viewModelScope.launch {
             try {
                 work()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                // A failure the linking did not foresee stays on this page; it must not take the app down.
+                log.add("Accounts: ${error.javaClass.simpleName}: ${error.message}")
             } finally {
                 _busy.value = null
             }

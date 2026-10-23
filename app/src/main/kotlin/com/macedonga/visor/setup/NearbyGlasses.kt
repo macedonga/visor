@@ -135,6 +135,30 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         throw BondFailed(BondFailed.Why.NO_ANSWER)
     }
 
+    /**
+     * The Neural Band heard nearby, one in pairing mode before the strongest: its address, or null when none answers
+     * within [BAND_SCAN_MS]. Bonded by [bond], as the glasses are.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun bandNearby(): String? {
+        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
+        val heard = HashMap<String, Pair<Boolean, Int>>()
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val advert = result.scanRecord?.getManufacturerSpecificData(META_COMPANY)?.let(::advert) ?: return
+                if (advert.product !in PRODUCT_BANDS) return
+                synchronized(heard) { heard[result.device.address] = advert.pairing to result.rssi }
+            }
+        }
+        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        try {
+            delay(BAND_SCAN_MS)
+        } finally {
+            runCatching { scanner.stopScan(callback) }
+        }
+        return synchronized(heard) { heard.maxByOrNull { (_, v) -> (if (v.first) 1_000 else 0) + v.second }?.key }
+    }
+
     private class Advert(val product: Int, val pairing: Boolean)
 
     /** Manufacturer data after the company id: legacy [product:2 LE][flags], or V2 [version][product:2 LE][reserved][flags]. */
@@ -159,6 +183,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         const val FORGET_MS = 12_000L
         const val SWEEP_MS = 2_000L
         const val BOND_MS = 90_000L
+        const val BAND_SCAN_MS = 15_000L
         const val POLL_MS = 400L
         val GLASSES_NAME = Regex("ray-?ban|meta|oakley|stories", RegexOption.IGNORE_CASE)
 
