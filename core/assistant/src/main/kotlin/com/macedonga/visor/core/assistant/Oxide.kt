@@ -63,6 +63,12 @@ internal const val EV_ON_PHONE_UNDERSTANDING = 342
 internal const val EV_TTS_START_INFO = 388
 internal const val EV_TTS_END_INFO = 389
 internal const val EV_KEEP_AIR_SESSION_ALIVE = 392
+// The glasses' own tools and intents, run for a Display turn (see GlassesTools.kt).
+internal const val EV_REMOTE_INTENT_REQUEST = 380
+internal const val EV_REMOTE_INTENT_RESPONSE = 381
+internal const val EV_MCP_REQUEST = 311
+internal const val EV_MCP_RESPONSE = 312
+internal const val EV_MCP_REQUEST_ACK = 387
 
 /** The glasses' name for a NetEvent id. */
 internal fun eventName(id: Int): String = EVENT_NAMES[id] ?: "event $id"

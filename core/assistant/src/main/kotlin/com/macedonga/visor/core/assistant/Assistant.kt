@@ -2,6 +2,7 @@ package com.macedonga.visor.core.assistant
 
 import android.content.Context
 import com.macedonga.visor.core.assistant.mcp.ToolAction
+import com.macedonga.visor.core.assistant.mcp.ToolResult
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.media.AirshipReceiver
@@ -24,6 +25,7 @@ import java.time.LocalDate
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 
 enum class AssistantPhase { OFF, WAITING, REGISTERING, LISTENING, THINKING, SPEAKING }
 
@@ -280,6 +283,10 @@ class Assistant(
         // The text the glasses read in each question's photo, from their ev65.
         private val ocr = ConcurrentHashMap<String, CompletableDeferred<String>>()
         fun ocrOf(interaction: String): CompletableDeferred<String> = ocr.getOrPut(interaction) { CompletableDeferred() }
+        // The glasses' tool calls waiting for their ev312, by JSON-RPC id; and device intents waiting for their ev381.
+        val calls = ConcurrentHashMap<String, CompletableDeferred<String>>()
+        val handovers = ConcurrentHashMap<String, CompletableDeferred<Pair<Boolean, String>>>()
+        val callIds = AtomicInteger(1)
     }
 
     /** A photo this side is waiting for, for one interaction. */
@@ -571,8 +578,24 @@ class Assistant(
                 say("The glasses took the photo: ${describe(event.body)}")
             }
             CustomWakeWord.EV_RESULT -> wakeWord.onResult(runCatching { Thrift.loads(event.body) }.getOrDefault(emptyMap()))
+            EV_MCP_REQUEST_ACK -> Unit
+            EV_MCP_RESPONSE -> glassesReply(l, event.body)
+            EV_REMOTE_INTENT_RESPONSE -> handoverReply(l, event.body)
             else -> say("Assistant: ${eventName(event.id)} (${event.id}), ${event.body.size} bytes ${describe(event.body)}")
         }
+    }
+
+    /** A tool call's answer, ev312 {1 jsonContent}: handed to the call waiting for its JSON-RPC id. */
+    private fun glassesReply(l: Link, body: ByteArray) {
+        val json = runCatching { Thrift.loads(body)[1].asText() }.getOrDefault("")
+        val id = runCatching { JSONObject(json).opt("id")?.toString() }.getOrNull() ?: return say("Assistant: an unreadable tool answer")
+        l.calls[id]?.complete(json)
+    }
+
+    /** ev381 {1 requestId, 2 success, 3 message}: the glasses' answer to a device intent they were asked to run. */
+    private fun handoverReply(l: Link, body: ByteArray) {
+        val f = runCatching { Thrift.loads(body) }.getOrNull() ?: return
+        l.handovers[f[1].asText()]?.complete((f[2] == true) to f[3].asText())
     }
 
     /**
@@ -689,6 +712,9 @@ class Assistant(
             say("Group conversation: $intent")
             return
         }
+        // The Display's own tools for this turn, as Meta's server names them (ev57 field 54).
+        val advertised = (m[54] as? List<*>).orEmpty().flatMap { server -> (server.asStruct()[2] as? List<*>).orEmpty().map { it.asText() } }
+        val glasses = if (display()) glassesToolbox(advertised) { full, input -> glassesCall(l, full, input) } else null
         when {
             // The glasses' own words for giving up.
             waiting != null && intent in CANCEL_INTENTS -> {
@@ -700,9 +726,13 @@ class Assistant(
                 sendReply(l, interaction, transcript, waiting.conversation, slot(slots, "SL:CONTENT_EXACT").ifEmpty { transcript })
             }
             intent == "IN:REPLY_MESSAGE" -> scope.launch { replyRequested(l, interaction, transcript, slot(slots, "SL:CONTENT_EXACT")) }
+            // A device action the glasses understood: they run it, and the model answers only if they do not.
+            display() && intent in DEVICE_INTENTS -> scope.launch {
+                if (!handOver(l, interaction, transcript, body, intent)) answer(l, interaction, transcript, visual, glasses)
+            }
             // Left to the server by the glasses: the phone's player does them at once.
             phone != null && intent in MEDIA_CONTROLS -> scope.launch { mediaControl(l, interaction, transcript, phone, MEDIA_CONTROLS.getValue(intent)) }
-            else -> scope.launch { answer(l, interaction, transcript, visual) }
+            else -> scope.launch { answer(l, interaction, transcript, visual, glasses) }
         }
     }
 
@@ -746,6 +776,50 @@ class Assistant(
         )
     }
 
+    /**
+     * A tool call on the glasses: ev311 {1 jsonContent} with a JSON-RPC id, answered by ev312 with the same id. Only
+     * while the turn is open, which is while the model is asked.
+     */
+    private suspend fun glassesCall(l: Link, full: String, input: JSONObject): ToolResult {
+        val m0 = l.m0 ?: return ToolResult("the glasses are not connected", true)
+        val id = l.callIds.getAndIncrement().toString()
+        val reply = CompletableDeferred<String>()
+        l.calls[id] = reply
+        try {
+            val params = JSONObject().put("name", full).put("arguments", input)
+            val request = JSONObject().put("jsonrpc", "2.0").put("id", id.toInt()).put("method", "tools/call").put("params", params)
+            l.mux.send(m0, netEvent(EV_MCP_REQUEST, ThriftWriter().str(1, request.toString()).done()), messageType = MT_NET_EVENT)
+            val json = withTimeoutOrNull(MCP_WAIT_MS) { reply.await() }
+            say(if (json == null) "The glasses did not answer $full" else "The glasses answered $full")
+            return json?.let(::glassesResult) ?: ToolResult("no answer from the glasses", true)
+        } finally {
+            l.calls.remove(id)
+        }
+    }
+
+    /**
+     * A device intent the glasses understood, handed back as ev380 {1 requestId, 2 interactionId, 3 intent}, the intent
+     * as they sent it. True when they ran it and the wearer hears it done; false leaves the turn to the model.
+     */
+    private suspend fun handOver(l: Link, interaction: String, transcript: String, body: ByteArray, intent: String): Boolean {
+        val m0 = l.m0 ?: return false
+        val raw = Thrift.rawStruct(body, 55) ?: return false
+        val requestId = UUID.randomUUID().toString()
+        val answer = CompletableDeferred<Pair<Boolean, String>>()
+        l.handovers[requestId] = answer
+        val (done, message) = try {
+            l.mux.send(m0, netEvent(EV_REMOTE_INTENT_REQUEST, ThriftWriter().str(1, requestId).str(2, interaction).struct(3, raw).done()), messageType = MT_NET_EVENT)
+            withTimeoutOrNull(INTENT_WAIT_MS) { answer.await() } ?: (false to "no answer")
+        } finally {
+            l.handovers.remove(requestId)
+        }
+        say("Glasses intent $intent handed back: ${if (done) "done" else "not done"} ($message)")
+        if (!done) return false
+        if (diary.turn(interaction) == null) record(TurnRecord(interaction, System.currentTimeMillis(), transcript))
+        speakTurn(l, interaction, transcript, "Tell the wearer in two or three words that it is done.")
+        return true
+    }
+
     /** Speak, as this interaction's answer, a sentence the model writes from [what] in the glasses' language. */
     private suspend fun speakTurn(l: Link, interaction: String, transcript: String, what: String) {
         _phase.value = AssistantPhase.THINKING
@@ -762,7 +836,7 @@ class Assistant(
 
     // --- answering -----------------------------------------------------------
 
-    private suspend fun answer(l: Link, interaction: String, transcript: String, visual: Visual) {
+    private suspend fun answer(l: Link, interaction: String, transcript: String, visual: Visual, glasses: GlassesToolbox? = null) {
         val started = System.currentTimeMillis()
         // A typed turn is in the diary already, with its source and conversation.
         if (diary.turn(interaction) == null) record(TurnRecord(interaction, started, transcript))
@@ -793,7 +867,7 @@ class Assistant(
             // The glasses give up after their processing timeout; speech and streaming need the last seconds of it.
             val budget = (processingTimeoutS() ?: FACTORY_PROCESSING_S) * 1000 - DELIVERY_MS
             val left = (budget - (System.currentTimeMillis() - started)).coerceAtLeast(MIN_MODEL_MS)
-            withTimeout(left) { brain.answer(transcript, l.locale, pastOf(interaction), image, note) }
+            withTimeout(left) { brain.answer(transcript, l.locale, pastOf(interaction), image, note, glasses = glasses) }
         } catch (error: Exception) {
             problem = error.message ?: error::class.simpleName.orEmpty()
             Reply(fallback(l.locale, store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
@@ -1215,6 +1289,8 @@ class Assistant(
         val WAKE_WORD_ONLY = Regex("^(hey|hi|ehi|ei|ok|okay)?[ ,]*(meta|mata|metta|matta|meda)[.!?]*$", RegexOption.IGNORE_CASE)
         const val MIN_MODEL_MS = 6_000L
         const val PHOTO_WAIT_MS = 8_000L
+        const val MCP_WAIT_MS = 8_000L
+        const val INTENT_WAIT_MS = 5_000L
         // The "Sharing" photo came 0.2 s before its question (issue #18); a low-res one is 13 KB.
         const val EARLY_IMAGE_MS = 10_000L
         const val EARLY_MAX_BYTES = 2_000_000L
@@ -1232,6 +1308,12 @@ class Assistant(
 
 /** 1026 is either the bare locale string or `{1: locale}`. */
 private val CANCEL_INTENTS = setOf("IN:CANCEL", "IN:NEVER_MIND", "IN:STOP", "IN:NEGATE_INTENT", "IN:CANCEL_MESSAGE")
+
+/** The glasses' own device intents Visor hands back to them (ev380) on a Display: volume and brightness only. */
+private val DEVICE_INTENTS = setOf(
+    "IN:SET_VOLUME", "IN:INCREASE_VOLUME", "IN:DECREASE_VOLUME", "IN:MUTE_VOLUME", "IN:UNMUTE_VOLUME",
+    "IN:SET_BRIGHTNESS", "IN:INCREASE_BRIGHTNESS", "IN:DECREASE_BRIGHTNESS", "IN:MAXIMIZE_BRIGHTNESS",
+)
 
 /** The text of [name] in the glasses' slot map (field 26): each slot is a list of {1 name, 4 text, 5 start, 6 end}. */
 internal fun slot(slots: Any?, name: String): String =
