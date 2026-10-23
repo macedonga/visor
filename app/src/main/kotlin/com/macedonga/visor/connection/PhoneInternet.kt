@@ -33,7 +33,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -52,6 +54,11 @@ class PhoneInternet @Inject constructor(
     // A connection that fails ends alone; nothing in here may take the app down.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Internet: a connection failed: $e") })
     private val sessions = ConcurrentHashMap<Int, Session>()
+    // Tunnel frames waiting for the link. Control frames of the session share its one send lock, so they wait
+    // behind at most this many of these.
+    private val tunnelSlots = Semaphore(TUNNEL_FRAMES)
+    // The connection the tunnels run on; a new one ends the old tunnels.
+    private var owner: DataXConnection? = null
     // When the tunnel last carried anything either way; a move to Wi-Fi for a link ends once it has been idle a while.
     private val lastTraffic = AtomicLong(System.currentTimeMillis())
 
@@ -63,6 +70,12 @@ class PhoneInternet @Inject constructor(
         val info = message.info
         val channel = info.channelId
         touch()
+        if (connection !== owner) {
+            // A tunnel of an earlier connection would write on this one under the old keys, and keep retransmitting.
+            owner = connection
+            sessions.values.forEach { it.close() }
+            sessions.clear()
+        }
         if (info.flags.isClosed && message.payload.isEmpty()) {
             sessions.remove(channel)?.close()
             relay.forget(channel)
@@ -125,7 +138,7 @@ class PhoneInternet @Inject constructor(
                 .putShort(ICEE_MAGIC.toShort()).putShort(ip.size.toShort())
                 .order(ByteOrder.BIG_ENDIAN).putShort(if (version == 4) ETHER_IPV4 else ETHER_IPV6).putShort(0)
                 .put(ip).array()
-            mux.send(reply, frame, messageType = MT_FRAME)
+            tunnelSlots.withPermit { mux.send(reply, frame, messageType = MT_FRAME) }
         }
 
         private fun resetFor(p: IpPacket, seg: TcpSegment) {
@@ -289,17 +302,13 @@ class PhoneInternet @Inject constructor(
             }
         }
 
+        /**
+         * Resend the oldest unacked segment only. Resending the whole window each tick queued up to 48 frames per flow
+         * every 1.5 s behind a link that was already not keeping up, and held this flow's lock while they waited.
+         */
         private suspend fun retransmit() {
-            lock.withLock {
-                var at = 0
-                var seq = sndUna
-                while (at < pending.size) {
-                    val end = minOf(pending.size, at + mss)
-                    send(TcpSegment.ACK or TcpSegment.PSH, seq, pending.copyOfRange(at, end))
-                    seq = (seq + (end - at)) and MASK
-                    at = end
-                }
-            }
+            val (seq, data) = lock.withLock { sndUna to pending.copyOf(minOf(pending.size, mss)) }
+            if (data.isNotEmpty()) send(TcpSegment.ACK or TcpSegment.PSH, seq, data)
         }
 
         private suspend fun send(flags: Int, seq: Long, data: ByteArray, mssOption: Int = 0) {
@@ -390,6 +399,7 @@ class PhoneInternet @Inject constructor(
         // The Display's tunnel has an MTU of 1400.
         private const val MSS_V4 = 1360
         private const val MSS_V6 = 1340
+        private const val TUNNEL_FRAMES = 8
         private const val WINDOW = 65535
         private const val CONNECT_MS = 10_000
         private const val IDLE_MS = 600_000L
