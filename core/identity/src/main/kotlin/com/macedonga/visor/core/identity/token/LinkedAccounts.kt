@@ -5,7 +5,6 @@ import com.macedonga.visor.core.identity.UrlConnectionPost
 import com.macedonga.visor.core.identity.pyUrlencode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -17,8 +16,8 @@ enum class LinkedAccountType(val wire: Int, val graphName: String, val appId: St
     THREADS(3, "THREADS", "1590413528774085"),
 }
 
-/** A linked account as the Meta account lists it: the id the Graph queries take. */
-class LinkedAccountRef(val type: LinkedAccountType, val obfuscatedId: String)
+/** A linked account as the Meta account lists it: the id the Graph queries take, its name, and whether glasses may use it. */
+class LinkedAccountRef(val type: LinkedAccountType, val obfuscatedId: String, val name: String, val forGlasses: Boolean)
 
 /** A linked account's access token and, when Meta gives one, its first-party token. Secrets: never log them. */
 class LinkedTokens(val accessToken: String, val firstPartyToken: String?)
@@ -30,25 +29,19 @@ private const val LINKED_TOKENS_ROOT = "fx_ar_linked_access_and_first_party_toke
 private const val TOKEN_PACKAGE = "com.facebook.stella"
 
 /**
- * The provider accounts linked to the Meta account, from the accounts app's token minted by [exchangeAccountToken]. Each
- * node that carries an obfuscated id and an account type counts.
+ * The provider accounts linked to the Meta account: data.wearable_linked_accounts [{obfuscated_id, account_type,
+ * display_name, is_enabled_for_wearable}], as Meta answered it on 2026-10-23.
  */
-fun fetchLinkedAccounts(accountsToken: String, http: HttpPost = UrlConnectionPost): List<LinkedAccountRef> {
-    val found = mutableListOf<LinkedAccountRef>()
-    fun walk(element: JsonElement) {
-        when (element) {
-            is JsonObject -> {
-                val id = element.text("obfuscated_account_id")
-                val type = element.text("account_type")?.let { name -> LinkedAccountType.entries.firstOrNull { it.graphName == name.uppercase() } }
-                if (id != null && type != null) found += LinkedAccountRef(type, id)
-                element.values.forEach(::walk)
-            }
-            is JsonArray -> element.forEach(::walk)
-            else -> Unit
-        }
-    }
-    walk(graphql(accountsToken, "MetaLinkedAccounts", LINKED_LIST_DOC, "{}", http))
-    return found.distinctBy { it.type }
+fun fetchLinkedAccounts(accessToken: String, http: HttpPost = UrlConnectionPost): List<LinkedAccountRef> {
+    val json = graphql(accessToken, "MetaLinkedAccounts", LINKED_LIST_DOC, "{}", http)
+    val list = (json["data"] as? JsonObject)?.get("wearable_linked_accounts") as? JsonArray ?: return emptyList()
+    return list.mapNotNull { element ->
+        val node = element as? JsonObject ?: return@mapNotNull null
+        val id = node.text("obfuscated_id") ?: return@mapNotNull null
+        val type = node.text("account_type")?.let { name -> LinkedAccountType.entries.firstOrNull { it.graphName == name.uppercase() } }
+            ?: return@mapNotNull null
+        LinkedAccountRef(type, id, node.text("display_name").orEmpty(), (node["is_enabled_for_wearable"] as? JsonPrimitive)?.content == "true")
+    }.distinctBy { it.type }
 }
 
 /** The tokens of one linked account, from the accounts app's token; null when Meta gives no access token for it. */

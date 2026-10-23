@@ -15,6 +15,7 @@ import com.macedonga.visor.R
 import com.macedonga.visor.connection.AccountLinking
 import com.macedonga.visor.connection.LinkOutcome
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.identity.token.LinkedAccountRef
 import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.session.LinkState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -49,8 +50,13 @@ class AccountsModel @Inject constructor(
     private val _linkedResults = MutableStateFlow<Map<LinkedAccountType, LinkOutcome>>(emptyMap())
     val linkedResults: StateFlow<Map<LinkedAccountType, LinkOutcome>> = _linkedResults.asStateFlow()
 
+    // The provider accounts Meta lists for the user, null until read.
+    private val _accounts = MutableStateFlow<Map<LinkedAccountType, LinkedAccountRef>?>(null)
+    val accounts: StateFlow<Map<LinkedAccountType, LinkedAccountRef>?> = _accounts.asStateFlow()
+
     fun refresh() {
         viewModelScope.launch { linking.metaPresent()?.let { _meta.value = it } }
+        viewModelScope.launch { linking.linkedAccounts()?.let { list -> _accounts.value = list.associateBy { it.type } } }
     }
 
     fun linkMeta() = task(AccountRow.META) {
@@ -94,6 +100,7 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
     val metaResult by model.metaResult.collectAsStateWithLifecycle()
     val whatsappResult by model.whatsappResult.collectAsStateWithLifecycle()
     val linked by model.linkedResults.collectAsStateWithLifecycle()
+    val accounts by model.accounts.collectAsStateWithLifecycle()
     LaunchedEffect(ready) { if (ready) model.refresh() }
 
     SettingsPage(stringResource(R.string.accounts_title), light = 0f) {
@@ -136,8 +143,8 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
                         )
                     }
                 },
-                { LinkedRow(model, AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.accounts_facebook, ready, busy, linked) },
-                { LinkedRow(model, AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram, ready, busy, linked) },
+                { LinkedRow(model, AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.accounts_facebook, ready, busy, linked, accounts) },
+                { LinkedRow(model, AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram, ready, busy, linked, accounts) },
             )
         }
     }
@@ -152,11 +159,18 @@ private fun LinkedRow(
     ready: Boolean,
     busy: AccountRow?,
     results: Map<LinkedAccountType, LinkOutcome>,
+    accounts: Map<LinkedAccountType, LinkedAccountRef>?,
 ) {
+    val account = accounts?.get(type)
     RowFrame(
         stringResource(label),
         onClick = null,
-        sub = results[type]?.let { outcomeWords(it) },
+        sub = results[type]?.let { outcomeWords(it) } ?: when {
+            accounts == null -> null
+            account == null -> stringResource(R.string.accounts_not_linked)
+            account.forGlasses -> stringResource(R.string.accounts_linked_as, account.name)
+            else -> stringResource(R.string.accounts_off_for_glasses, account.name)
+        },
         locked = !ready,
         busy = busy == row,
     ) {

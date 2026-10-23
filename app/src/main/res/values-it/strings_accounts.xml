@@ -14,4 +14,6 @@
     <string name="accounts_unreachable">Meta non raggiungibile</string>
     <string name="accounts_no_answer">Gli occhiali non hanno risposto</string>
     <string name="accounts_refused">Gli occhiali lo hanno rifiutato</string>
+    <string name="accounts_linked_as">Collegato come %1$s</string>
+    <string name="accounts_off_for_glasses">%1$s, disattivato per gli occhiali</string>
 </resources>

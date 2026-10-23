@@ -5,6 +5,7 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.identity.token.TokenError
 import com.macedonga.visor.core.identity.token.exchangeAccountToken
+import com.macedonga.visor.core.identity.token.LinkedAccountRef
 import com.macedonga.visor.core.identity.token.fetchLinkedAccounts
 import com.macedonga.visor.core.identity.token.fetchLinkedTokens
 import com.macedonga.visor.core.protocol.Wire
@@ -81,6 +82,17 @@ class AccountLinking @Inject constructor(
         }
         log.add("Accounts: Meta account sent to the glasses")
         return LinkOutcome.LINKED
+    }
+
+    /** The provider accounts linked to the user's Meta account, as Meta lists them; null when they cannot be read. */
+    suspend fun linkedAccounts(): List<LinkedAccountRef>? {
+        if (!login.source.hasCachedLogin) return null
+        return try {
+            withContext(Dispatchers.IO) { fetchLinkedAccounts(login.source.withToken { exchangeAccountToken(it) }.accessToken) }
+        } catch (error: TokenError) {
+            log.add("Accounts: ${error.message}")
+            null
+        }
     }
 
     /** Sends a provider account of the Meta account, with its tokens, to the glasses. */
