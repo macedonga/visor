@@ -2,6 +2,7 @@ package com.macedonga.visor.core.assistant
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.speech.ModelDownloadListener
@@ -25,6 +26,8 @@ object SpeechModels {
 
     /** Read what is held and, if [locale]'s model is not, ask the phone to download it. Any thread. */
     fun prepare(context: Context, locale: Locale, note: (String) -> Unit) = main.post {
+        // Asking which models the phone holds came with Android 13.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@post note("this Android cannot list its speech models")
         if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@post note("this phone has no on-device speech recognition")
         val wanted = speechTag(locale)
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -56,6 +59,12 @@ object SpeechModels {
 
     private fun download(context: Context, r: SpeechRecognizer, intent: Intent, wanted: String, note: (String) -> Unit) {
         note("downloading the phone's speech model for $wanted")
+        // Android 13 starts the download but has no listener for how it goes (ModelDownloadListener is 14).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            r.triggerModelDownload(intent)
+            r.destroy()
+            return
+        }
         r.triggerModelDownload(intent, context.mainExecutor, object : ModelDownloadListener {
             override fun onProgress(completedPercent: Int) = Unit
 

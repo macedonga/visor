@@ -302,6 +302,12 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
             say("Meta AI was never turned on on these glasses; turning it on")
             scope.launch { writeDrive(ASSISTANT_ENABLED, "true") }
         }
+        // The Meta app turns two-stage stabilization on at every connect for these models; off, video is not stabilized.
+        val twoStage = stored[TWO_STAGE_EIS] ?: catalogue[TWO_STAGE_EIS]?.default
+        if (full && finished && _state.value.product in TWO_STAGE_EIS_PRODUCTS && !same(Kind.BOOL, twoStage, "true")) {
+            say("Turning on two-stage video stabilization, as the Meta app does")
+            scope.launch { writeQuietly(TWO_STAGE_EIS, "true") }
+        }
     }
 
     private suspend fun onReply(reply: SyncReply, link: DataXConnection) {
@@ -333,6 +339,10 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         private const val READ_TIMEOUT_MILLIS = 8_000L
         private const val SETTLE_MILLIS = 3_000L
         private const val ASSISTANT_ENABLED = "assistant_enabled"
+        private const val TWO_STAGE_EIS = "two_stage_eis"
+
+        // Ray-Ban Meta Optics, Meta glasses, Oakley Meta Vanguard and HSTN, Ray-Ban Meta Gen 2; not Gen 1 or the Display.
+        private val TWO_STAGE_EIS_PRODUCTS = setOf(262, 263, 264, 265, 266)
 
         private val SCOPED_NAMESPACES = listOf("individual_device_settings", "individual_device_sensitive_settings")
         private val DEVICE_NAMESPACES = listOf("local_device_settings", "shared_settings_namespace_1")

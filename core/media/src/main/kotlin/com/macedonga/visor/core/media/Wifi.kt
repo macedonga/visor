@@ -215,7 +215,7 @@ fun phoneWifiMhz(context: Context): Int = context.getSystemService(WifiManager::
 fun radioTakesTurns(context: Context, own: Int, group: Int): Boolean {
     if (own <= 0 || own == group) return false
     if ((own < 3000) == (group < 3000)) return true
-    return Build.VERSION.SDK_INT < Build.VERSION_CODES.S || context.getSystemService(WifiManager::class.java)?.isDualBandSimultaneousSupported != true
+    return Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || context.getSystemService(WifiManager::class.java)?.isDualBandSimultaneousSupported != true
 }
 
 /** A Wi-Fi Direct group this phone owns, the way the Meta app does it. The glasses only join. */
