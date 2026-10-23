@@ -250,6 +250,7 @@ object ConnectionModule {
         hearing,
         { (glassesConfig.state.value.values[com.macedonga.visor.language.PROCESSING_TIMEOUT] as? Number)?.toLong() },
         phone,
+        { com.macedonga.visor.settings.hasDisplay(connection.state.value.info?.build) },
     )
 
     @Provides

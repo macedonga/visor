@@ -107,6 +107,8 @@ class Assistant(
     private val processingTimeoutS: () -> Long? = { null },
     /** The phone's player, for pausing, resuming and skipping by voice. */
     private val phone: Phone? = null,
+    /** The connected glasses have a display: each answer then comes with a card for it. */
+    private val display: () -> Boolean = { false },
 ) : Responder {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -958,9 +960,13 @@ class Assistant(
         preamble(l, interaction, transcript, text)
         _phase.value = AssistantPhase.SPEAKING
         val voiceId = glassesVoice()
-        val answer = netEvent(EV_VOICE_ACTION_RESPONSE, varm(interaction, transcript, text, onGlasses = true, voiceId = voiceId))
+        val card = if (display()) answerCard(transcript.trim().take(80).ifEmpty { "Meta AI" }, text) else null
+        val answer = netEvent(EV_VOICE_ACTION_RESPONSE, varm(interaction, transcript, text, onGlasses = true, voiceId = voiceId, card = card != null))
         // An answer that asks something has the glasses listen for the reply, without the wake word.
-        val complete = netEvent(EV_MWA_VOICE_INTERACTION_COMPLETE, interactionComplete(interaction, text, expectsAnswer = ASKS.containsMatchIn(text)))
+        val complete = netEvent(
+            EV_MWA_VOICE_INTERACTION_COMPLETE,
+            interactionComplete(interaction, text, expectsAnswer = ASKS.containsMatchIn(text), card = card),
+        )
         // Without simplified forwarding the VARM is acted on as it lands, so the text must be there before it.
         for (event in if (l.simplified) listOf(answer, complete) else listOf(complete, answer)) {
             l.mux.send(m0, event, messageType = MT_NET_EVENT)
