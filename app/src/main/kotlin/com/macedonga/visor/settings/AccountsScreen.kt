@@ -15,6 +15,7 @@ import com.macedonga.visor.R
 import com.macedonga.visor.connection.AccountLinking
 import com.macedonga.visor.connection.LinkOutcome
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.session.LinkState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -23,7 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class AccountRow { META, WHATSAPP }
+enum class AccountRow { META, WHATSAPP, FACEBOOK, INSTAGRAM }
 
 @HiltViewModel
 class AccountsModel @Inject constructor(
@@ -44,6 +45,9 @@ class AccountsModel @Inject constructor(
     private val _whatsappResult = MutableStateFlow<LinkOutcome?>(null)
     val whatsappResult: StateFlow<LinkOutcome?> = _whatsappResult.asStateFlow()
 
+    private val _linkedResults = MutableStateFlow<Map<LinkedAccountType, LinkOutcome>>(emptyMap())
+    val linkedResults: StateFlow<Map<LinkedAccountType, LinkOutcome>> = _linkedResults.asStateFlow()
+
     fun refresh() {
         viewModelScope.launch { linking.metaPresent()?.let { _meta.value = it } }
     }
@@ -55,6 +59,10 @@ class AccountsModel @Inject constructor(
 
     fun linkWhatsApp() = task(AccountRow.WHATSAPP) {
         _whatsappResult.value = linking.linkWhatsApp()
+    }
+
+    fun linkProvider(row: AccountRow, type: LinkedAccountType) = task(row) {
+        _linkedResults.value = _linkedResults.value + (type to linking.syncLinked(type))
     }
 
     private fun task(row: AccountRow, work: suspend () -> Unit) {
@@ -79,6 +87,7 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
     val busy by model.busy.collectAsStateWithLifecycle()
     val metaResult by model.metaResult.collectAsStateWithLifecycle()
     val whatsappResult by model.whatsappResult.collectAsStateWithLifecycle()
+    val linked by model.linkedResults.collectAsStateWithLifecycle()
     LaunchedEffect(ready) { if (ready) model.refresh() }
 
     SettingsPage(stringResource(R.string.accounts_title), light = 0f) {
@@ -121,8 +130,34 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
                         )
                     }
                 },
+                { LinkedRow(model, AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.accounts_facebook, ready, busy, linked) },
+                { LinkedRow(model, AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram, ready, busy, linked) },
             )
         }
+    }
+}
+
+@Composable
+private fun LinkedRow(
+    model: AccountsModel,
+    row: AccountRow,
+    type: LinkedAccountType,
+    label: Int,
+    ready: Boolean,
+    busy: AccountRow?,
+    results: Map<LinkedAccountType, LinkOutcome>,
+) {
+    RowFrame(
+        stringResource(label),
+        onClick = null,
+        sub = results[type]?.let { outcomeWords(it) },
+        locked = !ready,
+        busy = busy == row,
+    ) {
+        ActionPill(
+            stringResource(R.string.accounts_link), { model.linkProvider(row, type) },
+            quiet = true, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
+        )
     }
 }
 
@@ -134,5 +169,6 @@ private fun outcomeWords(outcome: LinkOutcome): String = stringResource(
         LinkOutcome.UNREACHABLE -> R.string.accounts_unreachable
         LinkOutcome.NO_ANSWER -> R.string.accounts_no_answer
         LinkOutcome.REFUSED -> R.string.accounts_refused
+        LinkOutcome.NOT_LINKED -> R.string.accounts_not_linked
     },
 )

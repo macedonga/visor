@@ -3,6 +3,8 @@
     <string name="accounts_title">Account</string>
     <string name="accounts_meta">Account Meta</string>
     <string name="accounts_whatsapp">WhatsApp</string>
+    <string name="accounts_facebook">Facebook</string>
+    <string name="accounts_instagram">Instagram</string>
     <string name="accounts_link">Collega</string>
     <string name="accounts_linked">Collegato</string>
     <string name="accounts_not_linked">Non collegato</string>

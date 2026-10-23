@@ -201,7 +201,7 @@ class MetaLogin @Inject constructor(
     }
 
     /** One id per install, as the Meta app keeps its `device_id`: the login's server state is tied to it. */
-    private val deviceId: String by lazy {
+    val deviceId: String by lazy {
         val prefs = context.getSharedPreferences("meta_login", Context.MODE_PRIVATE)
         prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
     }

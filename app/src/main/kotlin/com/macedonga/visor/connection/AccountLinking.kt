@@ -1,8 +1,11 @@
 package com.macedonga.visor.connection
 
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.identity.token.TokenError
 import com.macedonga.visor.core.identity.token.exchangeAccountToken
+import com.macedonga.visor.core.identity.token.fetchLinkedAccounts
+import com.macedonga.visor.core.identity.token.fetchLinkedTokens
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.log.EventLog
@@ -21,13 +24,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** What a link attempt came to, for the Accounts page to say. */
-enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED }
+enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED, NOT_LINKED }
 
 /**
  * svc89, wearables_whatsapp_linking: the Meta account and WhatsApp linking the Meta app runs with the Display. Visor
  * opens the channel. 25 asks whether a Meta account is present (answered by 26). 5 is the Meta account sync, with the
- * user's token minted for the glasses' accounts app (answered by 13, after an ack 17 Visor does not wait for). 22 is
- * the WhatsApp QR pairing: the glasses show a code for WhatsApp's Linked devices and answer 23 when it is scanned.
+ * user's token minted for the glasses' accounts app (answered by 13, after an ack 17 Visor does not wait for). 6 is a
+ * linked provider account, Facebook or Instagram, with its tokens (answered by 14, after an ack 18). 22 is the WhatsApp
+ * QR pairing: the glasses show a code for WhatsApp's Linked devices and answer 23 when it is scanned.
  */
 @Singleton
 class AccountLinking @Inject constructor(
@@ -75,6 +79,45 @@ class AccountLinking @Inject constructor(
             return LinkOutcome.REFUSED
         }
         log.add("Accounts: Meta account sent to the glasses")
+        return LinkOutcome.LINKED
+    }
+
+    /** Sends a provider account of the Meta account, with its tokens, to the glasses. */
+    suspend fun syncLinked(type: LinkedAccountType): LinkOutcome {
+        if (!login.source.hasCachedLogin) return LinkOutcome.LOGGED_OUT
+        val found = try {
+            withContext(Dispatchers.IO) {
+                val accountsToken = exchangeAccountToken(login.source.get()).accessToken
+                val account = fetchLinkedAccounts(accountsToken).firstOrNull { it.type == type } ?: return@withContext null
+                account to (fetchLinkedTokens(accountsToken, account, login.deviceId) ?: return@withContext null)
+            }
+        } catch (error: TokenError) {
+            log.add("Accounts: ${error.message}")
+            return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.REFUSED
+        }
+        if (found == null) {
+            log.add("Accounts: ${type.name.lowercase()} is not linked to this Meta account")
+            return LinkOutcome.NOT_LINKED
+        }
+        val (account, tokens) = found
+        val credentials = Wire.fieldBytes(1, str(tokens.accessToken)) +
+            (tokens.firstPartyToken?.let { Wire.fieldBytes(2, str(it)) } ?: ByteArray(0))
+        val request = Wire.fieldBytes(1, str(uuid())) +
+            Wire.fieldVarint(2, type.wire.toLong()) +
+            Wire.fieldBytes(4, str(account.obfuscatedId)) +
+            Wire.fieldVarint(5, flag(true)) +
+            Wire.fieldBytes(6, str(uuid())) +
+            Wire.fieldBytes(7, credentials)
+        val f = ask(MT_LINKED_SYNC_REQUEST, MT_LINKED_SYNC_RESPONSE, request, ANSWER_MS)
+        if (f == null) {
+            log.add("Accounts: the glasses did not answer the ${type.name.lowercase()} account")
+            return LinkOutcome.NO_ANSWER
+        }
+        if (f.varint(2) != 1L) {
+            log.add("Accounts: the glasses refused the ${type.name.lowercase()} account, code ${f.varint(3)}")
+            return LinkOutcome.REFUSED
+        }
+        log.add("Accounts: ${type.name.lowercase()} account sent to the glasses")
         return LinkOutcome.LINKED
     }
 
@@ -135,5 +178,7 @@ class AccountLinking @Inject constructor(
         private const val MT_PRESENT_RESPONSE = 26
         private const val MT_QR_PAIRING_REQUEST = 22
         private const val MT_QR_PAIRING_RESPONSE = 23
+        private const val MT_LINKED_SYNC_REQUEST = 6
+        private const val MT_LINKED_SYNC_RESPONSE = 14
     }
 }
