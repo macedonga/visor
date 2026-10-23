@@ -2,6 +2,7 @@ package com.macedonga.visor.band
 
 import android.content.Context
 import android.util.Base64
+import android.util.Log
 import com.macedonga.visor.core.identity.KeystoreSealer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -30,6 +31,8 @@ data class BandRecord(val serial: String, val address: String, val publicKey: By
 class Bands @Inject constructor(@ApplicationContext context: Context) {
     private val file = File(context.filesDir, "bands.json")
     private val sealer = KeystoreSealer(alias = "visor.band")
+    // Set when bands.json exists but cannot be read; the next write keeps it aside as bands.json.bad first.
+    private var unreadable = false
     private val _all = MutableStateFlow(read())
     val all: StateFlow<List<BandRecord>> = _all.asStateFlow()
 
@@ -48,21 +51,35 @@ class Bands @Inject constructor(@ApplicationContext context: Context) {
         write()
     }
 
-    private fun read(): List<BandRecord> = runCatching {
-        val list = JSONArray(file.readText())
-        (0 until list.length()).map { i ->
-            val o = list.getJSONObject(i)
-            BandRecord(
-                serial = o.getString("serial"),
-                address = o.getString("address"),
-                publicKey = o.optString("public_key").takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.NO_WRAP) },
-                glasses = o.optString("glasses").takeIf { it.isNotEmpty() },
-                key = o.optString("key").takeIf { it.isNotEmpty() }?.let { sealer.unseal(Base64.decode(it, Base64.NO_WRAP)) },
-            )
+    private fun read(): List<BandRecord> {
+        if (!file.exists()) return emptyList()
+        return runCatching {
+            val list = JSONArray(file.readText())
+            (0 until list.length()).map { i ->
+                val o = list.getJSONObject(i)
+                BandRecord(
+                    serial = o.getString("serial"),
+                    address = o.getString("address"),
+                    publicKey = o.optString("public_key").takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.NO_WRAP) },
+                    glasses = o.optString("glasses").takeIf { it.isNotEmpty() },
+                    key = o.optString("key").takeIf { it.isNotEmpty() }?.let { sealer.unseal(Base64.decode(it, Base64.NO_WRAP)) },
+                )
+            }
+        }.getOrElse {
+            Log.w("Visor", "bands.json cannot be read", it)
+            unreadable = true
+            emptyList()
         }
-    }.getOrDefault(emptyList())
+    }
 
     private fun write() {
+        if (unreadable) {
+            runCatching { file.copyTo(File(file.parentFile, "${file.name}.bad"), overwrite = true) }.onFailure {
+                Log.w("Visor", "bands.json could not be kept aside", it)
+                return
+            }
+            unreadable = false
+        }
         val list = JSONArray()
         for (b in _all.value) {
             list.put(

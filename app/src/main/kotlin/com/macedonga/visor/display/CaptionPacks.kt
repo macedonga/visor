@@ -96,6 +96,7 @@ class CaptionPacks @Inject constructor(
         if (job?.isActive == true) return
         job = scope.launch {
             try {
+                if (connection.state.value.link != LinkState.READY) error("the glasses are not connected")
                 _work.value = PackWork.Working(feature, PackStep.DOWNLOADING)
                 val offer = _offers.value[feature] ?: languages.offersFor(listOf(FEATURE + feature)).firstOrNull()
                     ?: error("Meta has no pack for these glasses")

@@ -63,13 +63,20 @@ class LocationShare @Inject constructor(
                 requests.finish(logId, "no location permission", failed = true)
                 return
             }
-            val provider = when {
-                manager.allProviders.contains(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
-                precise && manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-                else -> LocationManager.NETWORK_PROVIDER
+            val provider = listOf(LocationManager.FUSED_PROVIDER, LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+                .firstOrNull { p -> (p != LocationManager.GPS_PROVIDER || precise) && manager.allProviders.contains(p) && manager.isProviderEnabled(p) }
+            if (provider == null) {
+                send(Wire.fieldVarint(1, STATUS_OTHER_ERROR))
+                requests.finish(logId, "no location provider enabled", failed = true)
+                return
             }
-            manager.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
-            manager.requestLocationUpdates(provider, INTERVAL_MS, 0f, this, Looper.getMainLooper())
+            try {
+                manager.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
+                manager.requestLocationUpdates(provider, INTERVAL_MS, 0f, this, Looper.getMainLooper())
+            } catch (error: RuntimeException) {
+                send(Wire.fieldVarint(1, STATUS_OTHER_ERROR))
+                requests.finish(logId, "location updates refused: ${error.message}", failed = true)
+            }
         }
 
         fun stop() {
@@ -107,6 +114,8 @@ class LocationShare @Inject constructor(
         private const val ACCURACY_BEST = 0L
         private const val STATUS_OK = 0L
         private const val STATUS_NO_PERMISSION = 1L
+        // ERROR_OTHER in LocationResult: no provider can answer (notes/213, location-to-glasses.md:191).
+        private const val STATUS_OTHER_ERROR = 2L
         private const val INTERVAL_MS = 2_000L
         private const val SOURCE_LOCATION = -3
     }

@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -78,20 +79,24 @@ class BluetoothLeTransport(
             }
             // A healthy open takes a fraction of a second; after Visor died with a channel open, Android's own wait is
             // 20 to 30 s for nothing. Closing the socket ends the wait.
-            var timedOut = false
+            // Whoever flips [settled] first wins: the timer closes the socket only if it gets there before the connect ends.
+            val settled = AtomicBoolean(false)
+            val timedOut = AtomicBoolean(false)
             val watchdog = java.util.Timer(true).apply {
                 schedule(object : java.util.TimerTask() {
                     override fun run() {
-                        timedOut = true
+                        if (!settled.compareAndSet(false, true)) return
+                        timedOut.set(true)
                         runCatching { opening.close() }
                     }
                 }, L2CAP_OPEN_MS)
             }
             try {
                 opening.connect()
+                if (!settled.compareAndSet(false, true)) throw IOException("the watchdog closed the socket")
             } catch (error: IOException) {
                 runCatching { opening.close() }
-                val why = if (timedOut) "no answer in ${L2CAP_OPEN_MS / 1000} s" else error.message
+                val why = if (timedOut.get()) "no answer in ${L2CAP_OPEN_MS / 1000} s" else error.message
                 throw TransportConnectException(ConnectFailure.NO_ANSWER, "the glasses did not open L2CAP psm $psm: $why", error)
             } finally {
                 watchdog.cancel()
