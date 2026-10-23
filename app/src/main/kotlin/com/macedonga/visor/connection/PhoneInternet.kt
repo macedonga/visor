@@ -15,7 +15,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -59,17 +58,10 @@ class PhoneInternet @Inject constructor(
     private val tunnelSlots = Semaphore(TUNNEL_FRAMES)
     // The connection the tunnels run on; a new one ends the old tunnels.
     private var owner: DataXConnection? = null
-    // When the tunnel last carried anything either way; a move to Wi-Fi for a link ends once it has been idle a while.
-    private val lastTraffic = AtomicLong(System.currentTimeMillis())
-
-    fun idleMillis(): Long = System.currentTimeMillis() - lastTraffic.get()
-
-    fun touch() = lastTraffic.set(System.currentTimeMillis())
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val info = message.info
         val channel = info.channelId
-        touch()
         if (connection !== owner) {
             // A tunnel of an earlier connection would write on this one under the old keys, and keep retransmitting.
             owner = connection
@@ -132,7 +124,6 @@ class PhoneInternet @Inject constructor(
 
         /** An IP packet to the Display, framed for its tunnel. */
         suspend fun deliver(version: Int, src: ByteArray, dst: ByteArray, protocol: Int, transport: ByteArray) {
-            touch()
             val ip = IpPacket.build(version, src, dst, protocol, transport, ids.incrementAndGet())
             val frame = ByteBuffer.allocate(ICEE_HEADER + ip.size).order(ByteOrder.LITTLE_ENDIAN)
                 .putShort(ICEE_MAGIC.toShort()).putShort(ip.size.toShort())
