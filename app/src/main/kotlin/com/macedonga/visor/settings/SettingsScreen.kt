@@ -176,8 +176,7 @@ class SettingsViewModel @Inject constructor(
     val hearing: com.macedonga.visor.core.assistant.Hearing,
     val band: com.macedonga.visor.band.BandLink,
     val bands: com.macedonga.visor.band.Bands,
-    val bandSetup: com.macedonga.visor.band.BandSetup,
-    val bandUpdate: com.macedonga.visor.band.BandUpdate,
+    val bandPeers: com.macedonga.visor.band.BandPeers,
     val developer: com.macedonga.visor.outside.DeveloperMode,
 ) : ViewModel()
 
@@ -567,14 +566,12 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
             shown("tap_and_hold_mapping")?.let { stringResource(R.string.sum_controls_hold, it) },
         ).joinToString(" · ")
         Topic.BAND -> {
-            val band by model.band.state.collectAsStateWithLifecycle()
-            val pair by model.connection.pair.collectAsStateWithLifecycle()
+            // The Display reports the band it holds.
             val glasses by model.connection.state.collectAsStateWithLifecycle()
-            // The Display reports the band it holds, set up in Visor or not.
-            val battery = glasses.device?.bandBattery ?: band.battery
-            val charging = glasses.device?.bandCharging ?: band.charging
-            if (model.bands.forGlasses(pair) == null && battery == null) stringResource(R.string.band_none)
-            else listOfNotNull(battery?.let { batteryWords(it, charging) }, band.leftHanded?.let { wristWords(it) }).joinToString(" · ")
+            val paired by model.bandPeers.bands.collectAsStateWithLifecycle()
+            val device = glasses.device
+            device?.bandBattery?.let { batteryWords(it, device.bandCharging) }
+                ?: if (paired?.isEmpty() == true) stringResource(R.string.band_not_paired) else ""
         }
         Topic.SOUND -> listOfNotNull(
             shown("notification_volume")?.let { stringResource(R.string.sum_sound_volume, it) },

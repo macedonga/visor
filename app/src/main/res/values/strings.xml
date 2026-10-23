@@ -377,20 +377,8 @@
     <string name="topic_privacy">Privacy</string>
     <string name="topic_phone">Phone access</string>
     <string name="topic_band">Neural Band</string>
-    <string name="band_set_up">Set up</string>
-    <string name="band_set_up_again">Set up again</string>
-    <string name="band_setting_up">Setting up…</string>
-    <string name="band_none">Not set up</string>
     <string name="band_battery">Battery</string>
     <string name="band_percent">%1$d%%</string>
-    <string name="band_wrist">Wrist</string>
-    <string name="band_left">Left</string>
-    <string name="band_right">Right</string>
-    <string name="band_fail_no_glasses">Set up the glasses first</string>
-    <string name="band_fail_not_paired">Pair the band with this phone first</string>
-    <string name="band_fail_no_answer">The band did not answer</string>
-    <string name="band_fail_wrong_owner">The band belongs to another Meta account</string>
-    <string name="band_fail">Setup failed: %1$s</string>
     <string name="topic_notifications_lede">What reaches the glasses, and what they say out loud.</string>
     <string name="topic_controls_lede">What the capture button and the touchpad on the right temple do.</string>
     <string name="topic_wear_lede">How the glasses notice they are on, and how they save power.</string>
@@ -996,7 +984,6 @@
     <string name="lesson_wake_how">Double tap your thumb and middle finger together</string>
     <string name="lesson_apps">Apps</string>
     <string name="lesson_apps_how">Hold your thumb and middle finger together</string>
-    <string name="band_buzz">Vibrate</string>
     <string name="band_fit">Fit</string>
     <string name="band_fit_loose">Loose</string>
     <string name="band_fit_tight">Snug</string>
@@ -1005,4 +992,8 @@
     <string name="live_problem_vpn">A VPN keeps Visor off the glasses\' network. Exclude Visor from it.</string>
     <string name="live_drops">The stream keeps dropping</string>
     <string name="live_use_glasses_host">Use the glasses\' Wi-Fi</string>
+    <string name="band_glasses">Glasses</string>
+    <string name="band_not_paired">Not paired</string>
+    <string name="band_paired_connected">Paired, connected</string>
+    <string name="band_paired_away">Paired, not connected</string>
 </resources>

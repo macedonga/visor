@@ -376,20 +376,8 @@
     <string name="topic_privacy">Privacy</string>
     <string name="topic_phone">Accessi del telefono</string>
     <string name="topic_band">Neural Band</string>
-    <string name="band_set_up">Configura</string>
-    <string name="band_set_up_again">Configura di nuovo</string>
-    <string name="band_setting_up">Configurazione…</string>
-    <string name="band_none">Non configurato</string>
     <string name="band_battery">Batteria</string>
     <string name="band_percent">%1$d%%</string>
-    <string name="band_wrist">Polso</string>
-    <string name="band_left">Sinistro</string>
-    <string name="band_right">Destro</string>
-    <string name="band_fail_no_glasses">Configura prima gli occhiali</string>
-    <string name="band_fail_not_paired">Associa prima il bracciale a questo telefono</string>
-    <string name="band_fail_no_answer">Il bracciale non ha risposto</string>
-    <string name="band_fail_wrong_owner">Il bracciale appartiene a un altro account Meta</string>
-    <string name="band_fail">Configurazione non riuscita: %1$s</string>
     <string name="topic_notifications_lede">Cosa arriva agli occhiali, e cosa dicono ad alta voce.</string>
     <string name="topic_controls_lede">Cosa fanno il tasto di cattura e il touchpad sull\'asta destra.</string>
     <string name="topic_wear_lede">Come gli occhiali capiscono di essere indossati, e come risparmiano energia.</string>
@@ -994,7 +982,6 @@
     <string name="lesson_wake_how">Tocca due volte insieme pollice e medio</string>
     <string name="lesson_apps">App</string>
     <string name="lesson_apps_how">Tieni uniti pollice e medio</string>
-    <string name="band_buzz">Fai vibrare</string>
     <string name="band_fit">Vestibilità</string>
     <string name="band_fit_loose">Larga</string>
     <string name="band_fit_tight">Aderente</string>
@@ -1003,4 +990,8 @@
     <string name="live_problem_vpn">Una VPN tiene Visor fuori dalla rete degli occhiali. Escludi Visor dalla VPN.</string>
     <string name="live_drops">Lo streaming si interrompe spesso</string>
     <string name="live_use_glasses_host">Usa il Wi-Fi degli occhiali</string>
+    <string name="band_glasses">Occhiali</string>
+    <string name="band_not_paired">Non associato</string>
+    <string name="band_paired_connected">Associato, collegato</string>
+    <string name="band_paired_away">Associato, non collegato</string>
 </resources>
