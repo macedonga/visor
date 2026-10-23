@@ -7,10 +7,15 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Build
+import android.os.CancellationSignal
 import android.os.Looper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The phone's position for navigation and place search, from the provider [LocationShare] uses. Updates run only
@@ -47,6 +52,21 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
         return (fix ?: manager.getLastKnownLocation(provider(manager)))?.let { LatLng(it.latitude, it.longitude) }
     }
 
+    /** A fix taken now, for when none is known yet; null without one in [timeoutMs]. */
+    @SuppressLint("MissingPermission")
+    suspend fun fresh(timeoutMs: Long = FRESH_MS): LatLng? {
+        if (manager == null || !granted() || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine { cont ->
+                val cancel = CancellationSignal()
+                cont.invokeOnCancellation { cancel.cancel() }
+                manager.getCurrentLocation(provider(manager), cancel, context.mainExecutor) { fix ->
+                    cont.resume(fix?.let { LatLng(it.latitude, it.longitude) })
+                }
+            }
+        }
+    }
+
     private fun granted(): Boolean =
         listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             .any { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
@@ -59,5 +79,6 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
 
     private companion object {
         const val INTERVAL_MS = 1_000L
+        const val FRESH_MS = 5_000L
     }
 }
