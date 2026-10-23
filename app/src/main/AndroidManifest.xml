@@ -161,6 +161,15 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!-- An update kills the service; this starts the connection again, as the presence does. -->
+        <receiver
+            android:name=".connection.AfterUpdate"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Bound by the system when the associated glasses appear, and starts the connection from the background. -->
         <service
             android:name=".connection.GlassesPresence"
