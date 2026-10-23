@@ -166,8 +166,9 @@ internal fun varm(
  * A simple card for a Display, as ev60's onDeviceUxMessage carries it: base64 of a compact AssistantTemplate
  * (type 0, a SimpleTemplate inside). The Display throws on a template without hideAfterMs.
  */
-internal fun answerCard(title: String, text: String): String {
-    val simple = ThriftWriter().str(1, title).str(2, text).done()
+internal fun answerCard(text: String): String {
+    // The dialog card shows its title only, in a scrolling block: the answer. The Display shows the question itself.
+    val simple = ThriftWriter().str(1, text).done()
     val hideAfterMs = (8_000L + 60L * text.length).coerceAtMost(30_000L)
     val template = ThriftWriter().i32(1, 0).str(2, simple).str(9, text).i64(10, hideAfterMs).done()
     return java.util.Base64.getEncoder().encodeToString(template)
