@@ -8,6 +8,10 @@
     <string name="webapps_name">Nome</string>
     <string name="webapps_url">Indirizzo (https)</string>
     <string name="webapps_none">Nessuna app web</string>
+    <string name="webapps_browse">Sfoglia</string>
+    <string name="webapps_on_glasses">Sugli occhiali</string>
+    <string name="webapps_catalogue_failed">Impossibile caricare il catalogo</string>
+    <string name="webapps_catalogue_none">Nessuna app web per questi occhiali</string>
     <string name="webapps_turn_on">Attiva le app web</string>
     <string name="webapps_unavailable">Gli occhiali non hanno questo interruttore</string>
     <string name="webapps_unread">Collega gli occhiali per leggerlo</string>

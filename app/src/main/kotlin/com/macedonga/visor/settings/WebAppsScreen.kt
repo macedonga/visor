@@ -28,8 +28,11 @@ import com.macedonga.visor.connection.WebApp
 import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.connection.gateOf
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.identity.appstore.CatalogueApp
+import com.macedonga.visor.core.identity.appstore.fetchAppCatalogue
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.login.MetaLogin
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,16 +40,26 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class WebAppNote { SAVED_ON_PHONE, OPENED, NOT_OPENED, RESTART, SWITCH_NOT_SENT, NOT_HTTPS, FULL }
+
+sealed interface CatalogueState {
+    data object Idle : CatalogueState
+    data object Loading : CatalogueState
+    data class Loaded(val apps: List<CatalogueApp>) : CatalogueState
+    data object Failed : CatalogueState
+}
 
 @HiltViewModel
 class WebAppsModel @Inject constructor(
     private val webApps: WebApps,
     val connection: GlassesConnection,
     private val config: GlassesConfig,
+    private val login: MetaLogin,
 ) : ViewModel() {
     val apps: StateFlow<List<WebApp>> = webApps.apps
     val gate: StateFlow<OpenGate> = config.state.map { gateOf(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, gateOf(config.state.value))
@@ -54,12 +67,38 @@ class WebAppsModel @Inject constructor(
     private val _note = MutableStateFlow<WebAppNote?>(null)
     val note: StateFlow<WebAppNote?> = _note.asStateFlow()
 
+    private val _catalogue = MutableStateFlow<CatalogueState>(CatalogueState.Idle)
+    val catalogue: StateFlow<CatalogueState> = _catalogue.asStateFlow()
+
     fun sync() {
         webApps.push()
     }
 
     fun add(name: String, url: String) {
         _note.value = when (webApps.add(name, url)) {
+            AddResult.ADDED, AddResult.EXISTS -> if (webApps.push()) null else WebAppNote.SAVED_ON_PHONE
+            AddResult.NOT_HTTPS -> WebAppNote.NOT_HTTPS
+            AddResult.FULL -> WebAppNote.FULL
+        }
+    }
+
+    /** Fetch Meta's list for these glasses, with the user's Meta login. */
+    fun browse() {
+        val info = connection.state.value.info
+        if (info == null || info.wearablesRelease.isEmpty()) {
+            _catalogue.value = CatalogueState.Failed
+            return
+        }
+        _catalogue.value = CatalogueState.Loading
+        viewModelScope.launch {
+            _catalogue.value = runCatching {
+                withContext(Dispatchers.IO) { fetchAppCatalogue(login.source.get(), info.serial, info.wearablesRelease) }
+            }.fold({ CatalogueState.Loaded(it) }, { CatalogueState.Failed })
+        }
+    }
+
+    fun addFromCatalogue(app: CatalogueApp) {
+        _note.value = when (webApps.add(app.name, app.url, app.manifest)) {
             AddResult.ADDED, AddResult.EXISTS -> if (webApps.push()) null else WebAppNote.SAVED_ON_PHONE
             AddResult.NOT_HTTPS -> WebAppNote.NOT_HTTPS
             AddResult.FULL -> WebAppNote.FULL
@@ -93,7 +132,9 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
     val apps by model.apps.collectAsStateWithLifecycle()
     val gate by model.gate.collectAsStateWithLifecycle()
     val note by model.note.collectAsStateWithLifecycle()
+    val catalogue by model.catalogue.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
+    var browsing by remember { mutableStateOf(false) }
     LaunchedEffect(ready) { if (ready) model.sync() }
 
     SettingsPage(stringResource(R.string.webapps_title), light = 0f) {
@@ -115,6 +156,7 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                         }
                     }.toTypedArray(),
                     { ValueRow(stringResource(R.string.webapps_add), null, onClick = { adding = true }) },
+                    { ValueRow(stringResource(R.string.webapps_browse), null, onClick = { browsing = true; model.browse() }, locked = !ready) },
                     if (gate == OpenGate.OFF) row { ValueRow(stringResource(R.string.webapps_turn_on), null, onClick = { model.turnOn() }, locked = !ready) } else null,
                 )
                 when (gate) {
@@ -125,6 +167,35 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                 note?.let { Footnote(stringResource(noteText(it))) }
                 if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
             }
+        }
+    }
+
+    if (browsing) {
+        VisorSheet({ browsing = false }, full = true) {
+            SheetTitle(stringResource(R.string.webapps_browse))
+            when (val c = catalogue) {
+                CatalogueState.Idle, CatalogueState.Loading -> Spinner(Modifier.padding(SIDE).padding(top = 16.dp))
+                CatalogueState.Failed -> Footnote(stringResource(R.string.webapps_catalogue_failed))
+                is CatalogueState.Loaded -> if (c.apps.isEmpty()) {
+                    Footnote(stringResource(R.string.webapps_catalogue_none))
+                } else {
+                    Rows(
+                        *c.apps.map { app ->
+                            @Composable {
+                                val on = apps.any { it.url == app.url }
+                                RowFrame(app.name, onClick = null, sub = app.url) {
+                                    if (on) {
+                                        ActionPill(stringResource(R.string.webapps_on_glasses), {}, quiet = true, modifier = Modifier.padding(start = 12.dp), enabled = false)
+                                    } else {
+                                        ActionPill(stringResource(R.string.webapps_add), { model.addFromCatalogue(app) }, quiet = true, modifier = Modifier.padding(start = 12.dp))
+                                    }
+                                }
+                            }
+                        }.toTypedArray(),
+                    )
+                }
+            }
+            note?.let { Footnote(stringResource(noteText(it))) }
         }
     }
 

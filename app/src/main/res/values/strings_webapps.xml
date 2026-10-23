@@ -8,6 +8,10 @@
     <string name="webapps_name">Name</string>
     <string name="webapps_url">Address (https)</string>
     <string name="webapps_none">No web apps</string>
+    <string name="webapps_browse">Browse</string>
+    <string name="webapps_on_glasses">On the glasses</string>
+    <string name="webapps_catalogue_failed">Could not load the catalogue</string>
+    <string name="webapps_catalogue_none">No web apps for these glasses</string>
     <string name="webapps_turn_on">Turn on web apps</string>
     <string name="webapps_unavailable">The glasses do not have this switch</string>
     <string name="webapps_unread">Connect the glasses to read this</string>

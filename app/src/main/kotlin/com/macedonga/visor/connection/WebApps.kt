@@ -35,7 +35,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class WebApp(val key: String, val name: String, val url: String)
+/** [manifest] is Meta's signed manifest, base64, for a catalogue app; a developer app has none. */
+data class WebApp(val key: String, val name: String, val url: String, val manifest: String? = null)
 
 enum class AddResult { ADDED, EXISTS, NOT_HTTPS, FULL }
 
@@ -83,7 +84,7 @@ class WebApps @Inject constructor(
     }
 
     /** Add a page, from the Display's CREATE or the Add sheet. The glasses take it with [push]. */
-    fun add(name: String, url: String): AddResult {
+    fun add(name: String, url: String, manifest: String? = null): AddResult {
         val uri = Uri.parse(url)
         if (uri.scheme != "https" || uri.host.isNullOrEmpty()) return AddResult.NOT_HTTPS
         synchronized(lock) {
@@ -91,7 +92,7 @@ class WebApps @Inject constructor(
             if (list.any { it.url == url }) return AddResult.EXISTS
             if (list.size >= MAX_APPS) return AddResult.FULL
             val key = generateSequence(0) { it + 1 }.map { "$PREFIX$it" }.first { k -> list.none { it.key == k } }
-            save(list + WebApp(key, name.ifEmpty { uri.host.orEmpty() }, url))
+            save(list + WebApp(key, name.ifEmpty { uri.host.orEmpty() }, url, manifest))
         }
         log.get().add("Web apps: added ${uri.host}")
         return AddResult.ADDED
@@ -208,7 +209,13 @@ class WebApps @Inject constructor(
         val old = runCatching { parseProto(Base64.decode(current, Base64.NO_WRAP)) }.getOrNull().orEmpty()
         val kept = old.filterNot { it.number == DISPLAY_CONFIGS && entryKey(it)?.startsWith(PREFIX) == true }
         val ours = apps.map { app ->
-            message(DISPLAY_CONFIGS, listOf(text(1, app.key), message(2, listOf(message(1, listOf(text(1, app.name))), text(2, app.url)))))
+            // DisplayConfig {1 item, 2 url, 3 signedWebAppManifest}: the manifest goes in as the catalogue sent it.
+            val config = listOfNotNull(
+                message(1, listOf(text(1, app.name))),
+                text(2, app.url),
+                app.manifest?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }?.let { ProtoField(3, 2, bytes = it) },
+            )
+            message(DISPLAY_CONFIGS, listOf(text(1, app.key), message(2, config)))
         }
         return encodeProto(kept + ours)
     }
@@ -223,13 +230,15 @@ class WebApps @Inject constructor(
     private fun save(list: List<WebApp>) {
         _apps.value = list
         runCatching {
-            file.writeText(JSONArray(list.map { JSONObject().put("key", it.key).put("name", it.name).put("url", it.url) }).toString())
+            file.writeText(JSONArray(list.map { app ->
+                JSONObject().put("key", app.key).put("name", app.name).put("url", app.url).also { o -> app.manifest?.let { o.put("manifest", it) } }
+            }).toString())
         }
     }
 
     private fun load(): List<WebApp> = runCatching {
         val a = JSONArray(file.readText())
-        List(a.length()) { i -> a.getJSONObject(i).let { WebApp(it.getString("key"), it.getString("name"), it.getString("url")) } }
+        List(a.length()) { i -> a.getJSONObject(i).let { WebApp(it.getString("key"), it.getString("name"), it.getString("url"), it.optString("manifest", "").ifEmpty { null }) } }
     }.getOrDefault(emptyList())
 
     companion object {
