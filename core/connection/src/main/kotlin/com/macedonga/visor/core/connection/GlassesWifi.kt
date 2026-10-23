@@ -16,6 +16,7 @@ private const val MT_REMOVE_NETWORK = 3
 private const val MT_REMOVE_NETWORK_RESULT = 4
 private const val MT_QUERY_NETWORKS = 5
 private const val MT_QUERY_NETWORKS_RESULT = 6
+private const val MT_SAVE_NETWORK = 1
 private const val MT_SAVE_NETWORK_LIST = 18
 private const val MT_SAVE_NETWORK_RESULT = 2
 
@@ -72,7 +73,9 @@ class GlassesWifi(private val connection: GlassesConnection) {
             Wire.fieldVarint(5, 1) +
             Wire.fieldVarint(6, RANDOMIZATION_PUBLIC) +
             Wire.fieldVarint(9, REQUEST_CONNECT)
-        val answer = ask(MT_SAVE_NETWORK_LIST, Wire.fieldBytes(1, network), MT_SAVE_NETWORK_RESULT)
+        // The Display's firmware knows only the single SaveNetwork (type 1) and answers the list (18) with 0xD001.
+        val answer = ask(MT_SAVE_NETWORK, network, MT_SAVE_NETWORK_RESULT)
+            ?: ask(MT_SAVE_NETWORK_LIST, Wire.fieldBytes(1, network), MT_SAVE_NETWORK_RESULT)
         answer?.let { Wire.parse(it).varint(1).toInt().also { status -> note("save $ssid: status $status") } }
     }
 
