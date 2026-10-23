@@ -68,14 +68,15 @@ class PhoneMessages @Inject constructor(
         // The Phone app's recent calls, asked once per provider, each waiting for its answer.
         if (type == MT_LOAD_CALL_LOG) return calls.loadCallLog(request, reply, connection)
         if (type !in SERVED) return log.get().add("Messages: type $type not served")
-        // Only the phone's texts; the other providers are the Meta app's.
+        // The phone's texts, and replies to a chat notification (Messenger, WhatsApp, Instagram) through its reply action.
         val provider = request.varint(1)
-        if (provider != NATIVE) return log.get().add("Messages: provider $provider not served")
+        val chat = type == MT_OUTGOING && provider in CHAT
+        if (provider != NATIVE && !chat) return log.get().add("Messages: provider $provider not served")
         scope.launch {
             when (type) {
                 MT_LOAD_THREADS -> threads(request, reply, connection)
                 MT_LOAD_MESSAGES -> messages(request, reply, connection)
-                MT_OUTGOING -> send(request, reply, connection)
+                MT_OUTGOING -> send(request, reply, connection, chat)
             }
         }
     }
@@ -140,16 +141,17 @@ class PhoneMessages @Inject constructor(
     }
 
     /** OutgoingMessageRequest {2 request id, 3 thread id, 4 text, 7 participants}: OutgoingMessageResponse {1, 2 status, 3 error}. */
-    private suspend fun send(request: Wire.Fields, reply: Int, mux: DataXConnection) {
+    private suspend fun send(request: Wire.Fields, reply: Int, mux: DataXConnection, chat: Boolean) {
         val requestId = request.bytes(2)
         val text = request.bytes(4).decodeToString()
         val thread = request.bytes(3).decodeToString()
         val to = request.repeatedBytes(7).map { it.decodeToString() }.filter { it.isNotBlank() }.ifEmpty { addressesOf(thread) }
-        // A conversation with its notification up answers through the Messages app, as RCS when it is one.
-        val viaApp = text.isNotBlank() && replies.has(thread)
+        // A conversation with its notification up answers through the Messages app, as RCS when it is one. A chat only does that.
+        val viaApp = text.isNotBlank() && (chat || replies.has(thread))
         val id = requests.start("${if (viaApp) "messages" else "sms"}://send/${to.joinToString(",").ifEmpty { thread }}", SOURCE_SMS)
         val error = when {
             viaApp -> replies.reply(context, thread, text)
+            chat -> if (text.isBlank()) "Empty message" else "No reply in that conversation"
             !allowed(Manifest.permission.SEND_SMS) -> "SMS not allowed in Visor"
             to.isEmpty() -> "No recipient"
             to.size > 1 -> "Group texts are not supported"
@@ -354,6 +356,7 @@ class PhoneMessages @Inject constructor(
         private const val MT_CHUNK = 32
         private val SERVED = setOf(MT_LOAD_THREADS, MT_LOAD_MESSAGES, MT_OUTGOING)
         private const val NATIVE = 3L
+        private val CHAT = setOf(1L, 2L, 4L)
         private const val DEFAULT_THREADS = 10
         private const val DEFAULT_MESSAGES = 25
         private const val MAX_MESSAGES = 100

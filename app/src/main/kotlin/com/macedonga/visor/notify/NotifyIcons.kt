@@ -40,14 +40,22 @@ class NotifyIcons @Inject constructor(
 
     /** The app's icon as a 78 x 78 JPEG, or null when the package has none. */
     private fun render(pkg: String): ByteArray? = runCatching {
-        val d = context.packageManager.getApplicationIcon(pkg)
+        val d = runCatching { context.packageManager.getApplicationIcon(pkg) }.getOrNull()
+            ?: context.packageManager.getApplicationIcon(installed(pkg) ?: return null)
         val bmp = Bitmap.createBitmap(ICON, ICON, Bitmap.Config.ARGB_8888)
         d.setBounds(0, 0, ICON, ICON)
         d.draw(Canvas(bmp))
         ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 100, it) }.toByteArray()
     }.getOrNull()
 
+    // Chat notifications carry the app ids the glasses gate on, not the phone's packages.
+    private fun installed(appId: String): String? = when (appId) {
+        "com.android.sms" -> android.provider.Telephony.Sms.getDefaultSmsPackage(context)
+        else -> APP_PACKAGES[appId]
+    }
+
     private companion object {
+        val APP_PACKAGES = mapOf("com.facebook.messenger" to "com.facebook.orca", "com.instagram" to "com.instagram.android")
         const val MT_RESPONSE = 2
         const val MT_ICON_REQUEST = 9
         const val MT_ICON_RESPONSE = 10

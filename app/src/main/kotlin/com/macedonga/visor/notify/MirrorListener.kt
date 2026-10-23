@@ -238,10 +238,12 @@ class MirrorListener : NotificationListenerService(), Messaging {
         // A text names its sender by number and its thread as the SMS store does, as svc70 lists them.
         val number = if (native) person?.uri?.takeIf { it.startsWith("tel:") }?.let { Uri.decode(it.substringAfter("tel:")) } ?: numberOf(sender) else null
         val thread = number?.takeIf { !group }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(this, it).toString() }.getOrNull() }
-        if (thread != null) replyAction(sbn.notification)?.let { textReplies.put(thread, sbn.key, it) }
+        // The thread the glasses answer with (FoA 2) names the notification's reply action, for every provider.
+        val threadId = thread ?: sbn.notification.shortcutId ?: sbn.key
+        replyAction(sbn.notification)?.let { textReplies.put(threadId, sbn.key, it) }
         return GlassesNotification(
             key = sbn.key,
-            pkg = if (native) NATIVE_APP else sbn.packageName,
+            pkg = APP_IDS[provider] ?: sbn.packageName,
             appName = appName,
             title = sender,
             text = text,
@@ -250,7 +252,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
             provider = provider,
             sender = sender,
             senderId = number ?: person?.key ?: person?.uri?.substringAfter(':').orEmpty(),
-            threadId = thread ?: sbn.notification.shortcutId ?: sbn.key,
+            threadId = threadId,
             isGroup = group,
             groupName = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString().orEmpty(),
         )
@@ -324,8 +326,8 @@ class MirrorListener : NotificationListenerService(), Messaging {
         private const val PROVIDER_NATIVE = 3
         private const val TYPE_INCOMING_MESSAGE = 1
 
-        // The app id the glasses take for the phone's own texts.
-        private const val NATIVE_APP = "com.android.sms"
+        // The app id the glasses gate on, per provider, as the Meta app sends it. Messenger and Instagram are not their package names.
+        private val APP_IDS = mapOf(1 to "com.facebook.messenger", 2 to "com.whatsapp", 3 to "com.android.sms", 4 to "com.instagram")
 
         // The chat apps the glasses announce themselves, by their NotificationProvider.
         private val PROVIDERS = mapOf(
