@@ -838,8 +838,7 @@ class Assistant(
 
     private suspend fun answer(l: Link, interaction: String, transcript: String, visual: Visual, glasses: GlassesToolbox? = null) {
         val started = System.currentTimeMillis()
-        // A typed turn is in the diary already, with its source and conversation.
-        if (diary.turn(interaction) == null) record(TurnRecord(interaction, started, transcript))
+        record(TurnRecord(interaction, started, transcript))
         _phase.value = AssistantPhase.THINKING
         var problem = ""
         // During the Live every question comes with the picture: the wearer is showing it.
@@ -1010,15 +1009,11 @@ class Assistant(
         return packets.sumOf { it.durationUs } / 1000
     }
 
-    /** ev52 FinalTranscription: the words of a turn. */
-    private fun finalTranscription(interaction: String, words: String): ByteArray =
-        ThriftWriter().str(1, words).i32(2, 0).str(4, "").bool(7, false).str(8, interaction).done()
-
     /** ev71, ev52 and ev342, which open every answer. ev52 and ev342 go at a tagged type 0, as the app sends them. */
     private suspend fun preamble(l: Link, interaction: String, transcript: String, text: String) {
         val m0 = checkNotNull(l.m0)
         val e71 = ThriftWriter().str(1, interaction).done()
-        val e52 = finalTranscription(interaction, transcript.ifEmpty { text })
+        val e52 = ThriftWriter().str(1, transcript.ifEmpty { text }).i32(2, 0).str(4, "").bool(7, false).str(8, interaction).done()
         val e342 = ThriftWriter().str(1, interaction).bool(2, false).str(3, REPLY_INTENT).bool(4, false).done()
         for ((type, event, body) in listOf(
             Triple(MT_NET_EVENT, EV_START_OF_USER_SPEECH, e71),
@@ -1138,34 +1133,6 @@ class Assistant(
         val id = UUID.randomUUID().toString()
         record(TurnRecord(id, System.currentTimeMillis(), question.trim(), source = TurnSource.PHONE, conversation = conversation.orEmpty()))
         scope.launch { answerHere(id) }
-        return id
-    }
-
-    /**
-     * A question typed in the app, run as a turn on the glasses when they are a Display: 337 starts the turn, 52 gives
-     * its words, and the answer goes as for any turn. Null when the glasses cannot take it, so the app answers it.
-     */
-    fun askOnGlasses(question: String, conversation: String?): String? {
-        val text = question.trim()
-        val l = link?.takeIf { display() && it.m0 != null && it.s0 != null } ?: return null
-        if (text.isEmpty()) return null
-        val id = UUID.randomUUID().toString()
-        // Taken before the glasses could open a microphone for the turn, so the phone does not answer its own recognition.
-        l.taken.add(id)
-        record(TurnRecord(id, System.currentTimeMillis(), text, source = TurnSource.PHONE, conversation = conversation.orEmpty()))
-        scope.launch {
-            try {
-                val m0 = checkNotNull(l.m0)
-                l.mux.send(m0, netEvent(EV_START_REMOTE_INTERACTION, ThriftWriter().str(1, id).done()), messageType = MT_NET_EVENT)
-                delay(20)
-                l.mux.send(m0, netEvent(EV_FINAL_TRANSCRIPTION, finalTranscription(id, text)), messageType = 0)
-            } catch (error: Exception) {
-                say("The typed question did not reach the glasses: ${error.message}")
-                update(id) { it.copy(problem = error.message.orEmpty()) }
-                return@launch
-            }
-            answer(l, id, text, Visual(null, "", "", false, ""))
-        }
         return id
     }
 

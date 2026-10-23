@@ -35,7 +35,6 @@ internal const val MT_ENVELOPE_ACK = 9001
 // table beside the names; all 206 are in events.tsv). Several are not what lensbreak called them,
 // but every send below is byte for byte the one the glasses accepted from it.
 internal const val EV_FINAL_TRANSCRIPTION = 52
-internal const val EV_START_REMOTE_INTERACTION = 337
 internal const val EV_VOICE_ACTION_RESPONSE = 53
 internal const val EV_FULFILLMENT_REQUEST = 57
 internal const val EV_ACTION_FULFILLMENT_REQUEST = 55
