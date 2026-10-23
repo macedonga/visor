@@ -64,6 +64,105 @@ object Band {
     /** RpcRequest {1: seq, 17: HapticsReq {3: StopReq {}}}. */
     fun stopHaptics(seq: Int): ByteArray = request(seq, 17, Wire.fieldBytes(3, ByteArray(0)))
 
+    // The firmware update: Ota on RpcRequest 7 (answers in RpcResponse 8), the bulk file transfer on 9 (answers in 10).
+    const val OTA_ITEM_FIRMWARE = 0
+    const val OTA_ITEM_ML_MODEL = 2
+    const val OTA_UNAVAILABLE = 0
+    // otaUnavailableReason when nothing stands in the way.
+    const val OTA_NO_REASON = 0
+    const val OTA_IN_PROGRESS = 2
+    const val OTA_RESULT_OK = 0
+    const val TRANSFER_OTA = 1
+    const val TRANSFER_NEW = 1
+    const val TRANSFER_PARTIAL = 2
+    const val TRANSFER_FULL = 3
+    const val CHUNK_BYTES = 950
+
+    /** The band's OTA device info: the firmware and ML versions by item, the KEK id, the OTA state and why it is unavailable. */
+    class OtaInfo(val firmware: Long, val ml: Long, val kek: Long, val state: Int, val unavailable: Int)
+
+    /** BulkDataTransferResp: the info answer, a chunk's ack or a nack. */
+    sealed interface Bulk {
+        class Info(val state: Int, val memory: Long, val resume: Long, val transferId: Int) : Bulk
+        class Ack(val transferId: Int, val offset: Long) : Bulk
+        class Nack(val transferId: Int, val reason: String) : Bulk
+    }
+
+    /** RpcRequest {1: seq, 7: OtaReq {1: DeviceInfoRequest {}}}. */
+    fun otaDeviceInfo(seq: Int): ByteArray = ota(seq, 1, ByteArray(0))
+
+    /** OtaReq {2: StartItemUpdateRequest {1: ItemInfo, 2: size, 4: kekVersion}}; the version check (3) is left as the band has it. */
+    fun otaStartItem(seq: Int, itemType: Int, version: Long, size: Long): ByteArray =
+        ota(seq, 2, Wire.fieldBytes(1, itemInfo(itemType, version)) + Wire.fieldVarint(2, size) + Wire.fieldVarint(4, 0))
+
+    /** OtaReq {3: VerifyItemUpdateRequest {1: ItemInfo}}. */
+    fun otaVerifyItem(seq: Int, itemType: Int, version: Long): ByteArray = ota(seq, 3, Wire.fieldBytes(1, itemInfo(itemType, version)))
+
+    /** OtaReq {4: CommitUpdateRequest {}}: one commit for all items, the reboot not deferred. */
+    fun otaCommit(seq: Int): ByteArray = ota(seq, 4, ByteArray(0))
+
+    /** OtaReq {5: AbortUpdateRequest {}}. */
+    fun otaAbort(seq: Int): ByteArray = ota(seq, 5, ByteArray(0))
+
+    /** OtaReq {6: InstallKEKRequest {1: kekVersion, 3: encryptedKek}}; the key type is 0, the default, so not sent. */
+    fun otaInstallKek(seq: Int, kekVersion: Long, encryptedKek: ByteArray): ByteArray =
+        ota(seq, 6, Wire.fieldVarint(1, kekVersion) + Wire.fieldBytes(3, encryptedKek))
+
+    /** RpcRequest {1: seq, 9: BulkDataTransferReq {1: InfoRequest {1 MD5, 2 size, 3 type, 4 transferID}}}. */
+    fun bulkInfo(seq: Int, md5: ByteArray, size: Long, transferId: Int): ByteArray = request(
+        seq, 9,
+        Wire.fieldBytes(1, Wire.fieldBytes(1, md5) + Wire.fieldVarint(2, size) + Wire.fieldVarint(3, TRANSFER_OTA.toLong()) + Wire.fieldVarint(4, transferId.toLong())),
+    )
+
+    /** RpcRequest {1: seq, 9: BulkDataTransferReq {2: ChunkData {1 transferID, 2 chunkOffset, 3 chunkData}}}. */
+    fun bulkChunk(seq: Int, transferId: Int, offset: Long, data: ByteArray): ByteArray = request(
+        seq, 9, Wire.fieldBytes(2, Wire.fieldVarint(1, transferId.toLong()) + Wire.fieldVarint(2, offset) + Wire.fieldBytes(3, data)),
+    )
+
+    /** The seq an answer echoes. */
+    fun seqOf(payload: ByteArray): Int = Wire.parse(payload).varint(1).toInt()
+
+    /** The OTA device info in an answer (OtaResp 2), or null when it is another answer. */
+    fun otaInfo(payload: ByteArray): OtaInfo? {
+        val ota = otaAnswer(payload) ?: return null
+        if (!ota.has(2)) return null
+        val info = Wire.parse(ota.bytes(2))
+        val items = info.repeatedBytes(5).map { Wire.parse(it) }.associate { it.varint(1).toInt() to it.varint(2) }
+        return OtaInfo(
+            firmware = items[OTA_ITEM_FIRMWARE] ?: 0,
+            ml = items[OTA_ITEM_ML_MODEL] ?: 0,
+            kek = info.varint(6),
+            state = info.varint(4).toInt(),
+            unavailable = info.varint(7).toInt(),
+        )
+    }
+
+    /** The result code of a GeneralResponse (1), VerifyItemUpdateResponse (3) or CommitUpdateResponse (4); null for other answers. */
+    fun otaResult(payload: ByteArray): Int? {
+        val ota = otaAnswer(payload) ?: return null
+        val field = listOf(1, 3, 4).firstOrNull { ota.has(it) } ?: return null
+        return Wire.parse(Wire.parse(ota.bytes(field)).bytes(1)).varint(1).toInt()
+    }
+
+    /** The bulk answer in an RpcResponse 10, or null for another answer. */
+    fun bulk(payload: ByteArray): Bulk? {
+        val rpc = Wire.parse(payload)
+        if (!rpc.has(10)) return null
+        val answer = Wire.parse(rpc.bytes(10))
+        return when {
+            answer.has(1) -> Wire.parse(answer.bytes(1)).let { Bulk.Info(it.varint(1).toInt(), it.varint(2), it.varint(3), it.varint(5).toInt()) }
+            answer.has(2) -> Wire.parse(answer.bytes(2)).let { Bulk.Ack(it.varint(1).toInt(), it.varint(2)) }
+            answer.has(3) -> Wire.parse(answer.bytes(3)).let { Bulk.Nack(it.varint(1).toInt(), it.bytes(2).decodeToString()) }
+            else -> null
+        }
+    }
+
+    private fun otaAnswer(payload: ByteArray): Wire.Fields? = Wire.parse(payload).let { if (it.has(8)) Wire.parse(it.bytes(8)) else null }
+
+    private fun ota(seq: Int, field: Int, body: ByteArray): ByteArray = request(seq, 7, Wire.fieldBytes(field, body))
+
+    private fun itemInfo(itemType: Int, version: Long): ByteArray = Wire.fieldVarint(1, itemType.toLong()) + Wire.fieldVarint(2, version)
+
     fun isGesture(type: Int): Boolean = type == 13 || type in 60..200
 
     fun gesture(type: Int, payload: ByteArray): Gesture {

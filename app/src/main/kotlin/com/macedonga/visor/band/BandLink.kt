@@ -30,7 +30,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -55,6 +57,8 @@ data class BandState(
     val protocol: Int? = null,
     // A lesson has the band's gestures coming to the phone.
     val gestures: Boolean = false,
+    // The firmware's version, from the band's OTA device info.
+    val firmware: Long? = null,
 )
 
 /**
@@ -80,6 +84,10 @@ class BandLink @Inject constructor(
     private val held = MutableStateFlow(true)
     private val lesson = MutableStateFlow(false)
     private val borrowing = MutableStateFlow(false)
+    private val updating = MutableStateFlow(false)
+    private val _answers = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
+    /** Every RPC answer while the band is up, raw: a firmware update reads its own answers here. */
+    val answers: SharedFlow<ByteArray> = _answers
     private val _gestures = kotlinx.coroutines.flow.MutableSharedFlow<Band.Gesture>(extraBufferCapacity = 32)
     val gestures: kotlinx.coroutines.flow.SharedFlow<Band.Gesture> = _gestures
 
@@ -97,7 +105,7 @@ class BandLink @Inject constructor(
         scope.launch {
             // A lesson or an errand takes the band from the Display; when it ends, the band goes back. Never otherwise:
             // the Display reaches the band on its own, and a phone holding it while the Display restarts keeps it off.
-            val stepBack = combine(lesson, borrowing) { learning, errand -> !learning && !errand }
+            val stepBack = combine(lesson, borrowing, updating) { learning, errand, update -> !learning && !errand && !update }
             combine(connection.running, connection.pair, bands.all, stepBack, held) { running, pair, _, away, hold ->
                 bands.forGlasses(pair)?.takeIf { running && hold && !away }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
@@ -119,6 +127,23 @@ class BandLink @Inject constructor(
     fun hold() {
         held.value = true
     }
+
+    /** Holds the band for [block], which needs it for minutes, then gives it back. */
+    suspend fun <T> holdFor(block: suspend () -> T): T {
+        updating.value = true
+        try {
+            if (withTimeoutOrNull(BORROW_MS) { _state.first { it.link == LinkState.READY } } == null) error("the band is not reached")
+            return block()
+        } finally {
+            updating.value = false
+        }
+    }
+
+    /** The next seq for a request built by hand. */
+    fun nextSeq(): Int = seq.getAndIncrement()
+
+    /** Sends RPC requests on the band now; false when the band is not up. */
+    fun sendRaw(requests: List<ByteArray>): Boolean = send { requests }
 
     /** Have the band's gestures come here: the band is taken from the Display for as long as it lasts. */
     fun startLesson() {
@@ -267,6 +292,7 @@ class BandLink @Inject constructor(
         SessionCommand { s ->
             val mux = s.connection ?: return@SessionCommand
             if (info) mux.sendOnService(ServiceId.WIRELESS_INPUT.value, Band.REQUEST_TYPE, Band.deviceInfoRequest(seq.getAndIncrement()))
+            if (info) mux.sendOnService(ServiceId.WIRELESS_INPUT.value, Band.REQUEST_TYPE, Band.otaDeviceInfo(seq.getAndIncrement()))
             mux.sendOnService(ServiceId.WIRELESS_INPUT.value, Band.REQUEST_TYPE, Band.batteryRequest(seq.getAndIncrement()))
             mux.sendOnService(ServiceId.WIRELESS_INPUT.value, Band.REQUEST_TYPE, Band.configRequest(seq.getAndIncrement()))
         },
@@ -275,6 +301,10 @@ class BandLink @Inject constructor(
     private fun onBand(event: ServiceData) {
         val type = event.messageType and 0xFF
         if (Band.isGesture(type)) return onGesture(type, event.payload)
+        if (type == Band.RESPONSE) {
+            _answers.tryEmit(event.payload)
+            runCatching { Band.otaInfo(event.payload) }.getOrNull()?.let { info -> _state.update { it.copy(firmware = info.firmware) } }
+        }
         val battery = runCatching {
             when (type) {
                 Band.RESPONSE -> Band.response(event.payload).also { r ->

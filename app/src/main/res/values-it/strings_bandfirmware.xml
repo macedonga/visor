@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="band_firmware">Firmware</string>
+    <string name="band_firmware_title">Firmware del braccialetto</string>
+    <string name="band_firmware_current">Versione</string>
+    <string name="band_firmware_update">Aggiornamento</string>
+    <string name="band_firmware_check">Cerca aggiornamenti</string>
+    <string name="band_firmware_checking">Ricerca</string>
+    <string name="band_firmware_up_to_date">Aggiornato</string>
+    <string name="band_firmware_install">Installa</string>
+    <string name="band_firmware_confirm">Installare %1$s sul braccialetto?</string>
+    <string name="band_firmware_installing">Installazione</string>
+    <string name="band_firmware_progress">Installazione, %1$d%%</string>
+    <string name="band_firmware_installed">Installato</string>
+    <string name="band_firmware_failed">Errore: %1$s</string>
+</resources>

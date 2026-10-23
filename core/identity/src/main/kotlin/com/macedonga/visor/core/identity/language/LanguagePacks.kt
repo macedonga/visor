@@ -99,6 +99,11 @@ internal fun constellationPost(token: Token, friendlyName: String, docId: String
     val variables = buildJsonObject {
         put("fetch_request", buildJsonObject { put("constellation_updates_request_info", JsonArray(listOf(info))) })
     }
+    return graphPost(token, friendlyName, docId, variables, http)
+}
+
+/** One persisted query on Meta's AR endpoint, as the Meta app sends it: the HTTP status and the answer's JSON. */
+internal fun graphPost(token: Token, friendlyName: String, docId: String, variables: JsonObject, http: HttpPost): Pair<Int, JsonObject> {
     val body = pyUrlencode(
         linkedMapOf(
             "fb_api_req_friendly_name" to friendlyName,

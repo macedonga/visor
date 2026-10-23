@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="band_firmware">Firmware</string>
+    <string name="band_firmware_title">Band firmware</string>
+    <string name="band_firmware_current">Version</string>
+    <string name="band_firmware_update">Update</string>
+    <string name="band_firmware_check">Check for update</string>
+    <string name="band_firmware_checking">Checking</string>
+    <string name="band_firmware_up_to_date">Up to date</string>
+    <string name="band_firmware_install">Install</string>
+    <string name="band_firmware_confirm">Install %1$s on the band?</string>
+    <string name="band_firmware_installing">Installing</string>
+    <string name="band_firmware_progress">Installing, %1$d%%</string>
+    <string name="band_firmware_installed">Installed</string>
+    <string name="band_firmware_failed">Failed: %1$s</string>
+</resources>
