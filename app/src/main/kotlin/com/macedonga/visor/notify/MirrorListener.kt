@@ -67,6 +67,9 @@ class MirrorListener : NotificationListenerService(), Messaging {
     @Inject
     lateinit var textReplies: TextReplies
 
+    @Inject
+    lateinit var recent: RecentChats
+
     // Each conversation sent to the glasses, with the app's reply action, newest last.
     private val replyable = LinkedHashMap<String, Pair<Conversation, Notification.Action>>()
 
@@ -108,6 +111,9 @@ class MirrorListener : NotificationListenerService(), Messaging {
     override fun onNotificationPosted(sbn: StatusBarNotification, rankingMap: RankingMap) {
         if (!wanted(sbn, rankingMap)) return
         apps.saw(sbn.packageName)
+        // The Messages app's conversations are kept whether or not the glasses listen: the Display's list reads them.
+        val sms = sbn.packageName == Telephony.Sms.getDefaultSmsPackage(this)
+        if (sms) remember(sbn)
         if (!choice.enabled.value || !ready() || sbn.packageName in apps.muted.value) return
         val n = sbn.notification
         val extras = n.extras
@@ -116,7 +122,6 @@ class MirrorListener : NotificationListenerService(), Messaging {
         val appName = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val r = Ranking()
         // The phone's texts, SMS or RCS, go as native messages, which the glasses' Messages app files by thread.
-        val sms = sbn.packageName == Telephony.Sms.getDefaultSmsPackage(this)
         (if (sms) PROVIDER_NATIVE else PROVIDERS[sbn.packageName])?.let { provider ->
             message(sbn, provider, appName)?.let { m ->
                 deliver(m)
@@ -227,19 +232,16 @@ class MirrorListener : NotificationListenerService(), Messaging {
         // A reply sent from the notification is added to it as the user's own message: not news for the glasses.
         @Suppress("DEPRECATION")
         val user = extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON) as? Person
-        val fromMe = last != null && last.getCharSequence("sender") == null &&
-            (person == null || user != null && person.key == user.key && person.name == user.name)
-        if (fromMe) return null
+        if (last != null && fromUser(last, user)) return null
         if (sentAt[sbn.key] == time) return null
         sentAt[sbn.key] = time
         while (sentAt.size > 300) sentAt.remove(sentAt.keys.first())
         val group = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
         val native = provider == PROVIDER_NATIVE
         // A text names its sender by number and its thread as the SMS store does, as svc70 lists them.
-        val number = if (native) person?.uri?.takeIf { it.startsWith("tel:") }?.let { Uri.decode(it.substringAfter("tel:")) } ?: numberOf(sender) else null
-        val thread = number?.takeIf { !group }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(this, it).toString() }.getOrNull() }
+        val number = if (native) numberOf(person, sender) else null
         // The thread the glasses answer with (FoA 2) names the notification's reply action, for every provider.
-        val threadId = thread ?: sbn.notification.shortcutId ?: sbn.key
+        val threadId = threadOf(sbn, number, group)
         replyAction(sbn.notification)?.let { textReplies.put(threadId, sbn.key, it) }
         return GlassesNotification(
             key = sbn.key,
@@ -256,6 +258,47 @@ class MirrorListener : NotificationListenerService(), Messaging {
             isGroup = group,
             groupName = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.toString().orEmpty(),
         )
+    }
+
+    /** The other side's number: the person's tel: uri, else the sender's number or contact. */
+    private fun numberOf(person: android.app.Person?, sender: String): String? =
+        person?.uri?.takeIf { it.startsWith("tel:") }?.let { Uri.decode(it.substringAfter("tel:")) } ?: numberOf(sender)
+
+    /** The SMS store's thread for a one-to-one text, else the glasses' key for the conversation. */
+    private fun threadOf(sbn: StatusBarNotification, number: String?, group: Boolean): String =
+        number?.takeIf { !group }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(this, it).toString() }.getOrNull() }
+            ?: sbn.notification.shortcutId ?: sbn.key
+
+    /** A message the user sent: no sender, and the user's own person when one is given. */
+    private fun fromUser(m: android.os.Bundle, user: Person?): Boolean {
+        @Suppress("DEPRECATION")
+        val person = m.getParcelable("sender_person") as? android.app.Person
+        return m.getCharSequence("sender") == null && (person == null || user != null && person.key == user.key && person.name == user.name)
+    }
+
+    /** Keeps a Messages conversation as its notification shows it, for the Display's list (see RecentChats). */
+    private fun remember(sbn: StatusBarNotification) {
+        val extras = sbn.notification.extras
+        @Suppress("DEPRECATION")
+        val user = extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON) as? Person
+        val group = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
+        @Suppress("DEPRECATION")
+        val bundles = extras.getParcelableArray(Notification.EXTRA_MESSAGES).orEmpty().filterIsInstance<android.os.Bundle>()
+        val numbers = LinkedHashSet<String>()
+        val messages = bundles.mapNotNull { m ->
+            val text = m.getCharSequence("text")?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            @Suppress("DEPRECATION")
+            val person = m.getParcelable("sender_person") as? android.app.Person
+            val outgoing = fromUser(m, user)
+            val sender = m.getCharSequence("sender")?.toString() ?: person?.name?.toString().orEmpty()
+            val number = if (outgoing) null else numberOf(person, sender)
+            number?.let { numbers += it }
+            RecentChats.Message(text, sender, number.orEmpty(), m.getLong("time").takeIf { it > 0 } ?: sbn.postTime, outgoing)
+        }
+        if (messages.isEmpty()) return
+        val title = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)?.takeIf { group } ?: extras.getCharSequence(Notification.EXTRA_TITLE)
+        val id = threadOf(sbn, numbers.singleOrNull(), group)
+        recent.remember(id, title?.toString().orEmpty(), group, numbers.toList(), messages)
     }
 
     /** A contact's number by their name, or the name itself when it is a number. */

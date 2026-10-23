@@ -22,6 +22,7 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.notify.RecentChats
 import com.macedonga.visor.notify.TextReplies
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.ByteBuffer
@@ -48,8 +49,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The Phone app's recent calls (type 11) come on this service too; [PhoneCalls] answers them, and the call control
  * (placing, answering) is [PhoneCallControl]'s.
  *
- * The RCS chats Google Messages files as MMS are marked restricted, and Android shows those rows only to the default
- * SMS app: a chat with nothing else in it is missing from the list here.
+ * Google Messages files RCS chats as MMS marked restricted, which Android shows only to the default SMS app. Those chats
+ * come from what the SMS app's notifications showed ([RecentChats], this process only), listed and answered alongside.
  */
 @Singleton
 class PhoneMessages @Inject constructor(
@@ -59,6 +60,7 @@ class PhoneMessages @Inject constructor(
     private val replies: TextReplies,
     private val calls: PhoneCalls,
     private val control: PhoneCallControl,
+    private val recent: RecentChats,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Messages: failed: $e") })
 
@@ -94,19 +96,27 @@ class PhoneMessages @Inject constructor(
             return requests.finish(id, "SMS not allowed", failed = true)
         }
         val count = request.varint(3).toInt().takeIf { it > 0 } ?: DEFAULT_THREADS
-        val threads = conversations(count, null)
+        val stored = conversations(count, null)
+        // The remembered chats the store does not hold, by thread id or by a number it has.
+        val listed = stored.map { t ->
+            Listed(t.id.toString(), t.addresses, t.date, t.snippet.ifBlank { messagesOf(t.id, 1).firstOrNull()?.text.orEmpty() }, "", t.addresses.size > 1)
+        } + recent.chats().filter { c ->
+            stored.none { s -> s.id.toString() == c.id || s.addresses.any { a -> c.numbers.any { RecentChats.sameNumber(a, it) } } }
+        }.map { c ->
+            Listed(c.id, c.numbers, c.messages.firstOrNull()?.time ?: 0L, c.messages.firstOrNull()?.text.orEmpty(), c.title, c.group)
+        }
+        val threads = listed.sortedByDescending { it.date }.take(count)
         val names = HashMap<String, String>()
         var body = Wire.fieldBytes(1, requestId)
         for (t in threads) {
-            val name = t.addresses.joinToString(", ") { a -> names.getOrPut(a) { nameOf(a) } }
-            val latest = t.snippet.ifBlank { messagesOf(t.id, 1).firstOrNull()?.text.orEmpty() }
+            val name = if (t.group && t.title.isNotBlank()) t.title else (t.numbers.joinToString(", ") { a -> names.getOrPut(a) { nameOf(a) } }.ifEmpty { t.title })
             // SgThread: 1 id, 2 name, 3 type (1 group), 4 latest message, 5 its time, 6 Participant {1 id}.
             body += Wire.fieldBytes(
                 2,
-                Wire.fieldBytes(1, t.id.toString().encodeToByteArray()) + Wire.fieldBytes(2, name.encodeToByteArray()) +
-                    (if (t.addresses.size > 1) Wire.fieldVarint(3, THREAD_GROUP) else ByteArray(0)) +
-                    Wire.fieldBytes(4, latest.encodeToByteArray()) + Wire.fieldVarint(5, t.date) +
-                    t.addresses.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldBytes(6, Wire.fieldBytes(1, a.encodeToByteArray())) },
+                Wire.fieldBytes(1, t.id.encodeToByteArray()) + Wire.fieldBytes(2, name.encodeToByteArray()) +
+                    (if (t.group) Wire.fieldVarint(3, THREAD_GROUP) else ByteArray(0)) +
+                    Wire.fieldBytes(4, t.snippet.encodeToByteArray()) + Wire.fieldVarint(5, t.date) +
+                    t.numbers.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldBytes(6, Wire.fieldBytes(1, a.encodeToByteArray())) },
             )
         }
         body += Wire.fieldVarint(3, threads.maxOfOrNull { it.date } ?: 0)
@@ -119,15 +129,17 @@ class PhoneMessages @Inject constructor(
         val requestId = request.bytes(2)
         val numbers = request.repeatedBytes(9).map { it.decodeToString() }.filter { it.isNotBlank() }
         val chunked = request.varint(8) != 0L
-        val id = requests.start("sms://thread/${request.bytes(4).decodeToString()}", SOURCE_SMS)
+        val key = request.bytes(4).decodeToString()
+        val id = requests.start("sms://thread/$key", SOURCE_SMS)
         if (!allowed(Manifest.permission.READ_SMS)) {
             answer(mux, reply, MT_LOAD_MESSAGES, Wire.fieldBytes(1, requestId) + refused(), chunked)
             return requests.finish(id, "SMS not allowed", failed = true)
         }
-        val thread = request.bytes(4).decodeToString().toLongOrNull()
+        val thread = key.toLongOrNull()
             ?: numbers.takeIf { it.isNotEmpty() }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(context, it.toSet()) }.getOrNull() }
         val count = request.varint(3).toInt().takeIf { it > 0 }?.coerceAtMost(MAX_MESSAGES) ?: DEFAULT_MESSAGES
-        val rows = if (thread != null) messagesOf(thread, count) else emptyList()
+        // A store thread that came back empty, or a chat the store does not hold, is answered from what its notifications showed.
+        val rows = (thread?.let { messagesOf(it, count) }.orEmpty()).ifEmpty { recentMessages(key, thread, numbers, count) }
         var body = Wire.fieldBytes(1, requestId)
         for (m in rows.asReversed()) {
             // SgMessage: 1 id, 2 text, 3 time, 4 the address (the other side's, in or out), 7 attachment, 19 box, 20 service.
@@ -139,9 +151,19 @@ class PhoneMessages @Inject constructor(
                     Wire.fieldBytes(19, folder(m.box).encodeToByteArray()) + Wire.fieldVarint(20, m.service),
             )
         }
-        body += Wire.fieldVarint(5, RESPONSE_FILE_BUS) + Wire.fieldBytes(7, (thread ?: 0).toString().encodeToByteArray())
+        body += Wire.fieldVarint(5, RESPONSE_FILE_BUS) + Wire.fieldBytes(7, (thread?.toString() ?: key.ifEmpty { "0" }).encodeToByteArray())
         answer(mux, reply, MT_LOAD_MESSAGES, body, chunked)
         requests.finish(id, "${rows.size} messages", failed = false, bytes = body.size.toLong())
+    }
+
+    /** A chat from the notifications, newest first, in the same shape as the store's messages. */
+    private fun recentMessages(key: String, thread: Long?, numbers: List<String>, count: Int): List<Message> {
+        val chat = recent.find(key) ?: thread?.let { recent.find(it.toString()) } ?: recent.withNumber(numbers) ?: return emptyList()
+        return chat.messages.take(count).map { m ->
+            val other = if (m.outgoing) chat.numbers.firstOrNull().orEmpty() else m.number
+            val box = if (m.outgoing) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+            Message("recent://${chat.id}/${m.time}", m.text, m.time, other, box, SERVICE_SMS, false)
+        }
     }
 
     /** OutgoingMessageRequest {2 request id, 3 thread id, 4 text, 7 participants}: OutgoingMessageResponse {1, 2 status, 3 error}. */
@@ -215,12 +237,14 @@ class PhoneMessages @Inject constructor(
 
     /** The numbers of a thread's other side. */
     fun addressesOf(thread: String): List<String> {
-        val id = thread.toLongOrNull() ?: return emptyList()
-        if (!allowed(Manifest.permission.READ_SMS)) return emptyList()
-        return conversations(1, id).firstOrNull()?.addresses.orEmpty()
+        val stored = thread.toLongOrNull()?.takeIf { allowed(Manifest.permission.READ_SMS) }?.let { conversations(1, it).firstOrNull()?.addresses }
+        return stored ?: recent.find(thread)?.numbers.orEmpty()
     }
 
     private class Conversation(val id: Long, val date: Long, val addresses: List<String>, val snippet: String)
+
+    /** A thread for the list: from the store, or a remembered chat (its id is the notification's thread). */
+    private class Listed(val id: String, val numbers: List<String>, val date: Long, val snippet: String, val title: String, val group: Boolean)
 
     /** Conversations newest first, from Android's thread list, which holds SMS, MMS and the RCS chats Messages files as MMS. */
     private fun canonical(): Map<Long, String> {
