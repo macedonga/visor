@@ -32,6 +32,8 @@ import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.connection.LinkKind
+import com.macedonga.visor.firmware.FirmwareUpdate
+import com.macedonga.visor.firmware.FirmwareWork
 import com.macedonga.visor.home.pairName
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
@@ -62,6 +64,7 @@ class GlassesPageModel @Inject constructor(
     val connection: GlassesConnection,
     val settings: GlassesSettings,
     val login: MetaLogin,
+    val firmware: FirmwareUpdate,
     val kind: LinkKind,
     private val store: IdentityStore,
     val looks: Looks,
@@ -126,6 +129,13 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
     val serial = glasses.target?.serial ?: info?.serial
     var renaming by remember { mutableStateOf(false) }
     var forgetting by remember { mutableStateOf(false) }
+    var firmwareOpen by remember { mutableStateOf(false) }
+    var confirmingFirmware by remember { mutableStateOf(false) }
+    val fwChecking by model.firmware.checking.collectAsStateWithLifecycle()
+    val fwChecked by model.firmware.checked.collectAsStateWithLifecycle()
+    val fwOffer by model.firmware.offer.collectAsStateWithLifecycle()
+    val fwProblem by model.firmware.problem.collectAsStateWithLifecycle()
+    val fwWork by model.firmware.work.collectAsStateWithLifecycle()
 
     SettingsPage(name, light = 0.6f) {
         item(key = "power") {
@@ -174,7 +184,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     },
                     look?.let { l -> l.colorName ?: l.color }?.let { v -> @Composable { ValueRow(stringResource(R.string.glasses_color), v, onClick = null) } },
                     look?.let { l -> l.lensName ?: l.lens }?.let { v -> @Composable { ValueRow(stringResource(R.string.glasses_lenses), v, onClick = null) } },
-                    { ValueRow(stringResource(R.string.glasses_firmware), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = null) },
+                    { ValueRow(stringResource(R.string.glasses_firmware), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = { firmwareOpen = true }) },
                     { ValueRow(stringResource(R.string.glasses_serial), serial ?: stringResource(R.string.settings_unknown), onClick = null) },
                     device?.thermal?.let { t -> @Composable { ValueRow(stringResource(R.string.glasses_heat), heatWords(t.health, t.throttling), onClick = null) } },
                     device?.storage?.let { s -> @Composable { ValueRow(stringResource(R.string.glasses_storage), stringResource(R.string.glasses_storage_free, gb(s.freeMb), gb(s.totalMb)), onClick = null) } },
@@ -271,6 +281,43 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     model.forget(serial)
                 })
                 ActionPill(stringResource(R.string.language_cancel), { forgetting = false }, quiet = true)
+            }
+        }
+    }
+    if (firmwareOpen) {
+        VisorSheet({ firmwareOpen = false; confirmingFirmware = false; model.firmware.dismiss() }) {
+            SheetTitle(stringResource(R.string.firmware_title))
+            Rows(
+                { ValueRow(stringResource(R.string.firmware_current), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = null) },
+                fwOffer?.let { o -> @Composable { ValueRow(stringResource(R.string.firmware_update), o.displayName.ifEmpty { o.targetVersion }, onClick = null) } },
+            )
+            val status: String? = when (val w = fwWork) {
+                is FirmwareWork.Failed -> stringResource(R.string.firmware_failed, w.reason)
+                FirmwareWork.Installed -> stringResource(R.string.firmware_installed)
+                is FirmwareWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
+                FirmwareWork.Idle -> when {
+                    fwChecking -> stringResource(R.string.firmware_checking)
+                    fwProblem.isNotEmpty() -> fwProblem
+                    fwChecked && fwOffer == null -> stringResource(R.string.firmware_up_to_date)
+                    else -> null
+                }
+            }
+            Column(Modifier.padding(horizontal = SIDE, vertical = 16.dp)) {
+                if (status != null) Footnote(status)
+                val offer = fwOffer
+                val installing = fwWork is FirmwareWork.Installing
+                if (confirmingFirmware && offer != null) {
+                    Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionPill(stringResource(R.string.firmware_install), { confirmingFirmware = false; model.firmware.install() })
+                        ActionPill(stringResource(R.string.language_cancel), { confirmingFirmware = false }, quiet = true)
+                    }
+                    Footnote(stringResource(R.string.firmware_confirm, offer.displayName.ifEmpty { offer.targetVersion }))
+                } else {
+                    Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionPill(stringResource(R.string.firmware_check), { model.firmware.check() }, quiet = true, enabled = !fwChecking && !installing)
+                        if (offer != null) ActionPill(stringResource(R.string.firmware_install), { confirmingFirmware = true }, enabled = !installing)
+                    }
+                }
             }
         }
     }

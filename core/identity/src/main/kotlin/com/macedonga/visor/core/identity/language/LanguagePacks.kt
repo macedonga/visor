@@ -39,7 +39,6 @@ const val LANGUAGE_FEATURE = "com.meta.constellation.feature.air.language_"
 /** Ray-Ban Meta Gen 2 on a user build, as the OTA service names it. */
 const val GEN2_DEVICE_TYPE = "ota.hammerhead.user"
 
-private const val GRAPH_URL = "https://ar-genai.graph.meta.com/graphql"
 private const val FETCH_UPDATES_DOC = "10649732309712548951633872342"
 
 /**
@@ -69,34 +68,9 @@ fun fetchPackOffers(
         put("device_firmware_rollout_token", JsonNull)
         put("device_manage_mode", JsonNull)
     }
-    val variables = buildJsonObject {
-        put("fetch_request", buildJsonObject { put("constellation_updates_request_info", JsonArray(listOf(info))) })
-    }
-    val body = pyUrlencode(
-        linkedMapOf(
-            "fb_api_req_friendly_name" to "FetchConstellationFeatureUpdates",
-            "client_doc_id" to FETCH_UPDATES_DOC,
-            "variables" to variables.toString(),
-            "method" to "post",
-            "locale" to "en_US",
-            "pretty" to "false",
-            "format" to "json",
-        ),
-    )
-    val reply = try {
-        http.post(
-            GRAPH_URL,
-            mapOf("Authorization" to "OAuth ${token.value}", "Content-Type" to "application/x-www-form-urlencoded"),
-            body.toByteArray(Charsets.US_ASCII),
-        )
-    } catch (error: Exception) {
-        throw TokenError("Meta could not be reached: ${error.message}")
-    }
-    val json = runCatching { Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject }
-        .getOrElse { throw TokenError("Meta answered ${reply.status} with no JSON") }
-    json["errors"]?.let { throw TokenError("Meta refused: ${it.toString().take(200)}") }
+    val (status, json) = constellationPost(token, "FetchConstellationFeatureUpdates", FETCH_UPDATES_DOC, info, http)
     val responses = json.path("data", "xar_constellation_feature_updates")?.get("constellation_updates_response_info") as? JsonArray
-        ?: throw TokenError("Meta answered ${reply.status} without updates")
+        ?: throw TokenError("Meta answered $status without updates")
     return responses.flatMap { r ->
         (r.jsonObject["resource_updates_info"] as? JsonArray).orEmpty().flatMap { u ->
             val feature = u.jsonObject.path("feature")?.text("feature_name").orEmpty()
@@ -116,6 +90,42 @@ fun fetchPackOffers(
         }
     }
 }
+
+/**
+ * One FetchConstellation query as the Meta app sends it, with [info] as its `constellation_updates_request_info`.
+ * Returns the HTTP status and the answer's JSON.
+ */
+internal fun constellationPost(token: Token, friendlyName: String, docId: String, info: JsonObject, http: HttpPost): Pair<Int, JsonObject> {
+    val variables = buildJsonObject {
+        put("fetch_request", buildJsonObject { put("constellation_updates_request_info", JsonArray(listOf(info))) })
+    }
+    val body = pyUrlencode(
+        linkedMapOf(
+            "fb_api_req_friendly_name" to friendlyName,
+            "client_doc_id" to docId,
+            "variables" to variables.toString(),
+            "method" to "post",
+            "locale" to "en_US",
+            "pretty" to "false",
+            "format" to "json",
+        ),
+    )
+    val reply = try {
+        http.post(
+            GRAPH_URL,
+            mapOf("Authorization" to "OAuth ${token.value}", "Content-Type" to "application/x-www-form-urlencoded"),
+            body.toByteArray(Charsets.US_ASCII),
+        )
+    } catch (error: Exception) {
+        throw TokenError("Meta could not be reached: ${error.message}")
+    }
+    val json = runCatching { Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject }
+        .getOrElse { throw TokenError("Meta answered ${reply.status} with no JSON") }
+    json["errors"]?.let { throw TokenError("Meta refused: ${it.toString().take(200)}") }
+    return reply.status to json
+}
+
+private const val GRAPH_URL = "https://ar-genai.graph.meta.com/graphql"
 
 private fun JsonObject.path(vararg keys: String): JsonObject? =
     keys.fold(this as JsonObject?) { o, k -> o?.get(k) as? JsonObject }
