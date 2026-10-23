@@ -13,11 +13,13 @@ import javax.inject.Singleton
 /**
  * svc41107, lease_service: the glasses ask for internet (type 1, InternetLeaseRequest) and for a link (type 4,
  * LinkLeaseRequest), and end a lease (type 3, no answer). Internet leases are answered as the Meta app answers them
- * (2, use the glasses' own Wi-Fi); a link lease (5) on Bluetooth is granted, one that needs Wi-Fi is refused for now.
+ * (2, use the glasses' own Wi-Fi); a link lease (5) on Bluetooth is granted, and one that needs Wi-Fi is granted
+ * when the phone can move the session to Wi-Fi ([WifiLink]), refused otherwise.
  */
 @Singleton
 class LeaseService @Inject constructor(
     private val log: Provider<EventLog>,
+    private val wifiLink: Provider<WifiLink>,
 ) : Responder {
     // Leases the glasses hold, by lease id, so an expiry can be named in the log.
     private val held = ConcurrentHashMap<String, String>()
@@ -47,22 +49,32 @@ class LeaseService @Inject constructor(
                     request.has(6) -> request.varint(6) >= 1
                     else -> null
                 }
-                val reply = when (wifi) {
-                    null -> Wire.fieldBytes(1, id) + refusal(ERROR_BAD_REQUEST, "Invalid Request")
-                    true -> Wire.fieldBytes(1, id) + refusal(ERROR_WIFI_DIRECT_NOT_AVAILABLE, "Wi-Fi is not available for this link.")
-                    false -> Wire.fieldBytes(1, id)
+                val unavailable = if (wifi == true) wifiLink.get().refusal() else null
+                val reply = when {
+                    wifi == null -> Wire.fieldBytes(1, id) + refusal(ERROR_BAD_REQUEST, "Invalid Request")
+                    unavailable != null -> Wire.fieldBytes(1, id) + refusal(ERROR_WIFI_DIRECT_NOT_AVAILABLE, "Wi-Fi is not available for this link.")
+                    else -> Wire.fieldBytes(1, id)
                 }
                 log.get().add(
-                    when (wifi) {
-                        null -> "Lease: the glasses asked for a link with no requirement; refused"
-                        true -> "Lease: the glasses asked for Wi-Fi; not available yet, refused"
-                        false -> "Lease: the glasses asked for a link on Bluetooth; answered OK"
+                    when {
+                        wifi == null -> "Lease: the glasses asked for a link with no requirement; refused"
+                        unavailable != null -> "Lease: the glasses asked for Wi-Fi; refused, $unavailable"
+                        wifi == true -> "Lease: the glasses asked for Wi-Fi; answered OK"
+                        else -> "Lease: the glasses asked for a link on Bluetooth; answered OK"
                     },
                 )
                 if (wifi == false) held[key] = "link"
                 connection.send(channel, reply, messageType = MT_LINK_RESPONSE)
+                // Answered on the Bluetooth session first: the move to Wi-Fi ends it.
+                if (wifi == true && unavailable == null) {
+                    held[key] = "Wi-Fi link"
+                    wifiLink.get().hold(key)
+                }
             }
-            MT_LEASE_EXPIRATION -> held.remove(key)?.let { log.get().add("Lease: a $it lease ended") }
+            MT_LEASE_EXPIRATION -> {
+                held.remove(key)?.let { log.get().add("Lease: a $it lease ended") }
+                wifiLink.get().release(key)
+            }
             else -> log.get().add("Lease: message type ${message.info.messageType} is not handled")
         }
     }

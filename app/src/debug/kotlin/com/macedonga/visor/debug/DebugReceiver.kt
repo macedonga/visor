@@ -68,6 +68,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var internet: com.macedonga.visor.connection.InternetSwitch
     @Inject lateinit var developer: com.macedonga.visor.outside.DeveloperMode
     @Inject lateinit var texts: com.macedonga.visor.connection.PhoneMessages
+    @Inject lateinit var wifiLink: com.macedonga.visor.connection.WifiLink
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -476,6 +477,12 @@ class DebugReceiver : BroadcastReceiver() {
                 withTimeoutOrNull(20_000) {
                     mcp.signIn.first { it is com.macedonga.visor.core.assistant.mcp.SignIn.Done || it is com.macedonga.visor.core.assistant.mcp.SignIn.Failed }
                 }.toString()
+            }
+            // A lease that needs Wi-Fi, held and let go as the Display's would be.
+            "WIFI_LINK" -> resultData = if (intent.getBooleanExtra("on", true)) {
+                wifiLink.hold("debug").let { "held: " + (wifiLink.refusal() ?: "moving") }
+            } else {
+                wifiLink.release("debug").let { "released" }
             }
             "MCP_REMOVE" -> {
                 mcp.store.remove(intent.getStringExtra("id").orEmpty())

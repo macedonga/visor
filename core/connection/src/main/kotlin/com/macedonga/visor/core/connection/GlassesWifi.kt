@@ -52,6 +52,14 @@ class GlassesWifi(private val connection: GlassesConnection) {
         if (answer == null) null else readList(answer)
     }
 
+    /** The passphrase the glasses keep for [ssid] (QueryNetworksResult.Result 11), or null. A secret: never logged. */
+    suspend fun keyOf(ssid: String): String? = lock.withLock {
+        val answer = ask(MT_QUERY_NETWORKS, ByteArray(0), MT_QUERY_NETWORKS_RESULT) ?: return null
+        val fields = Wire.parse(answer)
+        if (fields.varint(1) != 0L) return null
+        fields.repeatedBytes(2).map(Wire::parse).firstOrNull { it.bytes(1).decodeToString() == ssid }?.takeIf { it.has(11) }?.bytes(11)?.decodeToString()
+    }
+
     private fun readList(answer: ByteArray): List<String>? {
         val fields = Wire.parse(answer)
         if (fields.varint(1) != 0L) {

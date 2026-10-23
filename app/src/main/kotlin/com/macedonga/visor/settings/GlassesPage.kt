@@ -201,6 +201,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         RowFrame(
                             stringResource(
                                 when {
+                                    ready && glasses.target?.link is GlassesLink.Wifi -> R.string.glasses_link_wifi
                                     ready -> if (le) R.string.glasses_link_le else R.string.glasses_link_rfcomm
                                     running && glasses.link != LinkState.DISCONNECTED && glasses.link != LinkState.LOST -> R.string.glasses_searching
                                     else -> R.string.glasses_link_off

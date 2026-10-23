@@ -455,6 +455,7 @@
     <string name="glasses_section_link">Collegamento</string>
     <string name="glasses_link_le">Collegati via Bluetooth LE</string>
     <string name="glasses_link_rfcomm">Collegati via Bluetooth</string>
+    <string name="glasses_link_wifi">Collegati via Wi-Fi</string>
     <string name="glasses_link_off">Non collegati</string>
     <string name="glasses_disconnect">Scollega</string>
     <string name="glasses_connect">Collega</string>

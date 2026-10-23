@@ -93,8 +93,47 @@ class GlassesConnection(
     private var holdingStatus = true
     private var statusTimer: Job? = null
 
+    // While a lease holds the session on Wi-Fi, the Bluetooth target it came from.
+    @Volatile
+    private var bluetooth: GlassesTarget? = null
+
+    /** True while the session runs on Wi-Fi for a lease, with Bluetooth to come back to. */
+    val onWifi: Boolean get() = bluetooth != null
+
     /** Choose a target, open a session on it, and keep the state current until [stop]. */
     fun start(scope: CoroutineScope, override: GlassesTarget? = null) {
+        bluetooth = null
+        open(scope, override)
+    }
+
+    /**
+     * Move the session to [target], a Wi-Fi link, as the Meta app's link manager does for a lease: the glasses take one
+     * session at a time, so it moves rather than opening a second, and every service moves with it.
+     */
+    suspend fun moveToWifi(target: GlassesTarget) {
+        val current = _state.value.target ?: return
+        if (bluetooth == null) bluetooth = current.takeIf { it.link is GlassesLink.Bluetooth } ?: return
+        reopen(target)
+    }
+
+    /** Back on the Bluetooth link the session left for [moveToWifi]. */
+    suspend fun backToBluetooth() {
+        val target = bluetooth ?: return
+        bluetooth = null
+        reopen(target)
+    }
+
+    private suspend fun reopen(target: GlassesTarget) {
+        val scope = lastScope ?: return
+        if (!_running.value) return
+        host?.stop()
+        host = null
+        job?.cancelAndJoin()
+        job = null
+        open(scope, target)
+    }
+
+    private fun open(scope: CoroutineScope, override: GlassesTarget?) {
         lastScope = scope
         lastOverride = override
         _running.value = true
@@ -125,6 +164,9 @@ class GlassesConnection(
 
     /** Let go of the link without ending the connection, so another session can have the glasses. */
     suspend fun pause(why: String) {
+        // The session that takes over runs on Wi-Fi of its own; this one comes back on Bluetooth.
+        bluetooth?.let { lastOverride = it }
+        bluetooth = null
         host?.stop()
         host = null
         job?.cancelAndJoin()
@@ -135,7 +177,7 @@ class GlassesConnection(
     /** Reconnect after [pause], unless [stop] ran in between. */
     fun resume() {
         val scope = lastScope ?: return
-        if (_running.value && job == null) start(scope, lastOverride)
+        if (_running.value && job == null) open(scope, lastOverride)
     }
 
     /** Ask svc28 again on the session's own status channel: the glasses answer with a fresh full snapshot. */
@@ -158,6 +200,7 @@ class GlassesConnection(
      * has stopped.
      */
     suspend fun stop() {
+        bluetooth = null
         host?.stop()
         host = null
         job?.cancelAndJoin()
