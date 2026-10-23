@@ -45,7 +45,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * is one; any other goes as SMS, answered once the radio has sent it. Each request comes on a channel of its own and
  * is answered with its own type; a reply over 1000 bytes goes as type-32 chunks when the request allows them. Texts
  * that arrive reach the glasses as native notifications, from the SMS app's own notifications (see MirrorListener).
- * The Phone app's recent calls (type 11) come on this service too; [PhoneCalls] answers them.
+ * The Phone app's recent calls (type 11) come on this service too; [PhoneCalls] answers them, and the call control
+ * (placing, answering) is [PhoneCallControl]'s.
  *
  * The RCS chats Google Messages files as MMS are marked restricted, and Android shows those rows only to the default
  * SMS app: a chat with nothing else in it is missing from the list here.
@@ -57,10 +58,13 @@ class PhoneMessages @Inject constructor(
     private val log: Provider<EventLog>,
     private val replies: TextReplies,
     private val calls: PhoneCalls,
+    private val control: PhoneCallControl,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Messages: failed: $e") })
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
+        // Call control has types with empty payloads, so it is checked before the text's.
+        if (message.info.messageType in PhoneCallControl.TYPES) return control.respond(message, connection)
         if (message.payload.isEmpty()) return
         val request = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
         val type = message.info.messageType
