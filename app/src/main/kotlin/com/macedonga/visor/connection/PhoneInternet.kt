@@ -15,6 +15,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -51,10 +52,17 @@ class PhoneInternet @Inject constructor(
     // A connection that fails ends alone; nothing in here may take the app down.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Internet: a connection failed: $e") })
     private val sessions = ConcurrentHashMap<Int, Session>()
+    // When the tunnel last carried anything either way; a move to Wi-Fi for a link ends once it has been idle a while.
+    private val lastTraffic = AtomicLong(System.currentTimeMillis())
+
+    fun idleMillis(): Long = System.currentTimeMillis() - lastTraffic.get()
+
+    fun touch() = lastTraffic.set(System.currentTimeMillis())
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val info = message.info
         val channel = info.channelId
+        touch()
         if (info.flags.isClosed && message.payload.isEmpty()) {
             sessions.remove(channel)?.close()
             relay.forget(channel)
@@ -111,6 +119,7 @@ class PhoneInternet @Inject constructor(
 
         /** An IP packet to the Display, framed for its tunnel. */
         suspend fun deliver(version: Int, src: ByteArray, dst: ByteArray, protocol: Int, transport: ByteArray) {
+            touch()
             val ip = IpPacket.build(version, src, dst, protocol, transport, ids.incrementAndGet())
             val frame = ByteBuffer.allocate(ICEE_HEADER + ip.size).order(ByteOrder.LITTLE_ENDIAN)
                 .putShort(ICEE_MAGIC.toShort()).putShort(ip.size.toShort())

@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * svc41108, internet_switch: how the phone's internet is (type 3): connected, metered, and its DNS servers. The Display
@@ -71,6 +73,15 @@ class InternetSwitch @Inject constructor(
         if (glasses.state.value.link != LinkState.READY) return
         val state = encode(phoneInternet())
         glasses.submit { it.sendOnService(SVC, MT_COMPANION_STATE, state) }
+    }
+
+    /** The state on [mux] itself, for a session other than Bluetooth's (Wi-Fi during a link lease). */
+    suspend fun pushOn(mux: DataXConnection) = mux.sendOnService(SVC, MT_COMPANION_STATE, encode(phoneInternet()))
+
+    /** After a move back to Bluetooth: its session is new, so the state goes on it once the link is up again. */
+    suspend fun pushWhenReady() {
+        withTimeoutOrNull(60_000) { connection.get().state.first { it.link == LinkState.READY } }
+        push()
     }
 
     private data class PhoneInternet(val connected: Boolean, val metered: Boolean, val dns: List<String>)
