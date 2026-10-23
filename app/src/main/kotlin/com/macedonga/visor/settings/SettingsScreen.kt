@@ -569,8 +569,12 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
         Topic.BAND -> {
             val band by model.band.state.collectAsStateWithLifecycle()
             val pair by model.connection.pair.collectAsStateWithLifecycle()
-            if (model.bands.forGlasses(pair) == null) stringResource(R.string.band_none)
-            else listOfNotNull(band.battery?.let { batteryWords(it, band.charging) }, band.leftHanded?.let { wristWords(it) }).joinToString(" · ")
+            val glasses by model.connection.state.collectAsStateWithLifecycle()
+            // The Display reports the band it holds, set up in Visor or not.
+            val battery = glasses.device?.bandBattery ?: band.battery
+            val charging = glasses.device?.bandCharging ?: band.charging
+            if (model.bands.forGlasses(pair) == null && battery == null) stringResource(R.string.band_none)
+            else listOfNotNull(battery?.let { batteryWords(it, charging) }, band.leftHanded?.let { wristWords(it) }).joinToString(" · ")
         }
         Topic.SOUND -> listOfNotNull(
             shown("notification_volume")?.let { stringResource(R.string.sum_sound_volume, it) },

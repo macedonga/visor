@@ -47,7 +47,12 @@ internal fun BandPart(model: SettingsViewModel) {
         problem = problem,
     )
     if (all.none { it.glasses == pair }) {
-        Rows({ SetUpRow(R.string.band_set_up) })
+        // A band the Display already holds reports through it; Visor's own link to the band needs the setup.
+        Rows(
+            battery?.let { b -> row { ValueRow(stringResource(R.string.band_battery), batteryWords(b, charging), onClick = null) } },
+            fitWords(device?.bandFit)?.let { fit -> row { ValueRow(stringResource(R.string.band_fit), fit, onClick = null) } },
+            { SetUpRow(R.string.band_set_up) },
+        )
         return
     }
     Rows(
