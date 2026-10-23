@@ -10,7 +10,9 @@ import com.macedonga.visor.core.media.BAND_2GHZ
 import com.macedonga.visor.core.media.BW_20MHZ
 import com.macedonga.visor.core.media.BW_UNSPECIFIED
 import com.macedonga.visor.core.media.JoinResult
+import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MT_JOIN_ACCESS_POINT_RESULT
+import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.PhoneGroup
 import com.macedonga.visor.core.media.SVC_ATC
 import com.macedonga.visor.core.media.WifiUnavailable
@@ -50,6 +52,8 @@ class WifiLink @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: GlassesConnection,
     private val networks: GlassesWifi,
+    private val live: Provider<LiveStream>,
+    private val media: Provider<MediaImport>,
     private val log: Provider<EventLog>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> say("failed: $e") })
@@ -62,6 +66,8 @@ class WifiLink @Inject constructor(
     fun refusal(): String? = when {
         !wifiIsOn(context) -> "the phone's Wi-Fi is off"
         connection.state.value.link != LinkState.READY -> "the glasses are not connected"
+        live.get().running.value -> "the Live view is using Wi-Fi"
+        media.get().importing.value -> "a media import is using Wi-Fi"
         else -> null
     }
 
@@ -97,9 +103,22 @@ class WifiLink @Inject constructor(
         say("the session runs over Wi-Fi")
         connection.state.first { it.link != LinkState.READY || !connection.onWifi }
         lock.withLock {
-            // Live or a media import took the glasses for a Wi-Fi session of their own, and their group with it.
-            if (!connection.onWifi) group = null else back("the Wi-Fi session dropped")
+            when {
+                connection.onWifi -> back("the Wi-Fi session dropped")
+                // The Live or a media import took the glasses for a Wi-Fi session of their own, and the group with it.
+                connection.paused -> forget()
+                // The session was opened again on Bluetooth some other way.
+                else -> {
+                    group?.remove()
+                    forget()
+                }
+            }
         }
+    }
+
+    private fun forget() {
+        group = null
+        leases.clear()
     }
 
     private suspend fun back(why: String) {

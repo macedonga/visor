@@ -100,6 +100,11 @@ class GlassesConnection(
     /** True while the session runs on Wi-Fi for a lease, with Bluetooth to come back to. */
     val onWifi: Boolean get() = bluetooth != null
 
+    /** True from [pause] until the session opens again: the Live or a media import has the glasses on Wi-Fi of its own. */
+    @Volatile
+    var paused = false
+        private set
+
     /** Choose a target, open a session on it, and keep the state current until [stop]. */
     fun start(scope: CoroutineScope, override: GlassesTarget? = null) {
         bluetooth = null
@@ -134,6 +139,7 @@ class GlassesConnection(
     }
 
     private fun open(scope: CoroutineScope, override: GlassesTarget?) {
+        paused = false
         lastScope = scope
         lastOverride = override
         _running.value = true
@@ -167,6 +173,7 @@ class GlassesConnection(
         // The session that takes over runs on Wi-Fi of its own; this one comes back on Bluetooth.
         bluetooth?.let { lastOverride = it }
         bluetooth = null
+        paused = true
         host?.stop()
         host = null
         job?.cancelAndJoin()

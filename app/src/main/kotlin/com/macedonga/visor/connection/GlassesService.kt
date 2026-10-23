@@ -191,7 +191,8 @@ class GlassesService : Service() {
         if (live.running.value || media.importing.value) return
         scope.launch {
             connection.stop()
-            connection.start(scope, state.target)
+            // Tried again on Bluetooth: a Wi-Fi link that dropped is not one to wait for.
+            connection.start(scope, state.target?.takeIf { it.link is GlassesLink.Bluetooth })
         }
     }
 
@@ -219,7 +220,8 @@ class GlassesService : Service() {
         scope.launch {
             var last = 0L
             combine(connection.state, kind.overLe, keeper.connected) { state, le, held ->
-                held && !le && state.link == LinkState.READY && state.device?.streamingActive != true
+                // A session moved to Wi-Fi for a lease is not on LE either, and stays where it is.
+                held && !le && state.link == LinkState.READY && state.device?.streamingActive != true && state.target?.link !is GlassesLink.Wifi
             }
                 .distinctUntilChanged()
                 .collect { move ->
