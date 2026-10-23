@@ -2,11 +2,16 @@ package com.macedonga.visor.settings
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.band.BandSetup
 import com.macedonga.visor.core.session.LinkState
+import kotlinx.coroutines.launch
 
 /** The Neural Band that goes with this Display: set it up, or its battery and the wrist it is on. */
 @Composable
@@ -22,6 +27,8 @@ internal fun BandPart(model: SettingsViewModel) {
     val setup by model.bandSetup.status.collectAsStateWithLifecycle()
     val running = setup is BandSetup.Status.Running
     val problem = (setup as? BandSetup.Status.Failed)?.let { failWords(it) }
+    val scope = rememberCoroutineScope()
+    var refused by remember { mutableStateOf(false) }
     @Composable
     fun SetUpRow(title: Int) = ValueRow(
         stringResource(title),
@@ -52,7 +59,13 @@ internal fun BandPart(model: SettingsViewModel) {
                 onPick = { model.band.setLeftHanded(it) },
             )
         },
-        { ValueRow(stringResource(R.string.band_buzz), null, onClick = { model.band.buzz() }) },
+        {
+            ValueRow(
+                stringResource(R.string.band_buzz), null,
+                onClick = { scope.launch { refused = !model.band.vibrate() } },
+                problem = if (refused) stringResource(R.string.band_buzz_refused) else null,
+            )
+        },
         { SetUpRow(R.string.band_set_up_again) },
     )
 }

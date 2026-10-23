@@ -9,13 +9,23 @@ object Band {
     const val RESPONSE = 21
     const val STREAM_UPDATE = 22
 
+    /** The answer's code when the band did what it was asked. */
+    const val OK = 0
+
     /** The PSM the band's GATT names; the glasses' is 128. */
     const val PSM = 129
 
     class Battery(val percent: Int, val charging: Boolean)
 
-    /** RpcResponse {1: seq, 2: code, 3: BatteryInfoResp, 4: DeviceInfoResp, 6: ConfigResp, ...}, as far as Visor reads it. */
-    class Response(val seq: Int, val code: Int, val battery: Battery?, val leftHanded: Boolean?, val protocol: Int? = null)
+    /** RpcResponse {1: seq, 2: code, 3: BatteryInfoResp, 4: DeviceInfoResp, 6: ConfigResp, 18: HapticsResp, ...}, as far as Visor reads it. */
+    class Response(
+        val seq: Int,
+        val code: Int,
+        val battery: Battery?,
+        val leftHanded: Boolean?,
+        val protocol: Int? = null,
+        val haptics: Int? = null,
+    )
 
     /**
      * A gesture, `EmgImu$GestureEvent`, sent as stream type 13 or a granular type from 60 to 200: {1 seq, 3 finger, 4 action,
@@ -51,6 +61,9 @@ object Band {
     fun vibrate(seq: Int, duration: Long, frequency: Float, amplitude: Int): ByteArray =
         request(seq, 17, Wire.fieldBytes(1, Wire.fieldVarint(1, duration) + Wire.fieldFloat(2, frequency) + Wire.fieldVarint(3, amplitude.toLong())))
 
+    /** RpcRequest {1: seq, 17: HapticsReq {3: StopReq {}}}. */
+    fun stopHaptics(seq: Int): ByteArray = request(seq, 17, Wire.fieldBytes(3, ByteArray(0)))
+
     fun isGesture(type: Int): Boolean = type == 13 || type in 60..200
 
     fun gesture(type: Int, payload: ByteArray): Gesture {
@@ -67,7 +80,9 @@ object Band {
         val battery = if (f.has(3)) battery(Wire.parse(f.bytes(3)).bytes(1)) else null
         val left = if (f.has(6)) Wire.parse(f.bytes(6)).let { c -> if (c.has(10)) c.varint(10) != 0L else null } else null
         val protocol = if (f.has(4)) Wire.parse(f.bytes(4)).let { d -> if (d.has(15)) d.varint(15).toInt() else null } else null
-        return Response(f.varint(1).toInt(), f.varint(2).toInt(), battery, left, protocol)
+        // HapticsResp {1: code}, in field 18 of the response.
+        val haptics = if (f.has(18)) Wire.parse(f.bytes(18)).let { h -> if (h.has(1)) h.varint(1).toInt() else null } else null
+        return Response(f.varint(1).toInt(), f.varint(2).toInt(), battery, left, protocol, haptics)
     }
 
     /** RpcStreamUpdate field 2, BatteryUpdate {1: BatteryData}. */

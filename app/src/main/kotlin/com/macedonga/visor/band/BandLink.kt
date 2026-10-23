@@ -19,14 +19,17 @@ import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -71,6 +74,8 @@ class BandLink @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = Mutex()
     private val seq = AtomicInteger(1)
+    // Answers still awaited, by request seq; a haptics request waits for its own.
+    private val replies = ConcurrentHashMap<Int, CompletableDeferred<Int>>()
     private val leased = MutableStateFlow(false)
     private val held = MutableStateFlow(true)
     private val lesson = MutableStateFlow(false)
@@ -130,8 +135,37 @@ class BandLink @Inject constructor(
         log.add("Band: the lesson gives the band back")
     }
 
-    /** A short buzz on the band, taken from the Display for it. */
-    fun buzz() = borrow { seq -> listOf(Band.vibrate(seq.getAndIncrement(), BUZZ_DURATION, BUZZ_HZ, BUZZ_AMPLITUDE)) }
+    /** A buzz on the band; true when the band answers OK. */
+    suspend fun vibrate(duration: Long = BUZZ_DURATION, frequency: Float = BUZZ_HZ, amplitude: Int = BUZZ_AMPLITUDE): Boolean =
+        haptic { seq -> Band.vibrate(seq, duration, frequency, amplitude) }
+
+    /** Stops a buzz; true when the band answers OK. */
+    suspend fun stop(): Boolean = haptic { seq -> Band.stopHaptics(seq) }
+
+    /** One haptics request, taking the band from the Display for it; true when the band answers OK. */
+    private suspend fun haptic(request: (Int) -> ByteArray): Boolean {
+        val borrowed = _state.value.link != LinkState.READY
+        if (borrowed) borrowing.value = true
+        try {
+            if (borrowed && withTimeoutOrNull(BORROW_MS) { _state.first { it.link == LinkState.READY } } == null) {
+                log.add("Band: not reached for a buzz in ${BORROW_MS / 1000} s")
+                return false
+            }
+            val n = seq.getAndIncrement()
+            val answer = CompletableDeferred<Int>()
+            replies[n] = answer
+            val code = if (send { listOf(request(n)) }) withTimeoutOrNull(REPLY_MS) { answer.await() } else null
+            replies.remove(n)
+            if (code != null && code != Band.OK) log.add("Band: the buzz was refused, code $code")
+            if (code == null) log.add("Band: no answer to the buzz")
+            return code == Band.OK
+        } finally {
+            if (borrowed) scope.launch {
+                delay(ERRAND_MS)
+                borrowing.value = false
+            }
+        }
+    }
 
     /** Take the band for one errand, then give it back; at once when the phone already has it. */
     private fun borrow(requests: (AtomicInteger) -> List<ByteArray>) {
@@ -244,6 +278,7 @@ class BandLink @Inject constructor(
         val battery = runCatching {
             when (type) {
                 Band.RESPONSE -> Band.response(event.payload).also { r ->
+                    replies.remove(r.seq)?.complete(r.haptics ?: r.code)
                     if (r.leftHanded != null) _state.update { it.copy(leftHanded = r.leftHanded) }
                     if (r.protocol != null) {
                         _state.update { it.copy(protocol = r.protocol) }
@@ -273,6 +308,7 @@ class BandLink @Inject constructor(
         const val INFO_WAIT_MS = 1_500L
         const val BORROW_MS = 20_000L
         const val ERRAND_MS = 1_500L
+        const val REPLY_MS = 5_000L
         // Nothing in the Meta app sends a buzz, so these are a guess at milliseconds, hertz and a 0-255 strength.
         const val BUZZ_DURATION = 200L
         const val BUZZ_HZ = 170f
