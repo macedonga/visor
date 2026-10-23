@@ -84,5 +84,6 @@ class MainActivity : ComponentActivity() {
         const val OPEN_LIVE = "live"
         const val OPEN_META_AI = "metaai"
         const val OPEN_ONBOARDING = "onboarding"
+        const val OPEN_ACCOUNTS = "accounts"
     }
 }

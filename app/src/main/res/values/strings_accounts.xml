@@ -16,4 +16,8 @@
     <string name="accounts_refused">The glasses refused it</string>
     <string name="accounts_linked_as">Linked as %1$s</string>
     <string name="accounts_off_for_glasses">%1$s, turned off for glasses</string>
+    <string name="link_channel">Account linking</string>
+    <string name="link_title">Link %1$s to your glasses</string>
+    <string name="link_reconnect_title">Reconnect %1$s on your glasses</string>
+    <string name="link_text">Your glasses asked for it. Tap to open Accounts.</string>
 </resources>

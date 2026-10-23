@@ -16,4 +16,8 @@
     <string name="accounts_refused">Gli occhiali lo hanno rifiutato</string>
     <string name="accounts_linked_as">Collegato come %1$s</string>
     <string name="accounts_off_for_glasses">%1$s, disattivato per gli occhiali</string>
+    <string name="link_channel">Collegamento account</string>
+    <string name="link_title">Collega %1$s ai tuoi occhiali</string>
+    <string name="link_reconnect_title">Ricollega %1$s sui tuoi occhiali</string>
+    <string name="link_text">Te lo chiedono gli occhiali. Tocca per aprire Account.</string>
 </resources>

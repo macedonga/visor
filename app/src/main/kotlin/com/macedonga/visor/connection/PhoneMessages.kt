@@ -61,6 +61,7 @@ class PhoneMessages @Inject constructor(
     private val calls: PhoneCalls,
     private val control: PhoneCallControl,
     private val recent: RecentChats,
+    private val linkPrompt: LinkPrompt,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Messages: failed: $e") })
 
@@ -73,6 +74,7 @@ class PhoneMessages @Inject constructor(
         val reply = DataXConnection.mirror(message.info.channelId)
         // The Phone app's recent calls, asked once per provider, each waiting for its answer.
         if (type == MT_LOAD_CALL_LOG) return calls.loadCallLog(request, reply, connection)
+        if (type == LinkPrompt.MT_TRIGGER) return linkPrompt.trigger(request, reply, connection)
         if (type !in SERVED) return log.get().add("Messages: type $type not served")
         // The phone's texts, and replies to a chat notification (Messenger, WhatsApp, Instagram) through its reply action.
         val provider = request.varint(1)

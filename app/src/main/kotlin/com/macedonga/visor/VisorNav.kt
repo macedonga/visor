@@ -184,6 +184,7 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
             if (place == MainActivity.OPEN_GALLERY && backStack.lastOrNull() != MediaKey) backStack.add(MediaKey)
             if (place == MainActivity.OPEN_META_AI && backStack.lastOrNull() != MetaAiKey) backStack.add(MetaAiKey)
             if (place == MainActivity.OPEN_ONBOARDING && backStack.lastOrNull() !is OnboardingKey) backStack.add(OnboardingKey(welcome = true))
+            if (place == MainActivity.OPEN_ACCOUNTS && backStack.lastOrNull() != AccountsKey) backStack.add(AccountsKey)
             if (place == MainActivity.OPEN_LIVE && backStack.lastOrNull() != LiveKey) {
                 stage.homeToTop = true
                 backStack.add(LiveKey)
