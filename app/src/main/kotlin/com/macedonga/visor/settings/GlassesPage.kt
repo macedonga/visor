@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.navigation3.runtime.NavKey
+import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.OnboardingKey
 import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.R
@@ -247,6 +248,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         }
                     },
                     { ValueRow(stringResource(R.string.glasses_change_owner), null, onClick = { open(OnboardingKey(login = true, address = (glasses.target?.link as? GlassesLink.Bluetooth)?.address)) }, sub = stringResource(R.string.glasses_change_owner_sub)) },
+                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) }, locked = !ready) } else null,
                 )
             }
         }
