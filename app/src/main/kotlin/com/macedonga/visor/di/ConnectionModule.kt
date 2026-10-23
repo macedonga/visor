@@ -153,6 +153,7 @@ object ConnectionModule {
         calls: com.macedonga.visor.connection.PhoneCalls,
         media: com.macedonga.visor.connection.PhoneMedia,
         captureState: com.macedonga.visor.connection.CaptureState,
+        leases: com.macedonga.visor.connection.LeaseService,
     ): SessionHostFactory = RealSessionHostFactory(
         transports,
         responders = mapOf(
@@ -176,6 +177,7 @@ object ConnectionModule {
             com.macedonga.visor.connection.PhoneCalls.SVC to calls,
             com.macedonga.visor.connection.PhoneMedia.SVC to media,
             com.macedonga.visor.connection.CaptureState.SVC to captureState,
+            com.macedonga.visor.connection.LeaseService.SVC to leases,
             SVC_HEARING to Responder { message, mux -> hearing.get().respond(message, mux) },
             ServiceId.CONN_DEVICE_LEASE.value to Responder { message, mux -> lease.get().respond(message, mux) },
         ),
