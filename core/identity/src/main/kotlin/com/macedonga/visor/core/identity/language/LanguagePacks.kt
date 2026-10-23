@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.identity.language
 
+import com.macedonga.visor.core.identity.token.checkSession
 import com.macedonga.visor.core.identity.HttpPost
 import com.macedonga.visor.core.identity.UrlConnectionPost
 import com.macedonga.visor.core.identity.pyUrlencode
@@ -126,6 +127,7 @@ internal fun graphPost(token: Token, friendlyName: String, docId: String, variab
     }
     val json = runCatching { Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject }
         .getOrElse { throw TokenError("Meta answered ${reply.status} with no JSON") }
+    checkSession(json)
     json["errors"]?.let { throw TokenError("Meta refused: ${it.toString().take(200)}") }
     return reply.status to json
 }

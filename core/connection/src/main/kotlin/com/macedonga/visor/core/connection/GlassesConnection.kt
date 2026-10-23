@@ -88,8 +88,10 @@ class GlassesConnection(
     private val judged = AtomicBoolean(false)
     private var deadline: Job? = null
 
-    // svc28 state that came before svc100 said which model this is.
+    // svc28 state that came before svc100 said which model this is. Let through after a while if svc100 never decodes.
     private val heldStatus = mutableListOf<ServiceData>()
+    private var holdingStatus = true
+    private var statusTimer: Job? = null
 
     /** Choose a target, open a session on it, and keep the state current until [stop]. */
     fun start(scope: CoroutineScope, override: GlassesTarget? = null) {
@@ -212,7 +214,7 @@ class GlassesConnection(
                 }
                 if (event.serviceId == SVC_STATUS && isDeviceStateType(event.messageType)) {
                     // How it is framed depends on the model, which svc100 names: what comes first waits for it.
-                    if (_state.value.info == null && heldStatus.size < HELD_STATUS) heldStatus += event else applyStatus(event)
+                    if (holdingStatus && _state.value.info == null && heldStatus.size < HELD_STATUS) heldStatus += event else applyStatus(event)
                 }
                 // Airship's file chunks and the live stream's frames are their responders' business,
                 // and thousands of them would push everything else out of this buffer.
@@ -241,6 +243,9 @@ class GlassesConnection(
 
     private fun newAttempt() {
         heldStatus.clear()
+        holdingStatus = true
+        statusTimer?.cancel()
+        statusTimer = null
         canaryAnswered = false
         judged.set(false)
         deadline?.cancel()
@@ -261,6 +266,13 @@ class GlassesConnection(
             announcePeerAppInfo(connection)
             statusChannel = subscribeOn(connection, null)
             syncClock(connection)
+        }
+        statusTimer = scope.launch {
+            delay(STATUS_HOLD_MILLIS)
+            if (canaryAnswered) return@launch
+            holdingStatus = false
+            heldStatus.forEach(::applyStatus)
+            heldStatus.clear()
         }
         if (canaryAnswered) {
             judge(host, bundle)
@@ -311,6 +323,9 @@ class GlassesConnection(
     companion object {
         /** 20 seconds, from `__main__.py`'s `_DEFAULT_TIMEOUT_SECONDS`. */
         const val CANARY_TIMEOUT_MILLIS: Long = 20_000
+
+        /** How long svc28 waits for svc100 before it is applied anyway. */
+        private const val STATUS_HOLD_MILLIS: Long = 5_000
 
         private const val SVC_AIRSHIP = 20
         private const val SVC_MEDIA_STREAMING_CONTROL = 51350

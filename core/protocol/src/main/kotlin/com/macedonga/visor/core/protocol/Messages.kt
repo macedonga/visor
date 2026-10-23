@@ -151,7 +151,8 @@ class EnableEncryption(
                 seed = f.bytes(2),
                 iv = f.bytes(3),
                 base = f.varint(4),
-                parameters = f.varint(5).toInt(),
+                // Left out, the glasses mean 31: Multikey on.
+                parameters = if (f.has(5)) f.varint(5).toInt() else 31,
                 quirks = f.varint(6).toInt(),
                 phasedLinkSetupSupported = f.varint(7).toInt(),
                 supportedLinkSetupServices = f.varint(8),

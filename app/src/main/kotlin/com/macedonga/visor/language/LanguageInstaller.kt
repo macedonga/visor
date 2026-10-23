@@ -1,5 +1,6 @@
 package com.macedonga.visor.language
 
+import com.macedonga.visor.core.identity.token.withToken
 import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.language.LANGUAGE_FEATURE
@@ -172,8 +173,7 @@ class LanguageInstaller @Inject constructor(
         val firmware = parts.getOrNull(4)?.substringBefore(':').orEmpty()
         val type = parts.getOrNull(4)?.substringAfter(':', "user").orEmpty()
         if (firmware.isEmpty()) error("the glasses' build is unknown")
-        val token = login.source.get()
-        return fetchPackOffers(token, info.serial, firmware, features, "ota.${parts.getOrElse(1) { "hammerhead" }}.$type")
+        return login.source.withToken { token -> fetchPackOffers(token, info.serial, firmware, features, "ota.${parts.getOrElse(1) { "hammerhead" }}.$type") }
     }
 
     private companion object {

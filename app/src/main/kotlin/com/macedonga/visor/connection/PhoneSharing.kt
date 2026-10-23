@@ -15,6 +15,7 @@ import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.settings.hasDisplay
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -53,10 +54,12 @@ class PhoneSharing @Inject constructor(
     private val files = ConcurrentHashMap<String, CompletableDeferred<File>>()
 
     fun start(scope: CoroutineScope) {
-        airship.extras.add(0, this)
         scope.launch {
             connection.get().state.map { it.link == LinkState.READY }.distinctUntilChanged().collect { ready ->
-                if (ready) connection.get().submit { it.sendOnService(SVC, MT_ENUMERATE_REQUEST, ByteArray(0)) }
+                // Only the Display's sharing is used; other glasses keep their own.
+                if (!ready || !hasDisplay(connection.get().state.value.info?.build)) return@collect
+                if (this@PhoneSharing !in airship.extras) airship.extras.add(0, this@PhoneSharing)
+                connection.get().submit { it.sendOnService(SVC, MT_ENUMERATE_REQUEST, ByteArray(0)) }
             }
         }
     }

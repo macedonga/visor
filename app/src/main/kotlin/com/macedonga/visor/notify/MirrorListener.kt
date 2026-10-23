@@ -30,6 +30,7 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.settings.hasDisplay
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
@@ -186,6 +187,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
         synchronized(held) { held.remove(sbn.key) }
         textReplies.remove(sbn.key)
         val (provider, uuid) = mirrored.remove(sbn.key) ?: return
+        if (!display()) return
         val request = Wire.fieldBytes(1, sbn.key.toByteArray()) + Wire.fieldVarint(2, provider.toLong()) + Wire.fieldBytes(6, uuid.toByteArray())
         connection.submit { it.sendOnService(GlassesNotification.SVC, GlassesNotification.MT_REMOVE, request) }
     }
@@ -329,6 +331,9 @@ class MirrorListener : NotificationListenerService(), Messaging {
 
     private fun ready() = connection.state.value.link == LinkState.READY
 
+    // The Display mirrors the phone's texts and removals too; other glasses get them over Bluetooth already.
+    private fun display() = hasDisplay(connection.state.value.info?.build)
+
     // The Meta app's filters: nothing ongoing, no group summaries, nothing empty or below default
     // importance, and not the dialer, whose calls reach the glasses by Bluetooth already.
     private fun wanted(sbn: StatusBarNotification, ranking: RankingMap): Boolean {
@@ -340,6 +345,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
         val r = Ranking()
         if (ranking.getRanking(sbn.key, r) && r.importance < NotificationManager.IMPORTANCE_DEFAULT) return false
         if (sbn.packageName == getSystemService(TelecomManager::class.java)?.defaultDialerPackage) return false
+        if (sbn.packageName == Telephony.Sms.getDefaultSmsPackage(this) && !display()) return false
         return true
     }
 

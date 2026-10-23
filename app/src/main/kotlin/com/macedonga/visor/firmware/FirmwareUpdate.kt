@@ -1,5 +1,6 @@
 package com.macedonga.visor.firmware
 
+import com.macedonga.visor.core.identity.token.withToken
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.firmware.FirmwareOffer
 import com.macedonga.visor.core.identity.firmware.fetchFirmwareOffer
@@ -84,7 +85,7 @@ class FirmwareUpdate @Inject constructor(
                 val type = parts.getOrNull(4)?.substringAfter(':', "user").orEmpty()
                 val product = parts.getOrNull(1).orEmpty()
                 if (firmware.isEmpty() || product.isEmpty()) error("the glasses' build is unknown")
-                val found = fetchFirmwareOffer(login.source.get(), info.serial, "ota.$product.$type", firmware)
+                val found = login.source.withToken { fetchFirmwareOffer(it, info.serial, "ota.$product.$type", firmware) }
                 _offer.value = found
                 _problem.value = ""
                 _checked.value = true

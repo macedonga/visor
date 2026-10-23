@@ -1,5 +1,6 @@
 package com.macedonga.visor.band
 
+import com.macedonga.visor.core.identity.token.withToken
 import android.content.Context
 import android.util.Base64
 import com.macedonga.visor.core.connection.GlassesConnection
@@ -95,7 +96,7 @@ class BandUpdate @Inject constructor(
                 val serial = serial()
                 val firmware = link.holdFor { withSession { deviceInfo().firmware } }
                 // The Meta app never sends a version below 1.
-                val found = fetchBandOffer(login.source.get(), serial, firmware.coerceAtLeast(1).toString())
+                val found = login.source.withToken { fetchBandOffer(it, serial, firmware.coerceAtLeast(1).toString()) }
                 _offer.value = found
                 _checked.value = true
                 _work.value = BandWork.Idle
@@ -117,12 +118,11 @@ class BandUpdate @Inject constructor(
             val zip = File(File(context.cacheDir, "band-update").apply { mkdirs() }, "band.zip")
             try {
                 val serial = serial()
-                val token = login.source.get()
                 download(offer, zip)
                 val blobs = unpack(zip)
                 _work.value = BandWork.Installing()
                 log.add("Band firmware: installing ${offer.targetVersion}")
-                link.holdFor { installOn(offer, serial, token, blobs) }
+                login.source.withToken { token -> link.holdFor { installOn(offer, serial, token, blobs) } }
                 _offer.value = null
                 _work.value = BandWork.Installed
                 log.add("Band firmware: ${offer.targetVersion} is installed")

@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.identity.language
 
+import com.macedonga.visor.core.identity.token.checkSession
 import com.macedonga.visor.core.identity.HttpPost
 import com.macedonga.visor.core.identity.UrlConnectionPost
 import com.macedonga.visor.core.identity.pyUrlencode
@@ -49,6 +50,7 @@ fun fetchPairPictures(token: Token, serials: List<String>, http: HttpPost = UrlC
     }
     val json = runCatching { Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject }
         .getOrElse { throw TokenError("Meta answered ${reply.status} with no JSON") }
+    checkSession(json)
     json["errors"]?.let { throw TokenError("Meta refused: ${it.toString().take(200)}") }
     val categories = ((json["data"] as? JsonObject)?.get("xar_wearable_device_assets_by_serial_numbers") as? JsonObject)?.get("data") as? JsonArray
         ?: return emptyMap()

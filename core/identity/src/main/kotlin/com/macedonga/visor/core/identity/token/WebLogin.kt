@@ -118,7 +118,7 @@ class WebLoginSource(
     }
 
     /** Meta no longer takes [dropped]: the next [get] exchanges the login for a new token. */
-    fun forget(dropped: Token) {
+    override fun forget(dropped: Token) {
         synchronized(this) { if (token == dropped) token = null }
     }
 

@@ -182,7 +182,7 @@ class Assistant(
         }
 
         override fun note(text: String) = say(text)
-    })
+    }, display)
 
     // The glasses' last language, kept so the speech model can be fetched at launch, before they connect.
     private val speechPrefs = context.getSharedPreferences("speech", Context.MODE_PRIVATE)

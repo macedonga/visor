@@ -13,7 +13,9 @@ import com.macedonga.visor.core.identity.bloks.BloksHost
 import com.macedonga.visor.core.identity.bloks.BloksSession
 import com.macedonga.visor.core.identity.pyUrlencode
 import com.macedonga.visor.core.identity.token.AuthorizeRequest
+import com.macedonga.visor.core.identity.token.SessionEnded
 import com.macedonga.visor.core.identity.token.Token
+import com.macedonga.visor.core.identity.token.withToken
 import com.macedonga.visor.core.identity.token.WebLoginSource
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -80,12 +82,12 @@ class MetaLogin @Inject constructor(
                 "method" to "post", "locale" to "en_US", "pretty" to "false", "format" to "json",
             ),
         ).toByteArray()
-        val token = source.get()
-        val answer = post(token, body)
-        // OAuthException 190: the session behind the token has ended.
-        if (runCatching { JSONObject(answer).optJSONObject("error")?.optInt("code") }.getOrNull() != 190) return answer
-        source.forget(token)
-        return post(source.get(), body)
+        return source.withToken { token ->
+            post(token, body).also { answer ->
+                // OAuthException 190: the session behind the token has ended.
+                if (runCatching { JSONObject(answer).optJSONObject("error")?.optInt("code") }.getOrNull() == 190) throw SessionEnded()
+            }
+        }
     }
 
     private fun post(token: Token, body: ByteArray): String =

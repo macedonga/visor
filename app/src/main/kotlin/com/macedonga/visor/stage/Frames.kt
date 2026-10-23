@@ -1,5 +1,6 @@
 package com.macedonga.visor.stage
 
+import com.macedonga.visor.core.identity.token.withToken
 import android.content.Context
 import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.ImageBitmap
@@ -132,7 +133,7 @@ class Looks @Inject constructor(
             picturing.withLock {
                 val missing = serials.filter { it !in _pictures.value }
                 if (missing.isEmpty() || !login.source.hasCachedLogin) return@withLock
-                val where = runCatching { fetchPairPictures(login.source.get(), missing) }
+                val where = runCatching { login.source.withToken { fetchPairPictures(it, missing) } }
                     .onFailure { log.add("Pictures: ${it.message}") }.getOrNull() ?: return@withLock
                 for ((serial, picture) in where) {
                     // The app is dark: the picture made for a dark background.
@@ -197,7 +198,7 @@ class Looks @Inject constructor(
         if (!force && now - prefs.getLong(NO_RECORD + serial, 0) < RETRY_MS) return null
         // Only language and country: Android adds the regional preferences to the default locale's name.
         val locale = Locale.getDefault().let { if (it.country.isEmpty()) "en_US" else "${it.language}_${it.country}" }
-        return runCatching { fetchGlassesLook(login.source.get(), serial, locale) }
+        return runCatching { login.source.withToken { fetchGlassesLook(it, serial, locale) } }
             .onSuccess { look ->
                 if (look == null) {
                     log.add("Look: Meta has no record of $serial")

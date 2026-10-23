@@ -61,6 +61,7 @@ fun exchangeAccountToken(
     } catch (error: Exception) {
         throw TokenError("app_token_exchange: response was not JSON")
     }
+    checkSession(payload)
     payload["error"]?.let { throw TokenError("token exchange refused: ${(it as? JsonPrimitive)?.content ?: it}") }
     val token = payload.text("access_token")
     val userId = payload.text("user_id")

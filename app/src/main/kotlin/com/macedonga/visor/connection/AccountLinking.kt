@@ -1,5 +1,6 @@
 package com.macedonga.visor.connection
 
+import com.macedonga.visor.core.identity.token.withToken
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.identity.token.TokenError
@@ -52,7 +53,7 @@ class AccountLinking @Inject constructor(
     suspend fun syncMeta(): LinkOutcome {
         if (!login.source.hasCachedLogin) return LinkOutcome.LOGGED_OUT
         val identity = try {
-            withContext(Dispatchers.IO) { exchangeAccountToken(login.source.get()) }
+            withContext(Dispatchers.IO) { login.source.withToken { exchangeAccountToken(it) } }
         } catch (error: TokenError) {
             log.add("Accounts: ${error.message}")
             return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.REFUSED
@@ -87,7 +88,7 @@ class AccountLinking @Inject constructor(
         if (!login.source.hasCachedLogin) return LinkOutcome.LOGGED_OUT
         val found = try {
             withContext(Dispatchers.IO) {
-                val accountsToken = exchangeAccountToken(login.source.get()).accessToken
+                val accountsToken = login.source.withToken { exchangeAccountToken(it) }.accessToken
                 val account = fetchLinkedAccounts(accountsToken).firstOrNull { it.type == type } ?: return@withContext null
                 account to (fetchLinkedTokens(accountsToken, account, login.deviceId) ?: return@withContext null)
             }
