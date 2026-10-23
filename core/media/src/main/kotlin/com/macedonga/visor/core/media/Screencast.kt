@@ -9,6 +9,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -37,13 +38,21 @@ enum class ScreencastFault { NOT_CONNECTED, NOT_READ, NO_FLAG, FLAG_NOT_SENT, NE
 
 data class ScreencastState(val phase: ScreencastPhase = ScreencastPhase.IDLE, val fault: ScreencastFault? = null, val detail: String = "")
 
-/** One whole H.264 frame, its parameter sets in band. */
-class ScreencastFrame(val timestampMs: Long, val key: Boolean, val data: ByteArray)
+/** One whole H.264 frame, its parameter sets in band. [flags] are MediaCodec's: key frame, codec config. */
+class ScreencastFrame(val timestampMs: Long, val flags: Int, val data: ByteArray) {
+    val key get() = flags and FLAG_KEY != 0
+    val config get() = flags and FLAG_CONFIG != 0
+
+    companion object {
+        const val FLAG_KEY = 1
+        const val FLAG_CONFIG = 2
+    }
+}
 
 /**
  * The Display's own screen, streamed to the phone on svc23463 and driven on svc23464, over Wi-Fi as the Meta app runs
  * it: the manager opened and answered, then the encoder settings and their answer, then the frames opened. The service
- * runs only while the MobileConfig switch is on, and the glasses read that switch when they start.
+ * is started by the glasses' init on the MobileConfig switch's sysprop, so a new switch needs the glasses restarted.
  */
 class Screencast(private val connection: GlassesConnection, private val config: GlassesConfig, private val live: LiveStream) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -57,9 +66,9 @@ class Screencast(private val connection: GlassesConnection, private val config: 
     private var answer: CompletableDeferred<Pair<Boolean, Int>>? = null
     private var stopping = CompletableDeferred<Unit>()
 
-    // The frame being assembled: its time, key flag and the chunks still owed.
+    // The frame being assembled: its time, flags and the chunks still owed.
     private var timestamp = 0L
-    private var key = false
+    private var flags = 0
     private var chunksLeft = 0
     private var frame = ByteArrayOutputStream()
 
@@ -100,26 +109,22 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         val why = live.overWifi { mux ->
             coroutineScope {
                 val listening = launch { live.wifiData.collect { onData(it) } }
-                // A service that is not running answers 0xC001: the switch is on but the glasses have not restarted since.
-                val absent = launch {
-                    live.notes.first { it.contains("service $SVC_HN_SCREENCAST_MANAGER answered status 0xc001") }
-                    answer?.complete(Pair(false, NOT_RUNNING))
-                }
                 try {
-                    // The open is not answered; the Meta app goes straight on to the settings, which are.
-                    mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(0))
-                    delay(OPEN_MS)
-                    val configured = ask { mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONFIGURE, configure()) }
-                    if (configured?.first == true) {
+                    // The Meta app waits for the manager's answer to the open, then to the settings, then opens the frames.
+                    // An open left unanswered goes on to the settings, as Visor did before.
+                    val opened = ask(OPEN_MS) { mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(0)) }
+                    val got = if (opened == null || opened.first) {
+                        ask { mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONFIGURE, configure()) }
+                    } else opened
+                    if (got?.first == true) {
                         mux.sendOnService(SVC_HN_SCREENCAST, MT_CONTROL, byteArrayOf(0))
                         _state.value = ScreencastState(ScreencastPhase.LIVE)
                         stopping.await()
                         mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(3))
                         delay(STOP_MS)
-                    } else refused(configured)
+                    } else refused(got)
                 } finally {
                     listening.cancel()
-                    absent.cancel()
                 }
             }
             null
@@ -127,11 +132,21 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         if (why != null) fail(ScreencastFault.NO_WIFI, why)
     }
 
-    /** Send, and wait for the manager's answer: success, and why not. */
-    private suspend fun ask(send: suspend () -> Unit): Pair<Boolean, Int>? {
+    /**
+     * Send, and wait for the manager's answer: success, and why not. A 0xC001 from the glasses also answers, as
+     * "not running": the switch is on but the glasses have not started the service since it was set.
+     */
+    private suspend fun ask(waitMs: Long = ANSWER_MS, send: suspend () -> Unit): Pair<Boolean, Int>? = coroutineScope {
         val reply = CompletableDeferred<Pair<Boolean, Int>>().also { answer = it }
+        val absent = launch(start = CoroutineStart.UNDISPATCHED) {
+            live.notes.first { it.contains("service $SVC_HN_SCREENCAST_MANAGER answered status 0xc001") }
+            reply.complete(Pair(false, NOT_RUNNING))
+        }
         send()
-        return withTimeoutOrNull(ANSWER_MS) { reply.await() }.also { answer = null }
+        withTimeoutOrNull(waitMs) { reply.await() }.also {
+            absent.cancel()
+            answer = null
+        }
     }
 
     private fun refused(got: Pair<Boolean, Int>?) {
@@ -162,14 +177,14 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         if (p.size == HEADER_BYTES) {
             val b = ByteBuffer.wrap(p).order(ByteOrder.LITTLE_ENDIAN)
             timestamp = b.getLong(0)
-            key = b.getInt(8) and KEY_FLAG != 0
+            flags = b.getInt(8)
             chunksLeft = b.getInt(24)
             frame = ByteArrayOutputStream()
             return
         }
         if (chunksLeft <= 0) return
         frame.write(p)
-        if (--chunksLeft == 0) _frames.tryEmit(ScreencastFrame(timestamp, key, frame.toByteArray()))
+        if (--chunksLeft == 0) _frames.tryEmit(ScreencastFrame(timestamp, flags, frame.toByteArray()))
     }
 
     // Five little-endian int32s: bitrate, I-frame interval, 2^profile, 2^level, framerate. These are the Meta app's defaults.
@@ -181,10 +196,9 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         const val MT_CONTROL = 129
         const val MT_CONFIGURE = 1
         const val HEADER_BYTES = 32
-        const val KEY_FLAG = 1
         const val ANSWER_MS = 15_000L
         const val STOP_MS = 300L
-        const val OPEN_MS = 500L
+        const val OPEN_MS = 3_000L
         const val NOT_RUNNING = -1
     }
 }

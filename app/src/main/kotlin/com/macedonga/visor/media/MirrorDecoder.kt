@@ -5,20 +5,21 @@ import android.media.MediaFormat
 import android.view.Surface
 import com.macedonga.visor.core.media.ScreencastFrame
 
-/** H.264 decoding of the Display's screen onto a Surface. One thread only; starts on a key frame. */
+/** H.264 decoding of the Display's screen onto a Surface. One thread only; starts on a parameter set or key frame. */
 class MirrorDecoder(private val surface: Surface) {
     private var codec: MediaCodec? = null
     private var lastPtsUs = -1L
     private val info = MediaCodec.BufferInfo()
 
     fun feed(frame: ScreencastFrame) {
-        val c = codec ?: (if (frame.key) start() else null) ?: return
+        val c = codec ?: (if (frame.key || frame.config) start() else null) ?: return
         try {
             val i = c.dequeueInputBuffer(INPUT_WAIT_US)
             if (i >= 0) {
                 c.getInputBuffer(i)!!.apply { clear(); put(frame.data) }
                 lastPtsUs = maxOf(frame.timestampMs * 1000, lastPtsUs + 1)
-                c.queueInputBuffer(i, 0, frame.data.size, lastPtsUs, 0)
+                val flags = if (frame.config) MediaCodec.BUFFER_FLAG_CODEC_CONFIG else 0
+                c.queueInputBuffer(i, 0, frame.data.size, lastPtsUs, flags)
             }
             drain(c)
         } catch (e: RuntimeException) {

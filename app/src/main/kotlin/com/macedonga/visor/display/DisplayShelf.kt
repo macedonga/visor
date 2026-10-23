@@ -45,6 +45,7 @@ class ShelfModel @Inject constructor(
     val connection: com.macedonga.visor.core.connection.GlassesConnection,
     val captions: com.macedonga.visor.core.connection.Captions,
     val captionsChoices: CaptionsChoices,
+    val screencast: com.macedonga.visor.core.media.Screencast,
 ) : ViewModel()
 
 /** The Display's tools on the home: a card each, with what it holds now. */
@@ -85,6 +86,15 @@ fun DisplayShelf(onOpen: (DisplayTool) -> Unit, modifier: Modifier = Modifier, m
                 stringResource(R.string.gestures_title),
                 bandBattery?.let { stringResource(R.string.gestures_card_battery, it) } ?: stringResource(R.string.gestures_card),
                 onClick = { onOpen(DisplayTool.GESTURES) },
+            )
+        }
+        item(key = "mirror") {
+            val mirror by model.screencast.state.collectAsStateWithLifecycle()
+            ToolCard(
+                VisorIcons.Mirror,
+                stringResource(R.string.mirror_title),
+                if (mirror.phase == com.macedonga.visor.core.media.ScreencastPhase.LIVE) stringResource(R.string.mirror_live) else stringResource(R.string.mirror_idle),
+                onClick = { onOpen(DisplayTool.MIRROR) },
             )
         }
     }
