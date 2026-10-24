@@ -98,8 +98,9 @@ internal class PhoneTools(private val phone: Phone) {
             phone.play(query, input.optString("app").trim()).let { done ->
                 told(done) {
                     when {
-                        it.tapToOpen -> "${it.app} needs a tap: a notification on the phone opens it on the search."
-                        it.opened -> "${it.app} is open on the phone on the search; it plays from there."
+                        // Leading with the negative: a small model turned "open on the search" into "playing" (issue #37).
+                        it.tapToOpen -> "Nothing is playing yet. ${it.app} needs a tap: a notification on the phone opens it on the search."
+                        it.opened -> "Nothing is playing yet. ${it.app} is open on the phone on the search; the wearer picks the song there."
                         it.playing.isNotEmpty() -> "Playing in ${it.app}: ${it.playing}."
                         else -> "Playing in ${it.app}."
                     }

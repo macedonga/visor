@@ -995,4 +995,6 @@
     <string name="band_not_paired">Non associato</string>
     <string name="band_paired_connected">Associato, collegato</string>
     <string name="band_paired_away">Associato, non collegato</string>
+    <string name="ai_speech_language">Lingua in cui parli</string>
+    <string name="ai_speech_language_glasses">La lingua degli occhiali</string>
 </resources>

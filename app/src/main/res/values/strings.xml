@@ -997,4 +997,6 @@
     <string name="band_not_paired">Not paired</string>
     <string name="band_paired_connected">Paired, connected</string>
     <string name="band_paired_away">Paired, not connected</string>
+    <string name="ai_speech_language">Language you speak</string>
+    <string name="ai_speech_language_glasses">The glasses\' language</string>
 </resources>

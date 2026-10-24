@@ -76,6 +76,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.browser)
+    implementation(libs.androidx.media)
     implementation(libs.kotlinx.coroutines.android)
 
     // Navigation 3, for the test client's screens.

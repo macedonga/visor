@@ -23,6 +23,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.service.media.MediaBrowserService
+import android.support.v4.media.MediaBrowserCompat
 import android.view.KeyEvent
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.MediaControl
@@ -86,6 +87,9 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         }
         browse(pkg)?.let { (browser, c) ->
             try {
+                // An app may say its session takes a search and do nothing with it (YouTube Music, issue #37); its
+                // browser still finds the song, and playing that by its id works.
+                if (query.isNotEmpty() && playFound(pkg, c, query)) return played(pkg, label, c)
                 if (playIn(c, query)) return played(pkg, label, c)
                 note("$label's media browser did not play it")
             } finally {
@@ -162,15 +166,66 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         } == true
     }
 
+    /**
+     * Searches [pkg]'s media browser for [query] and plays the first playable item it finds by its id, on [c]; true once
+     * it plays. Only the compat browser asks a service to search, and the music apps' services are compat ones.
+     */
+    private suspend fun playFound(pkg: String, c: MediaController, query: String): Boolean {
+        val service = browserService(pkg) ?: return false
+        var browser: MediaBrowserCompat? = null
+        val id = try {
+            withContext(Dispatchers.Main) {
+                withTimeoutOrNull(BROWSE_MS) {
+                    suspendCancellableCoroutine<String?> { call ->
+                        lateinit var b: MediaBrowserCompat
+                        b = MediaBrowserCompat(context, service, object : MediaBrowserCompat.ConnectionCallback() {
+                            override fun onConnected() {
+                                b.search(query, null, object : MediaBrowserCompat.SearchCallback() {
+                                    override fun onSearchResult(query: String, extras: Bundle?, items: List<MediaBrowserCompat.MediaItem>) {
+                                        if (call.isActive) call.resume(items.firstOrNull { it.isPlayable }?.mediaId)
+                                    }
+
+                                    override fun onError(query: String, extras: Bundle?) {
+                                        if (call.isActive) call.resume(null)
+                                    }
+                                })
+                            }
+
+                            override fun onConnectionFailed() {
+                                if (call.isActive) call.resume(null)
+                            }
+                        }, null)
+                        browser = b
+                        b.connect()
+                    }
+                }
+            }
+        } finally {
+            browser?.let { b -> main.post { b.disconnect() } }
+        }
+        if (id == null) return false.also { note("${label(pkg)}'s media browser found nothing to play") }
+        val before = c.item()
+        val was = c.playing()
+        c.transportControls.playFromMediaId(id, Bundle())
+        return withTimeoutOrNull(PLAY_WAIT_MS) {
+            while (!(c.playing() && (!was || c.item() != before))) delay(POLL_MS)
+            true
+        } == true
+    }
+
+    private fun browserService(pkg: String): ComponentName? =
+        pm.queryIntentServices(Intent(MediaBrowserService.SERVICE_INTERFACE).setPackage(pkg), 0).firstOrNull()?.serviceInfo
+            ?.let { ComponentName(it.packageName, it.name) }
+
     /** [pkg]'s media browser service, connected, and a controller for its session; null when there is none or it refuses. */
     private suspend fun browse(pkg: String): Pair<MediaBrowser, MediaController>? {
-        val service = pm.queryIntentServices(Intent(MediaBrowserService.SERVICE_INTERFACE).setPackage(pkg), 0).firstOrNull()?.serviceInfo ?: return null
+        val service = browserService(pkg) ?: return null
         // Its callbacks come on the thread that connects, which needs a looper.
         val connected = withContext(Dispatchers.Main) {
             withTimeoutOrNull(BROWSE_MS) {
                 suspendCancellableCoroutine<Pair<MediaBrowser, MediaController>?> { call ->
                     lateinit var browser: MediaBrowser
-                    browser = MediaBrowser(context, ComponentName(service.packageName, service.name), object : MediaBrowser.ConnectionCallback() {
+                    browser = MediaBrowser(context, service, object : MediaBrowser.ConnectionCallback() {
                         override fun onConnected() {
                             if (call.isActive) call.resume(browser to MediaController(context, browser.sessionToken)) else browser.disconnect()
                         }

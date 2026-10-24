@@ -146,11 +146,11 @@ class Assistant(
     )
 
     /**
-     * A NetEvent onto the session; one bigger than a frame carries goes as a segmented message, a header (1002)
-     * {1 type, 2 size, 3 id} then pieces (1003) {1 bytes, 2 id, 3 last}, the way the glasses send theirs.
+     * A NetEvent onto the session, at [type]. As the Meta app sends them: over 1 KB, to glasses of assistant protocol 1
+     * or later, as a segmented message, a header (1002) {1 type, 2 size, 3 id} then pieces (1003) {1 bytes, 2 id, 3 last}.
      */
-    private suspend fun sendNetEvent(l: Link, m0: Int, event: ByteArray) {
-        if (event.size <= SEGMENT_BYTES) return l.mux.send(m0, event, messageType = MT_NET_EVENT)
+    private suspend fun sendNetEvent(l: Link, m0: Int, event: ByteArray, type: Int = MT_NET_EVENT) {
+        if (event.size <= SEGMENT_BYTES || l.protocol == 0) return l.mux.send(m0, event, messageType = type)
         val id = UUID.randomUUID().toString().encodeToByteArray()
         l.mux.send(m0, Wire.fieldVarint(1, MT_NET_EVENT.toLong()) + Wire.fieldVarint(2, event.size.toLong()) + Wire.fieldBytes(3, id), messageType = MT_SEGMENTED_HEADER)
         var at = 0
@@ -166,7 +166,7 @@ class Assistant(
         override suspend fun event(id: Int, body: ByteArray) {
             val l = link ?: return
             val m0 = l.m0 ?: return
-            l.mux.send(m0, netEvent(id, body), messageType = MT_NET_EVENT)
+            sendNetEvent(l, m0, netEvent(id, body))
         }
 
         override suspend fun answer(subInteraction: String, question: String) {
@@ -208,8 +208,10 @@ class Assistant(
         if (interaction.isEmpty() || !store.config.value.enabled) return
         say("Listening to the microphone for $interaction")
         ears = GlassesEars(
-            context, l.locale, continuous = true,
+            context, spoken(l), continuous = true,
             onUtterance = { text, startMs, _ ->
+                // With a speech language set, the question waits for these words instead of the glasses' (issue #38).
+                if (store.config.value.speechLanguage.isNotEmpty()) l.heard.getOrPut(interaction) { CompletableDeferred() }.complete(text)
                 scope.launch {
                     delay(OWN_RECOGNITION_GRACE_MS)
                     if (interaction in l.closed) return@launch
@@ -246,6 +248,10 @@ class Assistant(
     /** Live AI, while the glasses run a session with this phone as its server. */
     val liveAiPhase: StateFlow<LiveAiPhase> = liveAi.phase
 
+    /** The language the wearer speaks: the speech language when one is set (issue #38), else the glasses' own. */
+    private fun spoken(l: Link): Locale =
+        store.config.value.speechLanguage.takeIf { it.isNotEmpty() }?.let(Locale::forLanguageTag) ?: l.locale
+
     /** The glasses' assistant language, from their 1026. */
     val locale: Locale get() = link?.locale ?: Locale.US
 
@@ -261,6 +267,8 @@ class Assistant(
         val sessionOf = java.util.concurrent.ConcurrentHashMap<String, String>()
         @Volatile var m0: Int? = null
         @Volatile var s0: Int? = null
+        // The assistant protocol version from their init answer; 0 takes no segmented messages.
+        @Volatile var protocol = 0
         val m0Answered = CompletableDeferred<Unit>()
         val s0Answered = CompletableDeferred<Unit>()
         // The stream id the glasses allocate per interaction, from their own 5002.
@@ -275,6 +283,8 @@ class Assistant(
         // Questions asked with the wake word rather than as a follow-up: they continue a conversation only right after it.
         val fresh: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
         @Volatile var locale: Locale = Locale.US
+        // What the phone heard on each microphone stream, for a speech language the glasses do not have.
+        val heard = ConcurrentHashMap<String, CompletableDeferred<String>>()
         // ev57's field 30, MobileConfig assistant_on_sn.simplify_mwa_message_forwarding. Off (the factory value),
         // the glasses act on a VARM the moment it lands and end the turn there.
         @Volatile var simplified = true
@@ -375,6 +385,12 @@ class Assistant(
             lastSpeech = speechTag(it)
             SpeechModels.prepare(context, it, ::say)
         }
+        // A speech language of the wearer's own needs the phone's model for it.
+        scope.launch {
+            store.config.map { it.speechLanguage }.distinctUntilChanged().collect { tag ->
+                if (tag.isNotEmpty()) SpeechModels.prepare(context, Locale.forLanguageTag(tag), ::say)
+            }
+        }
         scope.launch { glassesPhotos?.arrived?.collect { (id, bytes) -> if (pending != null) offerImage(bytes, "svc53 photo $id") } }
         // A day's lines are written again once its latest conversation has closed.
         scope.launch {
@@ -436,7 +452,10 @@ class Assistant(
             }
             announceSession(mux, m0)
             if (link === l) _phase.value = AssistantPhase.LISTENING
-            say("Registered as the glasses' assistant: \"Hey Meta\" now comes to Visor")
+            say("Registered as the glasses' assistant (protocol ${l.protocol}): \"Hey Meta\" now comes to Visor")
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // The session went away while registering, such as a Wi-Fi one ending: not a failure.
+            throw cancelled
         } catch (error: Exception) {
             if (link === l) say("Could not register as the assistant: ${error.message}")
         }
@@ -466,7 +485,16 @@ class Assistant(
         if (connection !== l.mux) return
         val payload = message.payload
         when (val type = message.info.messageType) {
-            MT_INIT_MESSAGE_RESPONSE -> l.m0Answered.complete(Unit)
+            // InitChannelResponse {1 protocolVersion, 2 lifecycleId, 3 connectionId, 4 channelId}, or the bare version in
+            // 4 bytes of their byte order; nothing is version 0.
+            MT_INIT_MESSAGE_RESPONSE -> {
+                l.protocol = when {
+                    payload.size > 4 -> runCatching { Wire.parse(payload).varint(1).toInt() }.getOrDefault(0)
+                    payload.size == 4 -> ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).int
+                    else -> 0
+                }
+                l.m0Answered.complete(Unit)
+            }
             MT_INIT_STREAM_RESPONSE -> l.s0Answered.complete(Unit)
             MT_RUNNING_LOCALE -> {
                 l.locale = parseLocale(payload)
@@ -474,7 +502,7 @@ class Assistant(
                 if (speechTag(l.locale) != lastSpeech) {
                     lastSpeech = speechTag(l.locale)
                     speechPrefs.edit().putString("language", l.locale.toLanguageTag()).apply()
-                    SpeechModels.prepare(context, l.locale, ::say)
+                    SpeechModels.prepare(context, spoken(l), ::say)
                 }
             }
             MT_STREAM_HEADER -> {
@@ -519,7 +547,7 @@ class Assistant(
         if (type == MT_START_INTERACTION) {
             val fields = runCatching { Thrift.loads(blob) }.getOrDefault(emptyMap())
             // Use case 3 is LIVE_AI_INTERACTION; after a switch to LIVE_AI the next interaction is the session's.
-            if (fields[5] == 3L || liveAi.phase.value == LiveAiPhase.STARTING) liveAi.onStartInteraction(fields, l.locale)
+            if (fields[5] == 3L || liveAi.phase.value == LiveAiPhase.STARTING) liveAi.onStartInteraction(fields, spoken(l))
             else {
                 // Use case 7 opens a session ("SCI", English): there the glasses never speak text from the phone.
                 l.sessionTurn = fields[5] == SESSION_USE_CASE
@@ -681,6 +709,18 @@ class Assistant(
         l.simplified = m[30] != false
         val visual = Visual.from(m)
         say("Heard \"$transcript\" (request ${describe(body)}, understanding ${describeRead(m[2])})")
+        // The wearer speaks a language the glasses have no pack for: their words and their understanding of them are
+        // not the wearer's. The phone's, in that language, answer instead; the glasses' only if the phone heard nothing.
+        if (store.config.value.speechLanguage.isNotEmpty()) {
+            val mic = l.listening ?: interaction
+            scope.launch {
+                val own = withTimeoutOrNull(OWN_WORDS_MS) { l.heard.getOrPut(mic) { CompletableDeferred() }.await() }?.trim()
+                l.heard.remove(mic)
+                if (own.isNullOrEmpty()) say("The phone heard nothing; answering the glasses' words") else say("Heard \"$own\" myself")
+                answer(l, interaction, own?.takeIf { it.isNotEmpty() } ?: transcript, visual)
+            }
+            return
+        }
         // The glasses' own understanding of the request, e.g. IN:REPLY_MESSAGE, and its slots: fields 23 and 26, or the
         // OnDeviceIntent {1 name, 4 slots} that Meta's schema puts in 55 and in understanding.nluResult, with 23 and 26 flags.
         val nlu = m[55].asStruct().ifEmpty { m[2].asStruct()[2].asStruct()[2].asStruct() }
@@ -824,7 +864,7 @@ class Assistant(
     private suspend fun speakTurn(l: Link, interaction: String, transcript: String, what: String) {
         _phase.value = AssistantPhase.THINKING
         try {
-            val text = brain.phrase(what, l.locale)
+            val text = brain.phrase(what, spoken(l))
             update(interaction) { it.copy(answer = text) }
             deliver(l, interaction, transcript, text)
         } catch (error: Exception) {
@@ -866,10 +906,10 @@ class Assistant(
             // The glasses give up after their processing timeout; speech and streaming need the last seconds of it.
             val budget = (processingTimeoutS() ?: FACTORY_PROCESSING_S) * 1000 - DELIVERY_MS
             val left = (budget - (System.currentTimeMillis() - started)).coerceAtLeast(MIN_MODEL_MS)
-            withTimeout(left) { brain.answer(transcript, l.locale, pastOf(interaction), image, note, glasses = glasses) }
+            withTimeout(left) { brain.answer(transcript, spoken(l), pastOf(interaction), image, note, glasses = glasses) }
         } catch (error: Exception) {
             problem = error.message ?: error::class.simpleName.orEmpty()
-            Reply(fallback(l.locale, store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
+            Reply(fallback(spoken(l), store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
         }
         val text = reply.text
         // Without simplified forwarding the VARM follows the audio, and the glasses keep waiting for it until then.
@@ -927,10 +967,10 @@ class Assistant(
         }
         var problem = ""
         val reply = try {
-            brain.answer(question, l.locale, pastOf(sub), image, liveAiNote())
+            brain.answer(question, spoken(l), pastOf(sub), image, liveAiNote())
         } catch (error: Exception) {
             problem = error.message ?: error::class.simpleName.orEmpty()
-            Reply(fallback(l.locale, store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
+            Reply(fallback(spoken(l), store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
         }
         val text = reply.text
         update(sub) { it.copy(answer = text, problem = problem, modelMs = System.currentTimeMillis() - started, remembered = reply.remembered, actions = reply.actions) }
@@ -1000,11 +1040,12 @@ class Assistant(
 
     /** Speak [text] as [interaction]'s answer in the voice chosen. The milliseconds of audio sent, 0 in the glasses' voice. */
     private suspend fun deliver(l: Link, interaction: String, transcript: String, text: String): Long {
-        if (store.config.value.glassesVoice && !l.sessionTurn) {
+        // The glasses' own voice speaks only their own language.
+        if (store.config.value.glassesVoice && !l.sessionTurn && store.config.value.speechLanguage.isEmpty()) {
             speakOnGlasses(l, interaction, transcript, text)
             return 0
         }
-        val packets = voice.speak(text, l.locale)
+        val packets = voice.speak(text, spoken(l))
         stream(l, interaction, transcript, text, packets)
         return packets.sumOf { it.durationUs } / 1000
     }
@@ -1020,7 +1061,7 @@ class Assistant(
             Triple(0, EV_FINAL_TRANSCRIPTION, e52),
             Triple(0, EV_ON_PHONE_UNDERSTANDING, e342),
         )) {
-            l.mux.send(m0, netEvent(event, body), messageType = type)
+            sendNetEvent(l, m0, netEvent(event, body), type)
             delay(20)
         }
     }
@@ -1043,7 +1084,7 @@ class Assistant(
         )
         // Without simplified forwarding the VARM is acted on as it lands, so the text must be there before it.
         for (event in if (l.simplified) listOf(answer, complete) else listOf(complete, answer)) {
-            l.mux.send(m0, event, messageType = MT_NET_EVENT)
+            sendNetEvent(l, m0, event)
             delay(20)
         }
         val mono = System.nanoTime() / 1_000_000
@@ -1085,7 +1126,7 @@ class Assistant(
                 mux.send(s0, frame, messageType = MT_STREAM_AUDIO)
                 // The VARM goes after the first audio message, never before; without simplified forwarding it would
                 // end the turn on arrival, so it waits for the end of the audio.
-                if (l.simplified) mux.send(m0, answer, messageType = MT_NET_EVENT)
+                if (l.simplified) sendNetEvent(l, m0, answer)
             } else {
                 // A bare header: tagged with type 0, only the first 40 ms would ever play.
                 mux.send(s0, frame)
@@ -1095,7 +1136,7 @@ class Assistant(
             if (wait > 0) delay(wait)
         }
         mux.send(s0, ByteArray(0), messageType = MT_STREAM_END)
-        if (!l.simplified) mux.send(m0, answer, messageType = MT_NET_EVENT)
+        if (!l.simplified) sendNetEvent(l, m0, answer)
 
         val e389 = ThriftWriter().i64(1, System.currentTimeMillis()).i64(2, mono).i64(3, 7000).str(4, interaction).done()
         val e392 = ThriftWriter().str(1, "VoiceActionResponseMessage").i32(2, (mono and 0xFFFF).toInt()).i32(3, 1).done()
@@ -1243,6 +1284,8 @@ class Assistant(
         const val FACTORY_PROCESSING_S = 20L
         const val DELIVERY_MS = 4_000L
         const val HOLD_ON_MS = 3_000L
+        // How long a question waits for the phone's own words in a speech language the glasses lack.
+        const val OWN_WORDS_MS = 4_000L
         /** How long the glasses' own recognition gets to send its ev57 before the server's answer goes instead. */
         const val OWN_RECOGNITION_GRACE_MS = 1_200L
         const val MIC_END_WAIT_MS = 10_000L
@@ -1365,7 +1408,7 @@ private const val APP_GROUP_CONVERSATIONS = 47L
 /** ev289's mode for a Live AI session. */
 private const val MODE_LIVE_AI = 2L
 
-/** The most a NetEvent goes as in one piece: an AirShield frame holds 255 blocks, and the glasses send 1 KB pieces. */
+/** The most a NetEvent goes as in one piece, and the size of each piece of a bigger one, as the Meta app sends them. */
 private const val SEGMENT_BYTES = 1_024
 
 private const val LIVE_AI_NOTE =

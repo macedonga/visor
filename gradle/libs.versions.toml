@@ -35,6 +35,9 @@ okhttp = "5.5.0"
 # :app only: an MCP server's OAuth sign-in in a Custom Tab.
 androidxBrowser = "1.10.0"
 
+# :app only: a music app's own search, which only the compat media browser can ask (issue #37).
+androidxMedia = "1.7.0"
+
 # :app only: the glasses on the home screen. 1.77.1 because 1.77.2 and .3 are under two weeks old.
 filament = "1.77.1"
 
@@ -90,6 +93,7 @@ gltfio-android = { module = "com.google.android.filament:gltfio-android", versio
 bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 androidx-browser = { module = "androidx.browser:browser", version.ref = "androidxBrowser" }
+androidx-media = { module = "androidx.media:media", version.ref = "androidxMedia" }
 
 
 # Referenced by the build-logic convention plugins, which need these on their classpath

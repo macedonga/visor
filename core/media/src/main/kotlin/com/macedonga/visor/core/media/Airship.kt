@@ -138,8 +138,9 @@ class AirshipReceiver(private val spool: File) : Responder {
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val channel = message.info.channelId
         lastActivity = System.nanoTime() / 1_000_000
-        // A cursor or a drop on a channel this side opened answers a file we are sending.
-        outgoing[channel and 0x7FFF]?.let {
+        // A cursor or a drop on a channel this side opened answers a file we are sending. Those come without the
+        // originator bit; a file the glasses offer meanwhile can come on their own channel of the same number.
+        if (channel and 0x8000 == 0) outgoing[channel]?.let {
             it.trySend(message.info.messageType to message.payload)
             return
         }
