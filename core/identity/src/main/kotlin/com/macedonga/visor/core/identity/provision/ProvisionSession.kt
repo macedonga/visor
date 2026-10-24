@@ -12,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
 
 /** Drive one provisioning connection: link up, change owner, hand back the key. */
 class ProvisioningResult(
@@ -20,6 +21,9 @@ class ProvisioningResult(
     /** DIVERGENCE: the reference returns the path it wrote. The key itself comes back here. */
     val keyPem: ByteArray,
     val reusedKey: Boolean,
+    val deviceCert: ByteArray? = null,
+    /** additional_data.device_ec_public_key in Meta's final receipt, as the Meta app stores it; lease hints name it. */
+    val deviceEcPublicKey: ByteArray? = null,
 )
 
 /** Run change owner over [transport] and return the key it installed. */
@@ -37,6 +41,7 @@ suspend fun provision(
 
     onStep(ProvisionStep.CONNECT)
     transport.connect()
+    var deviceCert: ByteArray? = null
     val final = try {
         coroutineScope {
             onStep(ProvisionStep.SECURE_LINK)
@@ -45,7 +50,8 @@ suspend fun provision(
             val connection = DataXConnection(link, ChannelRegistry())
             val reader = connection.startReader(this)
             try {
-                ProvisioningFlow(connection, backend, key.publicKey64, timeoutMillis, onStep).run()
+                val flow = ProvisioningFlow(connection, backend, key.publicKey64, timeoutMillis, onStep)
+                flow.run().also { deviceCert = flow.deviceCert }
             } finally {
                 // Close first: a read blocked on the socket does not answer cancellation, and
                 // the reader would hold this scope open until it did.
@@ -63,6 +69,13 @@ suspend fun provision(
         userId = info.textOf("user_id"),
         keyPem = key.pem,
         reusedKey = existingKeyPem != null,
+        deviceCert = deviceCert,
+        deviceEcPublicKey = runCatching {
+            // The Meta app reads it with getString, which takes a string or an object.
+            val extra = (info["additional_data"] as? kotlinx.serialization.json.JsonObject)
+                ?: kotlinx.serialization.json.Json.parseToJsonElement(info.textOf("additional_data")).jsonObject
+            com.macedonga.visor.core.identity.rawPublicKey(java.util.Base64.getDecoder().decode(extra.textOf("device_ec_public_key")))
+        }.getOrNull(),
     )
 }
 

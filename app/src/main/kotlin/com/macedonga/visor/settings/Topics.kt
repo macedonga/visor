@@ -2,6 +2,7 @@ package com.macedonga.visor.settings
 
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.macedonga.visor.R
+import com.macedonga.visor.core.settings.productId
 import com.macedonga.visor.features.Feature
 import com.macedonga.visor.ui.VisorIcons
 
@@ -34,6 +35,8 @@ enum class Topic(val title: Int, val icon: ImageVector, val keys: List<String> =
             "spotify_tap_enabled",
         ),
     ),
+    // The Display's: the band itself, then what the glasses do with it.
+    BAND(R.string.topic_band, VisorIcons.Pulse, listOf("sg_emg_display_off", "sg_emg_instant_action", "sg_invert_wrist_roll_direction")),
     // Spatial audio is the feature row: the setting does nothing while Meta's switch is off.
     SOUND(
         R.string.topic_sound, VisorIcons.Speaker,
@@ -72,7 +75,7 @@ enum class Topic(val title: Int, val icon: ImageVector, val keys: List<String> =
         /** The main page's cards. */
         val CARDS = listOf(
             listOf(META_AI, LANGUAGE),
-            listOf(NOTIFICATIONS, CONTROLS, SOUND, HEARING, WEAR),
+            listOf(NOTIFICATIONS, CONTROLS, BAND, SOUND, HEARING, WEAR),
             listOf(CAMERA, PHOTOS, LIVE),
             listOf(PRIVACY, PHONE),
         )
@@ -100,10 +103,15 @@ fun tileIcon(id: String): ImageVector = when (id) {
 /** Groups the firmware keeps for glasses with a display; they matter only to a model that has one. */
 val DISPLAY_GROUPS = setOf("Display", "Neural band gestures")
 
-/** Whether the connected glasses have a display: the build fingerprint names the product, "Meta/<product>/...". */
-fun hasDisplay(build: String?): Boolean {
-    val product = build?.split('/')?.getOrNull(1)?.lowercase() ?: return false
-    return DISPLAY_PRODUCTS.any { it in product }
-}
+/** Whether the connected glasses have a display: the build fingerprint names the device, "Meta/greatwhite/greatwhite:14/...". */
+fun hasDisplay(build: String?): Boolean = productId(build) in DISPLAY_PRODUCTS
 
-private val DISPLAY_PRODUCTS = listOf("hypernova", "display")
+// Meta Ray-Ban Display.
+private val DISPLAY_PRODUCTS = setOf(259, 270, 271)
+
+/** Whether [product] has anything on this topic: the band is the Display's, and hearing is nothing but features. */
+fun Topic.shownOn(product: Int?): Boolean = when (this) {
+    Topic.BAND -> product in DISPLAY_PRODUCTS
+    Topic.HEARING -> Feature.entries.any { it.topic == Topic.HEARING && it.on(product) }
+    else -> true
+}

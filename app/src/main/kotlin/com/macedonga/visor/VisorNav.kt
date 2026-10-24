@@ -37,6 +37,7 @@ import com.macedonga.visor.log.EventLogScreen
 import com.macedonga.visor.login.NativeLoginPage
 import com.macedonga.visor.media.LiveScreen
 import com.macedonga.visor.media.LiveSettingsScreen
+import com.macedonga.visor.media.MirrorScreen
 import com.macedonga.visor.metaai.LiveSessionScreen
 import com.macedonga.visor.metaai.MemoriesScreen
 import com.macedonga.visor.metaai.MetaAiScreen
@@ -89,6 +90,9 @@ data object MetaAiKey : NavKey
 
 @Serializable
 data object LiveKey : NavKey
+
+@Serializable
+data object MirrorKey : NavKey
 
 @Serializable
 data object FlagsKey : NavKey
@@ -147,6 +151,25 @@ data object PhoneAccessKey : NavKey
 @Serializable
 data object NotifyAppsKey : NavKey
 
+@Serializable
+data object PrompterKey : NavKey
+
+@Serializable
+data object GesturesKey : NavKey
+
+@Serializable
+data object CaptionsKey : NavKey
+
+@Serializable
+data object RequestLogKey : NavKey
+
+@Serializable
+data object WifiNetworksKey : NavKey
+
+@Serializable
+data object AccountsKey : NavKey
+data object WebAppsKey : NavKey
+
 /** The app's graph: the home, and every screen it opens. */
 @Composable
 fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean) {
@@ -161,6 +184,7 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
             if (place == MainActivity.OPEN_GALLERY && backStack.lastOrNull() != MediaKey) backStack.add(MediaKey)
             if (place == MainActivity.OPEN_META_AI && backStack.lastOrNull() != MetaAiKey) backStack.add(MetaAiKey)
             if (place == MainActivity.OPEN_ONBOARDING && backStack.lastOrNull() !is OnboardingKey) backStack.add(OnboardingKey(welcome = true))
+            if (place == MainActivity.OPEN_ACCOUNTS && backStack.lastOrNull() != AccountsKey) backStack.add(AccountsKey)
             if (place == MainActivity.OPEN_LIVE && backStack.lastOrNull() != LiveKey) {
                 stage.homeToTop = true
                 backStack.add(LiveKey)
@@ -202,6 +226,14 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
                         },
                         onMetaAi = { backStack.add(MetaAiKey) },
                         onSettings = { backStack.add(SettingsKey) },
+                        onDisplayTool = { tool ->
+                            when (tool) {
+                                com.macedonga.visor.display.DisplayTool.TELEPROMPTER -> backStack.add(PrompterKey)
+                                com.macedonga.visor.display.DisplayTool.CAPTIONS -> backStack.add(CaptionsKey)
+                                com.macedonga.visor.display.DisplayTool.GESTURES -> backStack.add(GesturesKey)
+                                com.macedonga.visor.display.DisplayTool.MIRROR -> backStack.add(MirrorKey)
+                            }
+                        },
                     )
                 }
                 entry<DeviceKey> {
@@ -235,7 +267,8 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
                 entry<MetaLoginPageKey> {
                     NativeLoginPage(onDone = { backStack.removeLastOrNull() })
                 }
-                entry<EventLogKey> { EventLogScreen() }
+                entry<EventLogKey> { EventLogScreen(onRequests = { backStack.add(RequestLogKey) }) }
+                entry<RequestLogKey> { com.macedonga.visor.log.RequestLogScreen() }
                 entry<MediaKey> { GalleryScreen() }
                 // The pair travels between the home and Settings on the one stage, so the screens only cross-fade, both ways.
                 entry<SettingsKey>(
@@ -255,6 +288,12 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
                 entry<AboutKey> { AboutScreen() }
                 entry<PhoneAccessKey> { PhoneAccessScreen() }
                 entry<NotifyAppsKey> { NotifyAppsScreen() }
+                entry<PrompterKey> { com.macedonga.visor.display.PrompterScreen() }
+                entry<GesturesKey> { com.macedonga.visor.display.GesturesScreen() }
+                entry<CaptionsKey> { com.macedonga.visor.display.CaptionsScreen() }
+                entry<WifiNetworksKey> { com.macedonga.visor.settings.WifiNetworksScreen() }
+                entry<AccountsKey> { com.macedonga.visor.settings.AccountsScreen() }
+                entry<WebAppsKey> { com.macedonga.visor.settings.WebAppsScreen() }
                 entry<MetaAiKey> {
                     MetaAiScreen(
                         onSettings = { backStack.add(AssistantSettingsKey) },
@@ -281,6 +320,7 @@ fun VisorNav(opens: kotlinx.coroutines.flow.Flow<String>, markAtLaunch: Boolean)
                     )
                 }
                 entry<LiveSettingsKey> { LiveSettingsScreen() }
+                entry<MirrorKey> { MirrorScreen() }
                 entry<LanguageKey> { com.macedonga.visor.language.LanguageScreen() }
                 entry<FlagsKey> { FlagsScreen() }
                 entry<ConversationFocusKey> { ConversationFocusScreen() }

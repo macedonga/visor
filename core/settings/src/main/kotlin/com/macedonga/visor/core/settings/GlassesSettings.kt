@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -75,6 +76,8 @@ data class SettingsState(
     val problem: String = "",
     // The Meta product id of the glasses last connected (266 for Ray-Ban Meta Gen 2), for what the catalogue offers.
     val product: Int? = null,
+    // The serial of the pair these are, so a reader never takes them for another's.
+    val pair: String? = null,
 )
 
 /**
@@ -90,7 +93,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val _state = MutableStateFlow(SettingsState())
+    private val _state = MutableStateFlow(SettingsState(pair = connection.pair.value))
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 64)
@@ -128,8 +131,22 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
 
     init {
         drive.handler = ::onReply
+        // Another pair's settings are not these: what was read goes, and the next read is a full one.
         scope.launch {
-            connection.state.map { it.info?.build }.distinctUntilChanged().collect { build ->
+            connection.pair.filterNotNull().distinctUntilChanged().collect { serial ->
+                reads.withLock {
+                    if (_state.value.pair == serial) return@withLock
+                    versions = emptyMap()
+                    byNamespace = emptyMap()
+                    raw.clear()
+                    retried.clear()
+                    writtenAt.clear()
+                    _state.value = SettingsState(pair = serial)
+                }
+            }
+        }
+        scope.launch {
+            connection.state.map { it.target?.serial to it.info?.build }.distinctUntilChanged().collect { (_, build) ->
                 productId(build)?.let { id -> _state.update { it.copy(product = id) } }
             }
         }

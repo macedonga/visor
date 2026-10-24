@@ -3,10 +3,12 @@ package com.macedonga.visor.phone
 import android.companion.AssociationRequest
 import android.companion.BluetoothDeviceFilter
 import android.companion.CompanionDeviceManager
+import android.companion.ObservingDevicePresenceRequest
 import android.content.Context
 import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.os.Build
+import com.macedonga.visor.log.EventLog
 
 /**
  * The glasses as Visor's companion device, as the Meta app holds them: Android lets a companion app open other apps
@@ -50,6 +52,23 @@ fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -
     @Suppress("DEPRECATION")
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) cdm.associate(request, context.mainExecutor, callback)
     else cdm.associate(request, callback, null)
+}
+
+/**
+ * Asks Android to tell [com.macedonga.visor.connection.GlassesPresence] when each association's glasses appear.
+ * Called at every start of the app; repeating it is harmless.
+ */
+fun observeCompanions(context: Context, log: EventLog) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            cdm.myAssociations.forEach { cdm.startObservingDevicePresence(ObservingDevicePresenceRequest.Builder().setAssociationId(it.id).build()) }
+        } else {
+            @Suppress("DEPRECATION")
+            cdm.associations.forEach { cdm.startObservingDevicePresence(it) }
+        }
+    }.onFailure { log.add("Companion presence not observed: ${it.message}") }
 }
 
 private const val ASKED = "asked"

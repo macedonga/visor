@@ -152,7 +152,7 @@ data class Led(
     val privacyLedActive: Boolean,
 )
 
-data class Tampering(val tampered: Boolean, val lux: Long, val indoor: Boolean)
+data class Tampering(val tampered: Boolean, val lux: Float, val indoor: Boolean)
 
 data class Thermal(
     val health: String,
@@ -206,6 +206,11 @@ data class DeviceState(
     val odc: String? = null,
     val overhead: Boolean? = null,
     val interactionKey: String? = null,
+    // The Display's Neural Band, as the Display reports it: battery (23), how tight it sits (30), which way round (34).
+    val bandBattery: Int? = null,
+    val bandCharging: Boolean? = null,
+    val bandFit: String? = null,
+    val bandOrientation: String? = null,
 ) {
     val worn: Boolean? get() = mount?.let { it == "DON" }
 }
@@ -264,6 +269,10 @@ fun mergeDeviceState(base: DeviceState, update: DeviceState): DeviceState = Devi
     odc = update.odc ?: base.odc,
     overhead = update.overhead ?: base.overhead,
     interactionKey = update.interactionKey ?: base.interactionKey,
+    bandBattery = update.bandBattery ?: base.bandBattery,
+    bandCharging = update.bandCharging ?: base.bandCharging,
+    bandFit = update.bandFit ?: base.bandFit,
+    bandOrientation = update.bandOrientation ?: base.bandOrientation,
 )
 
 fun isDeviceStateType(messageType: Int): Boolean = messageType in DEVICE_STATE_TYPES
@@ -288,9 +297,20 @@ fun decodeDeviceState(payload: ByteArray): DeviceStatus {
     )
 }
 
-/** Decode any svc28 DeviceState message, full or partial, keeping only what it carries. */
-fun decodeDeviceStateUpdate(messageType: Int, payload: ByteArray): DeviceStateUpdate =
-    DeviceStateUpdate(messageType, DEVICE_STATE_TYPES.getValue(messageType), decodeDeviceStateFull(payload))
+/**
+ * Decode any svc28 DeviceState message, full or partial, keeping only what it carries. The Display sends it wrapped,
+ * HNDeviceState {1: stateCommon, 2: deviceLockState}, and Meta's app unwraps it by device type: [display].
+ */
+fun decodeDeviceStateUpdate(messageType: Int, payload: ByteArray, display: Boolean = false): DeviceStateUpdate =
+    DeviceStateUpdate(messageType, DEVICE_STATE_TYPES.getValue(messageType), decodeDeviceStateFull(if (display) Wire.parse(payload).bytes(1) else payload))
+
+/** Whether a build fingerprint, "Meta/greatwhite/greatwhite:14/...", is a Meta Ray-Ban Display's. */
+fun isDisplayBuild(build: String?): Boolean = build?.split('/')?.getOrNull(2)?.substringBefore(':')?.lowercase() in DISPLAY_DEVICES
+
+private val DISPLAY_DEVICES = setOf("greatwhite")
+
+private val BAND_FIT = mapOf(0L to "OFF", 1L to "LOOSE", 2L to "TIGHT", 3L to "UNKNOWN")
+private val BAND_ORIENTATION = mapOf(0L to "UNKNOWN", 1L to "INCONCLUSIVE", 2L to "CORRECT", 3L to "INCORRECT")
 
 private fun text(fields: Wire.Fields, number: Int): String =
     String(fields.bytes(number), Charsets.UTF_8)
@@ -361,7 +381,7 @@ fun decodeDeviceStateFull(payload: ByteArray): DeviceState {
     if (top.has(12)) {
         val t = Wire.parse(top.bytes(12))
         state = state.copy(tampering = Tampering(
-            tampered = bool(t.varint(1)), lux = t.varint(2), indoor = bool(t.varint(3)),
+            tampered = bool(t.varint(1)), lux = t.float(2), indoor = bool(t.varint(3)),
         ))
     }
     if (top.has(13)) {
@@ -400,6 +420,13 @@ fun decodeDeviceStateFull(payload: ByteArray): DeviceState {
     if (top.has(22)) {
         state = state.copy(registeredApps = top.repeatedBytes(22).map { Wire.parse(it).varint(1) })
     }
+    if (top.has(23)) {
+        // EmgBatteryState {1 level, 2 charge: CHARGING 1, NOT_CHARGING 2}.
+        val b = Wire.parse(top.bytes(23))
+        state = state.copy(bandBattery = b.varint(1).toInt(), bandCharging = b.varint(2) == 1L)
+    }
+    if (top.has(30)) state = state.copy(bandFit = name(BAND_FIT, Wire.parse(top.bytes(30)).varint(1)))
+    if (top.has(34)) state = state.copy(bandOrientation = name(BAND_ORIENTATION, Wire.parse(top.bytes(34)).varint(1)))
     if (top.has(25)) {
         val v = Wire.parse(top.bytes(25))
         state = state.copy(volume = Volume(

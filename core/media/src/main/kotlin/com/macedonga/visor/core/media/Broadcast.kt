@@ -83,16 +83,19 @@ class Broadcast(private val scope: CoroutineScope) {
             var transcoder: AvcTranscoder? = null
             try {
                 rtmp.connect(scope)
-                val sps = hevcParameterSets(config)[33]?.firstOrNull()?.let(::parseHevcSps)
-                val width = sps?.width ?: 1080
-                val height = sps?.height ?: 1920
+                // H.264 from the glasses goes out as it is; HEVC goes out as HEVC, or is re-encoded to H.264.
+                val input = configCodec(config)
+                val out = if (input == VideoCodec.AVC) BroadcastCodec.H264 else target.codec
+                val (width, height) = videoSize(config) ?: (1080 to 1920)
                 val audio = audioFormat()
-                rtmp.metadata(width, height, frameRate, target.codec, audio)
+                rtmp.metadata(width, height, frameRate, out, audio)
                 if (audio != null) rtmp.audioHeader(audio)
                 var base = -1L
                 fun ms(pts: Long) = ((pts - base) / 1000).coerceAtLeast(0)
-                if (target.codec == BroadcastCodec.HEVC) {
+                if (out == BroadcastCodec.HEVC) {
                     rtmp.videoHeader(BroadcastCodec.HEVC, checkNotNull(hvcC(config)) { "the stream's parameter sets do not parse" })
+                } else if (input == VideoCodec.AVC) {
+                    rtmp.videoHeader(BroadcastCodec.H264, checkNotNull(avcC(config)) { "the stream's parameter sets do not parse" })
                 } else {
                     var headerSent = false
                     transcoder = AvcTranscoder(width, height, config, bitrate, frameRate,
@@ -119,8 +122,8 @@ class Broadcast(private val scope: CoroutineScope) {
                                 check(!transcoder.failed) { "the phone's H.264 encoder stopped" }
                                 transcoder.feed(item.frame)
                             } else {
-                                val units = annexBToLengthPrefixed(item.frame.data, dropParameterSets = true)
-                                rtmp.video(BroadcastCodec.HEVC, ms(item.frame.ptsUs), item.frame.isKey, units)
+                                val units = annexBToLengthPrefixed(item.frame.data, dropParameterSets = out == BroadcastCodec.HEVC)
+                                rtmp.video(out, ms(item.frame.ptsUs), item.frame.isKey, units)
                             }
                             sent += item.frame.data.size
                         }

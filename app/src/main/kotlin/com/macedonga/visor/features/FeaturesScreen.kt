@@ -85,8 +85,10 @@ fun LazyListScope.featureSection(topic: Topic, open: (NavKey) -> Unit, heading: 
 }
 
 @Composable
-private fun FeatureSection(features: List<Feature>, open: (NavKey) -> Unit, heading: Boolean, model: FeaturesModel = hiltViewModel()) {
+private fun FeatureSection(all: List<Feature>, open: (NavKey) -> Unit, heading: Boolean, model: FeaturesModel = hiltViewModel()) {
     val state by model.features.state.collectAsStateWithLifecycle()
+    val features = all.filter { it.on(state.product) }
+    if (features.isEmpty()) return
     val host = LocalHost.current
     var details by remember { mutableStateOf<Feature?>(null) }
     // Meta's switches come in a short report: read once the glasses are there.

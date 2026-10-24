@@ -37,6 +37,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * READ_SETTINGS, MEDIA, IMPORT (--es handle a,b: by handle prefix), ASK (--es q), ONBOARD (--es page --ef t),
  * MCP_PROBE / MCP_ADD (--es url --es name --es auth NONE|TOKEN|HEADER --es secret --es header), MCP_STATUS,
  * MCP_TOOLS (what the model would get), MCP_CALL (--es tool exposed-name --es args json), MCP_REMOVE (--es id),
+ * DEMO_PAIR (--ez on false takes it away): a second pair on the home, a black Skyler, never connected or looked at.
  * PHONE (--es do directions --es to --es mode | play --es q --es app | media --es c pause|resume|next|... | now).
  */
 @AndroidEntryPoint
@@ -54,14 +55,29 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var config: com.macedonga.visor.core.media.GlassesConfig
     @Inject lateinit var liveSettings: com.macedonga.visor.core.media.LiveSettingsStore
     @Inject lateinit var mcp: com.macedonga.visor.core.assistant.mcp.McpHub
+    @Inject lateinit var pairs: com.macedonga.visor.pairs.Pairs
+    @Inject lateinit var looks: com.macedonga.visor.stage.Looks
     @Inject lateinit var phone: com.macedonga.visor.phone.PhoneActions
+    @Inject lateinit var prompter: com.macedonga.visor.core.connection.Teleprompter
+    @Inject lateinit var captions: com.macedonga.visor.core.connection.Captions
+    @Inject lateinit var languages: com.macedonga.visor.language.LanguageInstaller
+    @Inject lateinit var captionPacks: com.macedonga.visor.display.CaptionPacks
+    @Inject lateinit var screencast: com.macedonga.visor.core.media.Screencast
+    @Inject lateinit var requests: com.macedonga.visor.connection.RequestLog
+    @Inject lateinit var login: com.macedonga.visor.login.MetaLogin
+    @Inject lateinit var internet: com.macedonga.visor.connection.InternetSwitch
     @Inject lateinit var developer: com.macedonga.visor.outside.DeveloperMode
+    @Inject lateinit var texts: com.macedonga.visor.connection.PhoneMessages
+    @Inject lateinit var wifiLink: com.macedonga.visor.connection.WifiLink
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
         Log.i("Visor", "API: $action")
         when (action) {
             "STATUS" -> resultData = status()
+            // The phone's thread list as Visor reads it for the glasses' Messages: --ei count.
+            "THREADS" -> resultData = texts.describeThreads(intent.getIntExtra("count", 15))
+            "DEMO_PAIR" -> resultData = demoPair(intent.getBooleanExtra("on", true))
             "CONNECT" -> resultData = runCatching { GlassesService.start(context); "connecting" }.getOrElse { "could not start the service: $it" }
             "DISCONNECT" -> {
                 GlassesService.stop(context)
@@ -117,8 +133,10 @@ class DebugReceiver : BroadcastReceiver() {
                     "refused: unknown namespace or not connected"
                 }
             }
-            // A notification built by hand: --ei type --ei provider --es title --es text --es sender --es pkg.
+            // A notification built by hand: --ei type --ei provider --es title --es text --es sender --es pkg --es thread
+            // (a text's thread in the SMS store, whose number becomes the sender's id).
             "NOTIFY" -> {
+                val thread = intent.getStringExtra("thread").orEmpty()
                 val n = com.macedonga.visor.notify.GlassesNotification(
                     key = "visor|" + System.currentTimeMillis(),
                     pkg = intent.getStringExtra("pkg") ?: "org.telegram.messenger",
@@ -129,7 +147,8 @@ class DebugReceiver : BroadcastReceiver() {
                     type = intent.getIntExtra("type", 1),
                     provider = intent.getIntExtra("provider", 3),
                     sender = intent.getStringExtra("sender").orEmpty(),
-                    senderId = intent.getStringExtra("sid").orEmpty(),
+                    senderId = intent.getStringExtra("sid") ?: texts.addressesOf(thread).firstOrNull().orEmpty(),
+                    threadId = thread,
                 )
                 connection.submit { it.sendOnService(com.macedonga.visor.notify.GlassesNotification.SVC, 1, n.envelope()) }
                 resultData = "sent type ${n.type} provider ${n.provider}"
@@ -313,6 +332,106 @@ class DebugReceiver : BroadcastReceiver() {
                     resultData = "asked for $id"
                 }
             }
+            "PROMPTER" -> answerLater {
+                if (intent.getBooleanExtra("close", false)) prompter.close()
+                else prompter.show(
+                    intent.getStringExtra("text") ?: "Testing the teleprompter from Visor.",
+                    com.macedonga.visor.core.connection.PrompterLook(paged = intent.getBooleanExtra("paged", false), followVoice = intent.getBooleanExtra("voice", false)),
+                )
+                kotlinx.coroutines.delay(300)
+                withTimeoutOrNull(8_000) {
+                    prompter.state.first { it.phase != com.macedonga.visor.core.connection.PrompterPhase.STARTING && it.phase != com.macedonga.visor.core.connection.PrompterPhase.CLOSING }
+                }
+                prompter.state.value.let { "${it.phase} refusal=${it.refusal}" }
+            }
+            // --es features a,b: what Meta has for these constellation features on this pair.
+            "PACKS" -> answerLater {
+                val features = intent.getStringExtra("features").orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                runCatching { languages.offersFor(features) }.fold(
+                    { offers -> offers.joinToString("\n") { "${it.feature} ${it.resource} ${it.version} ${it.type} app ${it.appId} ${it.size} ${it.url}" }.ifEmpty { "none" } },
+                    { "failed: ${it.message}" },
+                )
+            }
+            // --ei svc --ei type --es hex: one message on a service; the answer is what the glasses said within 5 s.
+            "SEND" -> answerLater {
+                val svc = intent.getIntExtra("svc", 0)
+                val body = intent.getStringExtra("hex").orEmpty().chunked(2).filter { it.length == 2 }.map { it.toInt(16).toByte() }.toByteArray()
+                val heard = java.util.Collections.synchronizedList(mutableListOf<String>())
+                val watch = scope.launch {
+                    launch { connection.serviceData.collect { if (it.serviceId == svc) heard += "type ${it.messageType}: " + it.payload.joinToString("") { b -> "%02x".format(b) } } }
+                    launch { connection.warnings.collect { if (it.contains("service $svc ")) heard += it } }
+                }
+                connection.submit { it.sendOnService(svc, intent.getIntExtra("type", 0), body) }
+                kotlinx.coroutines.delay(5_000)
+                watch.cancel()
+                heard.joinToString("\n").ifEmpty { "nothing" }
+            }
+            // --es doc <client_doc_id> --es name <friendly name> --es vars <json>: one query on Meta's ar GraphQL, as the
+            // user; the answer's first 4000 characters.
+            "GRAPHQL" -> answerLater {
+                val text = login.graphql(
+                    intent.getStringExtra("name").orEmpty(),
+                    intent.getStringExtra("doc").orEmpty(),
+                    intent.getStringExtra("vars64")?.let { String(android.util.Base64.decode(it, 0)) } ?: intent.getStringExtra("vars") ?: "{}",
+                )
+                if (!intent.getBooleanExtra("shape", false)) text.take(4000) else {
+                    // Every path with its type, a string's length and start: the structure without the bulk.
+                    val out = StringBuilder()
+                    fun walk(path: String, v: Any?) {
+                        when (v) {
+                            is org.json.JSONObject -> v.keys().forEach { walk("$path.$it", v.opt(it)) }
+                            is org.json.JSONArray -> { out.append("$path [${v.length()}]\n"); if (v.length() > 0) walk("$path[0]", v.opt(0)) }
+                            is String -> out.append("$path str(${v.length}) ${v.take(60).replace('\n', ' ')}\n")
+                            else -> out.append("$path = $v\n")
+                        }
+                    }
+                    walk("", org.json.JSONObject(text))
+                    out.toString().take(4000)
+                }
+            }
+            // --ez on false: tell the Display the phone is offline, so it keeps its apps off the phone's internet.
+            "INTERNET" -> {
+                internet.sharing = intent.getBooleanExtra("on", true)
+                resultData = "sharing=${internet.sharing}"
+            }
+            // The request log's newest entries, links cut at their query.
+            "REQUESTS" -> resultData = requests.items.value.takeLast(intent.getIntExtra("n", 30)).joinToString("\n") {
+                "${it.source} ${it.outcome ?: "running"} ${it.bytes}B ${it.millis}ms [${it.options}] ${it.url.substringBefore('?').take(160)}"
+            }.ifEmpty { "none" }
+            // --es key <MobileConfig param> --ez value true|false: one bool written to the glasses.
+            "MC_SET" -> answerLater {
+                config.send(mapOf(intent.getStringExtra("key").orEmpty() to intent.getBooleanExtra("value", false))) ?: "sent"
+            }
+            // --ez stop true to stop; the answer is the state once it settles.
+            "MIRROR" -> answerLater {
+                if (intent.getBooleanExtra("stop", false)) screencast.stop() else screencast.start()
+                kotlinx.coroutines.delay(500)
+                withTimeoutOrNull(40_000) { screencast.state.first { it.phase != com.macedonga.visor.core.media.ScreencastPhase.STARTING } }
+                screencast.state.value.toString()
+            }
+            // --es feature live_captions_en: Meta's pack installed through the glasses' OTA service.
+            "CAPTION_PACK" -> answerLater {
+                captionPacks.install(intent.getStringExtra("feature") ?: "live_captions_en")
+                kotlinx.coroutines.delay(500)
+                withTimeoutOrNull(600_000) { captionPacks.work.first { it !is com.macedonga.visor.display.PackWork.Working } }
+                captionPacks.work.value.toString()
+            }
+            "CAPTIONS" -> answerLater {
+                val self = intent.getStringExtra("lang") ?: "en"
+                when {
+                    intent.getBooleanExtra("stop", false) -> captions.stop()
+                    intent.getBooleanExtra("show", false) -> Unit
+                    else -> captions.start(
+                        if (intent.hasExtra("other")) com.macedonga.visor.core.connection.CaptionsMode.TRANSLATION else com.macedonga.visor.core.connection.CaptionsMode.CAPTIONS,
+                        self, intent.getStringExtra("other") ?: self,
+                    )
+                }
+                kotlinx.coroutines.delay(300)
+                withTimeoutOrNull(8_000) {
+                    captions.state.first { it.phase == com.macedonga.visor.core.connection.CaptionsPhase.LIVE || it.phase == com.macedonga.visor.core.connection.CaptionsPhase.IDLE }
+                }
+                captions.state.value.let { s -> "${s.phase} ${s.mode} refusal=${s.refusal}\n" + s.lines.joinToString("\n") { "${if (it.done) "" else "… "}${it.text}${it.source?.let { src -> " ($src)" }.orEmpty()}" } }
+            }
             "PHONE" -> answerLater {
                 when (intent.getStringExtra("do")) {
                     "directions" -> phone.directions(intent.getStringExtra("to").orEmpty(), intent.getStringExtra("mode").orEmpty()).toString()
@@ -366,12 +485,31 @@ class DebugReceiver : BroadcastReceiver() {
                     mcp.signIn.first { it is com.macedonga.visor.core.assistant.mcp.SignIn.Done || it is com.macedonga.visor.core.assistant.mcp.SignIn.Failed }
                 }.toString()
             }
+            // A lease that needs Wi-Fi, held and let go as the Display's would be.
+            "WIFI_LINK" -> resultData = if (intent.getBooleanExtra("on", true)) {
+                wifiLink.hold("debug").let { "held: " + (wifiLink.refusal() ?: "moving") }
+            } else {
+                wifiLink.release("debug").let { "released" }
+            }
             "MCP_REMOVE" -> {
                 mcp.store.remove(intent.getStringExtra("id").orEmpty())
                 resultData = "removed"
             }
             else -> resultData = "unknown action $action"
         }
+    }
+
+    private fun demoPair(on: Boolean): String {
+        if (!on) {
+            pairs.demo(null, null)
+            looks.demo(DEMO_SERIAL, null, null)
+            return "demo pair gone"
+        }
+        val look = com.macedonga.visor.core.identity.language.GlassesLook("skyler", "Skyler", "shiny_black", "Shiny Black", "clear", "Clear", null)
+        looks.demo(DEMO_SERIAL, look, DEMO_PICTURE)
+        val seen = com.macedonga.visor.home.PairSeen(glasses = 64, case = 88, at = System.currentTimeMillis() - 2 * 3_600_000L, folded = true)
+        pairs.demo(com.macedonga.visor.pairs.KnownPair(DEMO_SERIAL, "00:00:00:00:00:00"), seen)
+        return "demo pair on: swipe the home's stage"
     }
 
     private fun status(): String {
@@ -411,5 +549,9 @@ class DebugReceiver : BroadcastReceiver() {
 
     private companion object {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        const val DEMO_SERIAL = "DEMO00SKYLER00"
+        // Meta's own picture of a black Skyler, as its asset service hands it out.
+        const val DEMO_PICTURE = "https://scontent.xx.fbcdn.net/mci_ab/uap/asset_manager/name_revision/?ab_b=e&ab_page=AssetManagerNameAndRevision" +
+            "&ab_entry=RBM2-Skyler-ShinyBlack-Clear-Concord&set=mwa_device_image_assets&revision=1837680503843762&density=3&mode=dark"
     }
 }

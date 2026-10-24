@@ -2,14 +2,23 @@ package com.macedonga.visor.stage
 
 import android.content.Context
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * The glasses, their light and their pose for the life of the activity, above navigation: the model loads once and
@@ -31,6 +40,23 @@ class StageHolder(private val context: Context, markAtLaunch: Boolean) {
     var fromLive = false
     /** Turned by a finger; springs back to 0. */
     val yaw = Animatable(0f)
+    /** Sideways out of the light, in stage widths: a pair leaving for the next one. */
+    val slide = Animatable(0f)
+    /** A pair Visor has no model for, or one not connected, shows as Meta pictures it; null shows the model. */
+    var picture by mutableStateOf<ImageBitmap?>(null)
+    /** Nothing under the light: the home's page for adding another pair. */
+    var vacant by mutableStateOf(false)
+
+    /** The pair slides out [direction] (1 to the left), [swap] puts the next one up, and it slides in from the far side. */
+    suspend fun page(direction: Int, swap: () -> Unit) {
+        coroutineScope {
+            launch { yaw.animateTo(0f, tween(PAGE_OUT_MS, easing = FastOutLinearInEasing)) }
+            slide.animateTo(-direction.toFloat(), tween(PAGE_OUT_MS, easing = FastOutLinearInEasing))
+        }
+        swap()
+        slide.snapTo(direction.toFloat())
+        slide.animateTo(0f, spring(dampingRatio = 0.86f, stiffness = 260f))
+    }
 
     internal val spots = mutableStateListOf<Spot>()
     internal val looks = mutableStateListOf<LookRequest>()
@@ -125,3 +151,5 @@ fun rememberStageHolder(markAtLaunch: Boolean): StageHolder {
     DisposableEffect(stage) { onDispose { stage.destroy() } }
     return stage
 }
+
+private const val PAGE_OUT_MS = 200

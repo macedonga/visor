@@ -113,6 +113,7 @@ fun TopicScreen(name: String, open: (NavKey) -> Unit, model: SettingsViewModel =
                 )
             }
             Topic.PHOTOS -> item(key = "visor") { PhotosPart(model) }
+            Topic.BAND -> item(key = "visor") { BandPart(model) }
             else -> Unit
         }
         // Hearing is nothing but features, so they need no heading of their own there.

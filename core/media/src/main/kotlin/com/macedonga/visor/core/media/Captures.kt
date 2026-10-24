@@ -25,6 +25,7 @@ const val KIND_STILL = 2
 const val KIND_IMU = 3
 const val KIND_FRAMES = 4
 
+// The Display's kinds are the wire CaptureType plus 0xC00 (inferred). Any other kind is classed by its assets.
 private const val CAPTURE_VIDEO = 3074L
 private const val ASSET_DELIVERED = 0x100000L
 

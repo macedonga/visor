@@ -12,7 +12,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * Hardware HEVC decoding onto a Surface, one decoder per stream, asynchronous so a decoded frame is
+ * Hardware HEVC or H.264 decoding onto a Surface, one decoder per stream, asynchronous so a decoded frame is
  * shown the moment it exists rather than when the next one arrives. It is configured for the size
  * asked for with room up to 1920 either way, because a decoder fed a stream larger than its
  * configured size draws garbage on many phones.
@@ -50,7 +50,7 @@ class LiveDecoder(
     fun feed(frame: VideoFrame, config: ByteArray?, show: Boolean = true): Boolean {
         val c = codec ?: run {
             if (!frame.isKey) return false
-            start(config)
+            start(config, frame.codec)
         }
         if (frame.data.size > MAX_INPUT) return false
         return queue(c, frame.data, frame.ptsUs, 0).also { if (it && !show) hidden.add(frame.ptsUs) }
@@ -83,8 +83,8 @@ class LiveDecoder(
         false
     }
 
-    private fun start(config: ByteArray?): MediaCodec {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height)
+    private fun start(config: ByteArray?, videoCodec: VideoCodec): MediaCodec {
+        val format = MediaFormat.createVideoFormat(videoCodec.mime, width, height)
         format.setInteger(MediaFormat.KEY_MAX_WIDTH, MAX_SIDE)
         format.setInteger(MediaFormat.KEY_MAX_HEIGHT, MAX_SIDE)
         format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT)
@@ -93,7 +93,7 @@ class LiveDecoder(
         if (config != null) format.setByteBuffer("csd-0", ByteBuffer.wrap(config))
 
         val t = HandlerThread("live-decoder").also { it.start(); thread = it }
-        return MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC).also {
+        return MediaCodec.createDecoderByType(videoCodec.mime).also {
             it.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
                     freeInputs.offer(index)

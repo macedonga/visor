@@ -23,6 +23,7 @@ import com.macedonga.visor.core.assistant.Voice
 import com.macedonga.visor.core.assistant.mcp.McpHub
 import com.macedonga.visor.core.assistant.mcp.McpStore
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesWifi
 import com.macedonga.visor.core.connection.RealSessionHostFactory
 import com.macedonga.visor.core.connection.SessionHostFactory
 import com.macedonga.visor.core.connection.Shutter
@@ -32,6 +33,7 @@ import com.macedonga.visor.core.identity.KeystoreSealer
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.media.Screencast
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.LiveOutputs
 import com.macedonga.visor.core.media.LiveSettingsStore
@@ -45,11 +47,14 @@ import com.macedonga.visor.core.settings.RlDriveResponder
 import com.macedonga.visor.core.settings.SVC_RLDRIVE
 import com.macedonga.visor.core.transport.FileWireLog
 import com.macedonga.visor.core.transport.LinkMeter
+import com.macedonga.visor.notify.GlassesNotification
+import com.macedonga.visor.notify.NotifyIcons
 import com.macedonga.visor.phone.PhoneActions
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
+import com.macedonga.visor.core.protocol.ServiceId
 import dagger.hilt.components.SingletonComponent
 import java.io.File
 import javax.inject.Singleton
@@ -135,6 +140,25 @@ object ConnectionModule {
         // A Provider, because these need the connection this factory feeds.
         hearing: javax.inject.Provider<Hearing>,
         assistant: javax.inject.Provider<Assistant>,
+        lease: javax.inject.Provider<com.macedonga.visor.band.DeviceLease>,
+        icons: NotifyIcons,
+        internet: com.macedonga.visor.connection.InternetSwitch,
+        fetcher: com.macedonga.visor.connection.DataFetcher,
+        tunnel: com.macedonga.visor.connection.PhoneInternet,
+        panels: com.macedonga.visor.connection.Panels,
+        bloks: com.macedonga.visor.connection.BloksRelay,
+        location: com.macedonga.visor.connection.LocationShare,
+        messages: com.macedonga.visor.connection.PhoneMessages,
+        sharing: com.macedonga.visor.connection.PhoneSharing,
+        calls: com.macedonga.visor.connection.PhoneCalls,
+        media: com.macedonga.visor.connection.PhoneMedia,
+        captureState: com.macedonga.visor.connection.CaptureState,
+        leases: com.macedonga.visor.connection.LeaseService,
+        navigation: com.macedonga.visor.connection.Navigation,
+        placeSearch: com.macedonga.visor.connection.PlaceSearch,
+        mapsSupport: com.macedonga.visor.connection.MapsSupport,
+        mapsQuiet: com.macedonga.visor.connection.MapsQuiet,
+        webApps: com.macedonga.visor.connection.WebApps,
     ): SessionHostFactory = RealSessionHostFactory(
         transports,
         responders = mapOf(
@@ -144,7 +168,29 @@ object ConnectionModule {
             SVC_ASSISTANT to Responder { message, mux -> assistant.get().respond(message, mux) },
             SVC_GLASSES_PHOTO to photos,
             SVC_TAR to timers,
+            GlassesNotification.SVC to icons,
+            com.macedonga.visor.connection.InternetSwitch.SVC to internet,
+            com.macedonga.visor.connection.InternetSwitch.PING_SVC to internet.ping,
+            com.macedonga.visor.connection.MotionActivity.SVC to com.macedonga.visor.connection.MotionActivity,
+            com.macedonga.visor.connection.DataFetcher.SVC to fetcher,
+            com.macedonga.visor.connection.PhoneInternet.SVC to tunnel,
+            com.macedonga.visor.connection.Panels.SVC to panels,
+            com.macedonga.visor.connection.BloksRelay.SVC to bloks,
+            com.macedonga.visor.connection.LocationShare.SVC to location,
+            com.macedonga.visor.connection.PhoneMessages.SVC to messages,
+            com.macedonga.visor.connection.PhoneSharing.SVC to sharing,
+            com.macedonga.visor.connection.PhoneCalls.SVC to calls,
+            com.macedonga.visor.connection.PhoneMedia.SVC to media,
+            com.macedonga.visor.connection.CaptureState.SVC to captureState,
+            com.macedonga.visor.connection.LeaseService.SVC to leases,
+            com.macedonga.visor.connection.Navigation.SVC to navigation,
+            com.macedonga.visor.connection.PlaceSearch.SVC to placeSearch,
+            com.macedonga.visor.connection.MapsSupport.SVC to mapsSupport,
+            com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_PERSISTENT_STORE),
+            com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION to mapsQuiet.responder(com.macedonga.visor.connection.MapsQuiet.SVC_CONSTELLATION),
+            com.macedonga.visor.connection.WebApps.SVC to webApps,
             SVC_HEARING to Responder { message, mux -> hearing.get().respond(message, mux) },
+            ServiceId.CONN_DEVICE_LEASE.value to Responder { message, mux -> lease.get().respond(message, mux) },
         ),
     )
 
@@ -155,6 +201,16 @@ object ConnectionModule {
     @Provides
     @Singleton
     fun hearing(connection: GlassesConnection): Hearing = Hearing(connection)
+
+    @Provides
+    @Singleton
+    fun teleprompter(connection: GlassesConnection): com.macedonga.visor.core.connection.Teleprompter =
+        com.macedonga.visor.core.connection.Teleprompter(connection)
+
+    @Provides
+    @Singleton
+    fun captions(connection: GlassesConnection): com.macedonga.visor.core.connection.Captions =
+        com.macedonga.visor.core.connection.Captions(connection)
 
     @Provides
     @Singleton
@@ -209,6 +265,7 @@ object ConnectionModule {
         hearing,
         { (glassesConfig.state.value.values[com.macedonga.visor.language.PROCESSING_TIMEOUT] as? Number)?.toLong() },
         phone,
+        { com.macedonga.visor.settings.hasDisplay(connection.state.value.info?.build) },
     )
 
     @Provides
@@ -261,6 +318,15 @@ object ConnectionModule {
 
     @Provides
     @Singleton
+    fun screencast(connection: GlassesConnection, config: GlassesConfig, live: com.macedonga.visor.core.media.LiveStream): Screencast =
+        Screencast(connection, config, live)
+
+    @Provides
+    @Singleton
     fun glassesSettings(connection: GlassesConnection, drive: RlDriveResponder): GlassesSettings =
         GlassesSettings(connection, drive)
+
+    @Provides
+    @Singleton
+    fun glassesWifi(connection: GlassesConnection): GlassesWifi = GlassesWifi(connection)
 }

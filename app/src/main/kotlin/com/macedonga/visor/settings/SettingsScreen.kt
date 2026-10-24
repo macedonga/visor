@@ -124,7 +124,6 @@ import com.macedonga.visor.gallery.ProgressRing
 import com.macedonga.visor.gallery.RoundIcon
 import com.macedonga.visor.gallery.placesAllowed
 import com.macedonga.visor.gallery.words
-import com.macedonga.visor.home.LastBattery
 import com.macedonga.visor.home.StatusPill
 import com.macedonga.visor.language.languageOfVoice
 import com.macedonga.visor.media.spanWords
@@ -173,7 +172,11 @@ class SettingsViewModel @Inject constructor(
     val backups: Backups,
     val updates: com.macedonga.visor.update.Updates,
     val features: com.macedonga.visor.features.Features,
+    val lastSeen: com.macedonga.visor.home.LastSeen,
     val hearing: com.macedonga.visor.core.assistant.Hearing,
+    val band: com.macedonga.visor.band.BandLink,
+    val bands: com.macedonga.visor.band.Bands,
+    val bandPeers: com.macedonga.visor.band.BandPeers,
     val developer: com.macedonga.visor.outside.DeveloperMode,
 ) : ViewModel()
 
@@ -245,7 +248,9 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 for ((i, card) in Topic.CARDS.withIndex()) {
                     item(key = "card-$i") {
                         Column(Modifier.padding(top = if (i == 0) 18.dp else 14.dp)) {
-                            for (topic in card) NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
+                            for (topic in card.filter { it.shownOn(state.product) }) {
+                                NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
+                            }
                         }
                     }
                 }
@@ -290,11 +295,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 .turnsThePair { host.haptics.tick(0.35f) }
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { open(GlassesKey) },
         ) {
-            val remembered = remember {
-                context.getSharedPreferences("home", android.content.Context.MODE_PRIVATE).let { p ->
-                    p.getInt("glasses", -1).takeIf { it >= 0 }?.let { LastBattery(it, p.getInt("case", -1).takeIf { c -> c >= 0 }, p.getLong("at", 0)) }
-                }
-            }
+            val remembered by model.lastSeen.battery.collectAsStateWithLifecycle()
             StatusPill(
                 glasses, mood, remembered, paired = glasses.target?.let { true }, allowed = true, importing = false, importProgress = 0f, waiting = 0,
                 onImport = {}, onAllow = {}, onSetUp = { open(OnboardingKey()) }, onChangeOwner = { open(OnboardingKey(login = true, address = it)) },
@@ -564,13 +565,21 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
             shown("capture_mode")?.let { stringResource(R.string.sum_controls_press, it) },
             shown("tap_and_hold_mapping")?.let { stringResource(R.string.sum_controls_hold, it) },
         ).joinToString(" · ")
+        Topic.BAND -> {
+            // The Display reports the band it holds.
+            val glasses by model.connection.state.collectAsStateWithLifecycle()
+            val paired by model.bandPeers.bands.collectAsStateWithLifecycle()
+            val device = glasses.device
+            device?.bandBattery?.let { batteryWords(it, device.bandCharging) }
+                ?: if (paired?.isEmpty() == true) stringResource(R.string.band_not_paired) else ""
+        }
         Topic.SOUND -> listOfNotNull(
             shown("notification_volume")?.let { stringResource(R.string.sum_sound_volume, it) },
             stringResource(R.string.sum_headphone).takeIf { isOn("sg_headphone_mode_enabled") == true },
         ).joinToString(" · ")
         Topic.HEARING -> {
             val features by model.features.state.collectAsStateWithLifecycle()
-            Feature.entries.filter { it.topic == Topic.HEARING && features.standings[it] == Standing.ON }
+            Feature.entries.filter { it.topic == Topic.HEARING && it.on(features.product) && features.standings[it] == Standing.ON }
                 .map { stringResource(it.title) }.joinToString(" · ").ifEmpty { stringResource(R.string.sum_all_off) }
         }
         Topic.WEAR -> listOfNotNull(

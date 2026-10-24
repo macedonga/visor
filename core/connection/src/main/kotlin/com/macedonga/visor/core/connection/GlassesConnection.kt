@@ -35,6 +35,8 @@ class GlassesConnection(
     private val hosts: SessionHostFactory,
     // Injectable so a test can keep the store reads on its own virtual clock.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // False for a quick look at another pair, which leaves the choice of pair as it was.
+    private val chooses: Boolean = true,
 ) {
 
     private val _state = MutableStateFlow(GlassesState())
@@ -64,6 +66,11 @@ class GlassesConnection(
 
     private var job: Job? = null
 
+    private val _pair = MutableStateFlow(runCatching { store.currentSerial() }.getOrNull())
+
+    /** The serial of the pair Visor is for: the one connected, or chosen last. What Visor keeps per pair follows it. */
+    val pair: StateFlow<String?> = _pair.asStateFlow()
+
     private val _running = MutableStateFlow(false)
 
     /** True from [start] until [stop] has let go of the socket. */
@@ -81,31 +88,78 @@ class GlassesConnection(
     private val judged = AtomicBoolean(false)
     private var deadline: Job? = null
 
+    // svc28 state that came before svc100 said which model this is. Let through after a while if svc100 never decodes.
+    private val heldStatus = mutableListOf<ServiceData>()
+    private var holdingStatus = true
+    private var statusTimer: Job? = null
+
+    // While a lease holds the session on Wi-Fi, the Bluetooth target it came from.
+    @Volatile
+    private var bluetooth: GlassesTarget? = null
+
+    /** True while the session runs on Wi-Fi for a lease, with Bluetooth to come back to. */
+    val onWifi: Boolean get() = bluetooth != null
+
+    /** True from [pause] until the session opens again: the Live or a media import has the glasses on Wi-Fi of its own. */
+    @Volatile
+    var paused = false
+        private set
+
     /** Choose a target, open a session on it, and keep the state current until [stop]. */
     fun start(scope: CoroutineScope, override: GlassesTarget? = null) {
+        bluetooth = null
+        open(scope, override)
+    }
+
+    /**
+     * Move the session to [target], a Wi-Fi link, as the Meta app's link manager does for a lease: the glasses take one
+     * session at a time, so it moves rather than opening a second, and every service moves with it.
+     */
+    suspend fun moveToWifi(target: GlassesTarget) {
+        val current = _state.value.target ?: return
+        if (bluetooth == null) bluetooth = current.takeIf { it.link is GlassesLink.Bluetooth } ?: return
+        reopen(target)
+    }
+
+    /** Back on the Bluetooth link the session left for [moveToWifi]. */
+    suspend fun backToBluetooth() {
+        val target = bluetooth ?: return
+        bluetooth = null
+        reopen(target)
+    }
+
+    private suspend fun reopen(target: GlassesTarget) {
+        val scope = lastScope ?: return
+        if (!_running.value) return
+        host?.stop()
+        host = null
+        job?.cancelAndJoin()
+        job = null
+        open(scope, target)
+    }
+
+    private fun open(scope: CoroutineScope, override: GlassesTarget?) {
+        paused = false
         lastScope = scope
         lastOverride = override
         _running.value = true
         job = scope.launch {
-            // Both reads move together, not one withContext each: see the class doc for why
-            // they leave the caller's dispatcher at all.
-            val (bundles, bundle) = withContext(ioDispatcher) {
-                val bundles = store.all()
-                val bundle = if (override != null) {
-                    bundles.firstOrNull { it.serial == override.serial }
-                } else {
-                    store.load()
-                }
-                bundles to bundle
+            // The reads and the choice move together, not one withContext each: see the class doc for why
+            // they leave the caller's dispatcher at all. The pair connected to is the one chosen from now on.
+            val bundle = withContext(ioDispatcher) {
+                val bundle = if (override != null) store.all().firstOrNull { it.serial == override.serial } else store.chosen()
+                if (chooses) (override?.serial ?: bundle?.serial)?.let(store::choose)
+                bundle
             }
             val target = override ?: bundle?.let {
                 GlassesTarget(GlassesLink.Bluetooth(it.glassesAddress), it.serial)
             }
             if (target == null) {
-                _state.value = GlassesState(reason = idleReason(bundles))
+                _state.value = GlassesState(reason = "No glasses are set up on this phone yet. Set up glasses to start.")
                 return@launch
             }
 
+            if (chooses) _pair.value = target.serial
             _state.value = GlassesState(target = target)
             val opened = hosts.create(target, bundle)
             host = opened
@@ -116,6 +170,10 @@ class GlassesConnection(
 
     /** Let go of the link without ending the connection, so another session can have the glasses. */
     suspend fun pause(why: String) {
+        // The session that takes over runs on Wi-Fi of its own; this one comes back on Bluetooth.
+        bluetooth?.let { lastOverride = it }
+        bluetooth = null
+        paused = true
         host?.stop()
         host = null
         job?.cancelAndJoin()
@@ -126,7 +184,7 @@ class GlassesConnection(
     /** Reconnect after [pause], unless [stop] ran in between. */
     fun resume() {
         val scope = lastScope ?: return
-        if (_running.value && job == null) start(scope, lastOverride)
+        if (_running.value && job == null) open(scope, lastOverride)
     }
 
     /** Ask svc28 again on the session's own status channel: the glasses answer with a fresh full snapshot. */
@@ -149,6 +207,7 @@ class GlassesConnection(
      * has stopped.
      */
     suspend fun stop() {
+        bluetooth = null
         host?.stop()
         host = null
         job?.cancelAndJoin()
@@ -199,13 +258,13 @@ class GlassesConnection(
                 ) {
                     canaryAnswered = true
                     decodeInto(event) { copy(info = decodePeerDeviceInfo(it.payload)) }
+                    heldStatus.forEach(::applyStatus)
+                    heldStatus.clear()
                     judge(host, bundle)
                 }
                 if (event.serviceId == SVC_STATUS && isDeviceStateType(event.messageType)) {
-                    decodeInto(event) {
-                        val update = decodeDeviceStateUpdate(it.messageType, it.payload)
-                        copy(device = mergeDeviceState(device ?: DeviceState(), update.state))
-                    }
+                    // How it is framed depends on the model, which svc100 names: what comes first waits for it.
+                    if (holdingStatus && _state.value.info == null && heldStatus.size < HELD_STATUS) heldStatus += event else applyStatus(event)
                 }
                 // Airship's file chunks and the live stream's frames are their responders' business,
                 // and thousands of them would push everything else out of this buffer.
@@ -218,6 +277,11 @@ class GlassesConnection(
         }
     }
 
+    private fun applyStatus(event: ServiceData) = decodeInto(event) {
+        val update = decodeDeviceStateUpdate(it.messageType, it.payload, display = isDisplayBuild(info?.build))
+        copy(device = mergeDeviceState(device ?: DeviceState(), update.state))
+    }
+
     /** Fold a decoded service message into the state, or report why it would not decode. */
     private fun decodeInto(event: ServiceData, apply: GlassesState.(ServiceData) -> GlassesState) {
         try {
@@ -228,6 +292,10 @@ class GlassesConnection(
     }
 
     private fun newAttempt() {
+        heldStatus.clear()
+        holdingStatus = true
+        statusTimer?.cancel()
+        statusTimer = null
         canaryAnswered = false
         judged.set(false)
         deadline?.cancel()
@@ -248,6 +316,13 @@ class GlassesConnection(
             announcePeerAppInfo(connection)
             statusChannel = subscribeOn(connection, null)
             syncClock(connection)
+        }
+        statusTimer = scope.launch {
+            delay(STATUS_HOLD_MILLIS)
+            if (canaryAnswered) return@launch
+            holdingStatus = false
+            heldStatus.forEach(::applyStatus)
+            heldStatus.clear()
         }
         if (canaryAnswered) {
             judge(host, bundle)
@@ -295,19 +370,15 @@ class GlassesConnection(
         _state.value = _state.value.copy(diagnosis = checked.diagnosis)
     }
 
-    /** Why there is nothing to connect to, in words a person can act on. */
-    private fun idleReason(bundles: List<IdentityBundle>): String = when {
-        bundles.isEmpty() ->
-            "No glasses are set up on this phone yet. Set up glasses to start."
-        else ->
-            "More than one pair of glasses is set up on this phone. Choose which one to use."
-    }
-
     companion object {
         /** 20 seconds, from `__main__.py`'s `_DEFAULT_TIMEOUT_SECONDS`. */
         const val CANARY_TIMEOUT_MILLIS: Long = 20_000
 
+        /** How long svc28 waits for svc100 before it is applied anyway. */
+        private const val STATUS_HOLD_MILLIS: Long = 5_000
+
         private const val SVC_AIRSHIP = 20
         private const val SVC_MEDIA_STREAMING_CONTROL = 51350
+        private const val HELD_STATUS = 64
     }
 }
