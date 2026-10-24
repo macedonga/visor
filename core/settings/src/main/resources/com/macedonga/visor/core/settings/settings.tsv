@@ -83,7 +83,7 @@ CAPTOUCH2D_2FINGER_SWIPE_REAR		str	KEYCODE_VOLUME_DOWN	individual_device_setting
 CAPTOUCH2D_2FINGER_SWIPE_UP		str	KEYCODE_UNKNOWN	individual_device_settings	
 CAPTOUCH2D_2FINGER_TAP_RELEASE		str	KEYCODE_BACK	individual_device_settings	
 captouch_enabled	148	bool	true	individual_device_settings	1
-capture_aspect_ratio	252	int			
+capture_aspect_ratio	252	int	0	individual_device_settings	
 capture_auto_review	118	bool	true	individual_device_settings	
 capture_button_assistant_shortcut	50	str		individual_device_settings	
 capture_button_double_press	57	int	0	individual_device_settings	1
