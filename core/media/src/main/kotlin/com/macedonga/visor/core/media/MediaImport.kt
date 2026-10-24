@@ -129,6 +129,7 @@ class MediaImport(
             _problem.update { p -> p?.copy(handles = p.handles - handle)?.takeIf { it.handles.isNotEmpty() } }
         },
         onFailed = { handle, why -> report(handle, ImportProblem.Kind.NOT_SAVED, why) },
+        steadiedOnGlasses = { w, h -> steadiedOnGlasses(w, h) },
     )
 
     /** [handle] is no longer coming: it joins the problem on show, or starts one of [kind]. */
@@ -477,6 +478,20 @@ class MediaImport(
     /** Gets each bug report zip before it goes to Download/Visor. */
     @Volatile
     var bugReportReader: ((java.io.File) -> Unit)? = null
+
+    /**
+     * Whether a video this size came out of the glasses' own two-stage stabilization; any other is steadied on the phone.
+     * The app sets it from the glasses' settings; this is their default output.
+     */
+    @Volatile
+    var steadiedOnGlasses: (Int, Int) -> Boolean = { w, h -> minOf(w, h) == 1512 && maxOf(w, h) == 2016 }
+
+    /** [input] steadied or cut as an import would, into [output], with the logs kept for [handle]: for checking by hand. */
+    fun finishAgain(input: java.io.File, handle: String, output: java.io.File, landscape: Boolean, steadiness: Int): String {
+        val logs = index.originals(handle)
+        val done = finishVideo(context, input, output, java.io.File(logs, Assembly.IMU), java.io.File(logs, Assembly.FRAMES), steadiness, landscape, steadiedOnGlasses)
+        return done?.let { "steadied ${it.steadied}, landscape ${it.landscape}" } ?: "nothing to do"
+    }
 
     /**
      * Ask the glasses for a bug report, the way the Meta app does: svc7006 REQUEST_BUG_REPORT. The zip

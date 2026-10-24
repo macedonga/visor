@@ -30,6 +30,8 @@ class Assembly(
     private val onSaved: (String) -> Unit,
     /** A capture that could not be saved, and why. Its pieces stay for the next try. */
     private val onFailed: (String, String) -> Unit,
+    /** Whether a video this size came out of the glasses' own stabilization. */
+    private val steadiedOnGlasses: (Int, Int) -> Boolean,
 ) {
     private val staging = File(context.filesDir, "staging")
     private val scratch = File(context.cacheDir, "develop")
@@ -48,7 +50,7 @@ class Assembly(
         file.copyTo(File(dir, name), overwrite = true)
         File(dir, META).writeText(
             JSONObject().put("type", capture.type.name).put("takenAt", capture.takenAtMillis ?: System.currentTimeMillis())
-                .put("landscape", capture.landscape).toString(),
+                .put("landscape", capture.landscape).put("steadiness", capture.steadiness).toString(),
         )
         if (capture.wanted.mapNotNull { partName(capture, it.id) }.any { !File(dir, it).exists() }) return
         queue.trySend { safely(dir) }
@@ -95,13 +97,15 @@ class Assembly(
         var format = if (type == CaptureType.VIDEO) Format.MP4 else Format.JPEG
         val kept = when (type) {
             CaptureType.VIDEO -> {
-                val band = if (landscape) landscapeVideo(main, handle) else null
+                val made = File(scratch, "$handle.mp4").apply { parentFile?.mkdirs() }
+                val finished = finished(dir, main, made, handle, landscape, meta.optInt("steadiness"))
                 val (uri, where) = try {
-                    insert(format, takenAt) { out -> (band ?: main).inputStream().use { it.copyTo(out) } }
+                    insert(format, takenAt) { out -> (if (finished != null) made else main).inputStream().use { it.copyTo(out) } }
                 } finally {
-                    band?.delete()
+                    made.delete()
                 }
-                say(if (band != null) "Saved a landscape video: $where" else "Saved a video: $where")
+                val what = listOfNotNull("steadied".takeIf { finished?.steadied == true }, "landscape".takeIf { finished?.landscape == true })
+                say("Saved a ${(what + "video").joinToString(" ")}: $where")
                 Kept(handle, uri.toString(), type, takenAt, lat = place?.lat, lon = place?.lon)
             }
             else -> {
@@ -161,15 +165,12 @@ class Assembly(
         )
     }
 
-    /** A landscape video's 4:3 band, or null to keep it whole when this phone cannot make one. */
-    private fun landscapeVideo(main: File, handle: String): File? {
-        val band = File(scratch, "$handle.mp4").apply { parentFile?.mkdirs() }
-        return runCatching { Landscape.crop(context, main, band) }.map { band }.getOrElse {
-            say("Could not crop ${handle.take(8)} to landscape (${it.message}): saving it whole")
-            band.delete()
+    /** The video steadied or cut to landscape into [made], or null to keep it as it came: nothing to do, or this phone could not. */
+    private fun finished(dir: File, main: File, made: File, handle: String, landscape: Boolean, steadiness: Int): Finished? =
+        runCatching { finishVideo(context, main, made, File(dir, IMU), File(dir, FRAMES), steadiness, landscape, steadiedOnGlasses) }.getOrElse {
+            say("Could not steady or crop ${handle.take(8)} (${it.message}): saving it as it came")
             null
         }
-    }
 
     private enum class Format(val ext: String, val mime: String, val video: Boolean) {
         JPEG("jpg", "image/jpeg", false),

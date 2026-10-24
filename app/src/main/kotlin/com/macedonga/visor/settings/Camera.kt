@@ -92,3 +92,15 @@ fun keepLandscape(
         }
     }
 }
+
+/**
+ * Whether a video this size came out of the glasses' own two-stage stabilization, from the output sizes in their
+ * settings (1080p, and 3K and 60 fps on firmware that has those). Any other video is steadied on the phone.
+ */
+fun steadiedOnGlasses(settings: GlassesSettings): (Int, Int) -> Boolean = { w, h ->
+    listOf("", "_3k", "_60fps").any { suffix ->
+        val ow = settings.value("two_stage_eis_output_width$suffix")?.trim()?.toIntOrNull()
+        val oh = settings.value("two_stage_eis_output_height$suffix")?.trim()?.toIntOrNull()
+        ow != null && oh != null && minOf(w, h) == minOf(ow, oh) && maxOf(w, h) == maxOf(ow, oh)
+    }
+}
