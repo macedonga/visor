@@ -8,4 +8,7 @@ android {
 
 dependencies {
     api(project(":core:connection"))
+    implementation(libs.androidx.media3.transformer)
+    implementation(libs.androidx.media3.effect)
+    implementation(libs.androidx.media3.common)
 }

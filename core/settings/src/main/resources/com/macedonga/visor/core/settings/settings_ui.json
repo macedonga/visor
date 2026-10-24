@@ -4796,7 +4796,7 @@
 {
 "key":"capture_aspect_ratio",
 "label":"Media orientation",
-"note":"Portrait (3:4) or landscape (4:3) photos and videos.",
+"note":"Portrait (3:4) or landscape (4:3) photos and videos. The glasses always take the whole portrait frame; Visor crops landscape ones to 4:3 as it brings them over.",
 "group":"Camera",
 "invert":false,
 "user_facing":true,
@@ -4829,7 +4829,7 @@
 258,
 259
 ],
-"note_it":"Foto e video in verticale (3:4) o in orizzontale (4:3)."
+"note_it":"Foto e video in verticale (3:4) o in orizzontale (4:3). Gli occhiali scattano sempre l'intera inquadratura verticale; Visor ritaglia quelli orizzontali a 4:3 quando li importa."
 },
 {
 "key":"capture_auto_review",
@@ -10790,16 +10790,16 @@
 {
 "key":"landscape_mode_enabled",
 "label":"Landscape mode",
-"note":"Capture photos and videos in landscape orientation. Turning it on also sets Media orientation to Landscape and turns on Meta's landscape switch in the glasses' configuration.",
+"note":"The older landscape switch. Visor keeps it in line with Media orientation.",
 "group":"Camera",
 "invert":false,
-"user_facing":true,
+"user_facing":false,
 "confidence":"medium",
 "control":{
 "type":"toggle"
 },
 "label_it":"Modalità orizzontale",
-"note_it":"Acquisisci foto e video in modalità orizzontale. Attivandola si imposta anche l'orientamento su Orizzontale e si attiva l'interruttore orizzontale di Meta nella configurazione degli occhiali.",
+"note_it":"Il vecchio interruttore orizzontale. Visor lo tiene allineato all'orientamento dei contenuti multimediali.",
 "not_products":[
 258,
 259

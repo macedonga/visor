@@ -61,7 +61,7 @@ private fun sectionsOf(topic: Topic): List<Pair<Int?, List<String>>> = when (top
     )
     Topic.CAMERA -> listOf(
         R.string.section_video to listOf(
-            "resolution_and_framerate", "eis_mode", "video_duration_ms", "capture_aspect_ratio", "landscape_mode_enabled", "motion_blur_reduction_enabled",
+            "resolution_and_framerate", "eis_mode", "video_duration_ms", "capture_aspect_ratio", "motion_blur_reduction_enabled",
         ),
         R.string.section_picture to listOf(
             "quick_clips_photo_capture_enabled", "media_auto_leveling_enabled", "media_occlusion_removal_enabled", "occlusion_detection_enabled", "capture_auto_review",

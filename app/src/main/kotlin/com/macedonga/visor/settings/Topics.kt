@@ -51,7 +51,7 @@ enum class Topic(val title: Int, val icon: ImageVector, val keys: List<String> =
     CAMERA(
         R.string.topic_camera, VisorIcons.Camera,
         listOf(
-            "resolution_and_framerate", "video_duration_ms", "eis_mode", "capture_aspect_ratio", "landscape_mode_enabled",
+            "resolution_and_framerate", "video_duration_ms", "eis_mode", "capture_aspect_ratio",
             "quick_clips_photo_capture_enabled", "media_auto_leveling_enabled", "media_occlusion_removal_enabled",
             "capture_auto_review", "audio_playback_during_capture_enabled", "music_concurrency_enabled", "motion_blur_reduction_enabled",
             "occlusion_detection_enabled", "audio_noise_reduction_enabled",

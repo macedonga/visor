@@ -25,7 +25,7 @@ val GLASSES_CAMERA_KEYS = setOf("cloud_ai_understanding_enabled", "camera_use_en
 const val LANDSCAPE_FLAG = "mwa_ios_landscape_mode.enabled"
 
 private const val LANDSCAPE_MODE = "landscape_mode_enabled"
-// What the camera follows since 7238: 1 landscape, 0 portrait.
+// What the camera follows and marks each capture with: 1 landscape, 0 portrait.
 private const val ASPECT = "capture_aspect_ratio"
 private const val READ_MS = 5 * 60_000L
 
@@ -49,10 +49,10 @@ fun keepCameraInLine(scope: CoroutineScope, settings: GlassesSettings, store: As
 }
 
 /**
- * "Landscape mode" sets landscape the way the firmware reads it now. The 7238 camera takes the orientation from
- * capture_aspect_ratio, which stays portrait with only landscape_mode_enabled on: the switch sets it to landscape, and
- * back to portrait when turned off. Meta's landscape switch in the glasses' configuration goes on too, for the older
- * path; Meta's server turns it off. The camera reads that one at boot.
+ * Media orientation is the one landscape control. The camera follows capture_aspect_ratio and marks each capture with
+ * it, still taking the whole portrait frame; Visor crops the landscape ones as it brings them over. The older
+ * landscape_mode_enabled follows it, and with landscape Meta's landscape switch in the glasses' configuration goes on
+ * too, which Meta's server turns off.
  */
 fun keepLandscape(
     scope: CoroutineScope,
@@ -63,32 +63,30 @@ fun keepLandscape(
     log: EventLog,
 ) {
     scope.launch {
-        var was: Boolean? = null
         combine(
             connection.state.map { it.link == LinkState.READY }.distinctUntilChanged(),
-            settings.state.map { s -> same(Kind.BOOL, s.pending[LANDSCAPE_MODE] ?: s.stored[LANDSCAPE_MODE], "true") }.distinctUntilChanged(),
+            settings.state.map { s ->
+                // Unknown until the first read; never stored, the camera takes portrait.
+                if (s.readAt == null) null else same(Kind.INT, s.pending[ASPECT] ?: s.stored[ASPECT] ?: settings.catalogue[ASPECT]?.default, "1")
+            }.distinctUntilChanged(),
         ) { ready, on -> on.takeIf { ready } }.collectLatest { on ->
             on ?: return@collectLatest
-            val turnedOff = was == true && !on
-            was = on
-            val aspect = settings.state.value.pending[ASPECT] ?: settings.value(ASPECT)
-            // Off at start leaves the orientation as it is: it has its own row, Media orientation.
-            val want = if (on) "1" else "0".takeIf { turnedOff }
-            if (want != null && !same(Kind.INT, aspect, want) && settings.write(ASPECT, want)) {
-                log.add("Camera: media orientation follows Landscape mode, ${if (on) "landscape" else "portrait"}")
+            val legacy = settings.state.value.pending[LANDSCAPE_MODE] ?: settings.value(LANDSCAPE_MODE)
+            if (!same(Kind.BOOL, legacy, on.toString()) && settings.write(LANDSCAPE_MODE, on.toString())) {
+                log.add("Camera: landscape mode follows Media orientation, ${if (on) "on" else "off"}")
             }
             if (!on) return@collectLatest
             if (config.state.value.params.isEmpty()) {
                 // The configuration comes in a bug report: never on top of photos to bring over.
                 combine(media.importing, media.captures) { importing, captures -> !importing && captures.none { it.isNew && it.isMedia } }
                     .first { it }
-                log.add("Camera: reading the glasses' configuration for landscape mode")
+                log.add("Camera: reading the glasses' configuration for landscape")
                 config.read()
                 withTimeoutOrNull(READ_MS) { config.state.first { it.params.isNotEmpty() } } ?: return@collectLatest
             }
             val state = config.state.first { it.busy.isEmpty() }
             if (LANDSCAPE_FLAG !in state.params || state.values[LANDSCAPE_FLAG] == true) return@collectLatest
-            log.add("Camera: turning on Meta's landscape switch for landscape mode")
+            log.add("Camera: turning on Meta's landscape switch")
             val why = config.send(mapOf(LANDSCAPE_FLAG to true))
             log.add(if (why == null) "Camera: Meta's landscape switch is on; it applies once the glasses restart" else "Camera: Meta's landscape switch did not go: $why")
         }

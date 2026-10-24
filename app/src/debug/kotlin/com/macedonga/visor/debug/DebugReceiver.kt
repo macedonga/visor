@@ -301,7 +301,7 @@ class DebugReceiver : BroadcastReceiver() {
                 }
             }
             "MEDIA" -> resultData = media.captures.value.joinToString("\n") { c ->
-                "${c.handle} kind=${c.kindCode} ${c.takenAtMillis} " + c.assets.joinToString(" ") { "${it.id}:0x${it.typeCode.toString(16)}:${it.size}" }
+                "${c.handle} kind=${c.kindCode} ${c.takenAtMillis}${if (c.landscape) " landscape" else ""} " + c.assets.joinToString(" ") { "${it.id}:0x${it.typeCode.toString(16)}:${it.size}" }
             }.ifEmpty { "no captures listed; open Media once or wait for the list" }
             "IMPORT" -> {
                 val handles = intent.getStringExtra("handle")?.split(",").orEmpty()
