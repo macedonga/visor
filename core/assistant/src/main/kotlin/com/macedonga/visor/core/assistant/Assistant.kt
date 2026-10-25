@@ -1078,7 +1078,7 @@ class Assistant(
         preamble(l, interaction, transcript, text)
         _phase.value = AssistantPhase.SPEAKING
         val voiceId = glassesVoice()
-        val card = if (display()) answerCard(text) else null
+        val card = if (display() && text.isNotEmpty()) answerCard(text) else null
         val answer = netEvent(EV_VOICE_ACTION_RESPONSE, varm(interaction, transcript, text, onGlasses = true, voiceId = voiceId, card = card != null))
         // An answer that asks something has the glasses listen for the reply, without the wake word.
         val complete = netEvent(
