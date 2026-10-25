@@ -175,12 +175,17 @@ internal fun answerCard(text: String): String {
 }
 
 /**
- * ev60 MwaVoiceInteractionComplete with a fulfillmentResult the glasses speak themselves: ttsMessage, fulfillment
- * type 1 (server), requiresAnswer when they should listen for a reply, and nothing streaming. Status 1000 is success.
- * A [card] goes in onDeviceUxMessage (field 27) for the Display to draw.
+ * ev60 MwaVoiceInteractionComplete, which ends the turn: ttsMessage, fulfillment type 1 (server), requiresAnswer when
+ * they should listen for a reply, shouldSmartFollowUp (11) when they may listen for another question. With [streamed]
+ * false the glasses speak the text themselves; true marks it as already played from the stream (7 and 8).
+ * Status 1000 is success. A [card] goes in onDeviceUxMessage (field 27) for the Display to draw.
  */
-internal fun interactionComplete(interactionId: String, text: String, expectsAnswer: Boolean = false, card: String? = null): ByteArray {
-    var result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, false).bool(8, false)
+internal fun interactionComplete(
+    interactionId: String, text: String, expectsAnswer: Boolean = false, followUp: Boolean = false, card: String? = null,
+    streamed: Boolean = false,
+): ByteArray {
+    var result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, streamed).bool(8, streamed)
+        .bool(11, followUp)
     if (card != null) {
         val ux = ThriftWriter().listOfBinaries(1, listOf(card.toByteArray(Charsets.UTF_8))).str(2, interactionId).done()
         result = result.struct(27, ux)

@@ -699,7 +699,7 @@ class Assistant(
         val interaction = m[1].asText()
         val transcript = m[2].asStruct()[1].asStruct()[1].asText()
         if (interaction.isEmpty() || !l.taken.add(interaction)) return
-        if (m[11] != FOLLOW_UP_INVOCATION) l.fresh.add(interaction)
+        if (m[11] !in FOLLOW_UP_INVOCATIONS) l.fresh.add(interaction)
         // In a session the request has its own id; the microphone's is the session's, and it is the same turn.
         l.listening?.takeIf { it != interaction }?.let {
             l.sessionOf[interaction] = it
@@ -906,7 +906,7 @@ class Assistant(
             // The glasses give up after their processing timeout; speech and streaming need the last seconds of it.
             val budget = (processingTimeoutS() ?: FACTORY_PROCESSING_S) * 1000 - DELIVERY_MS
             val left = (budget - (System.currentTimeMillis() - started)).coerceAtLeast(MIN_MODEL_MS)
-            withTimeout(left) { brain.answer(transcript, spoken(l), pastOf(interaction), image, note, glasses = glasses) }
+            withTimeout(left) { brain.answer(transcript, spoken(l), pastOf(interaction), image, note, glasses = glasses, canEnd = true) }
         } catch (error: Exception) {
             problem = error.message ?: error::class.simpleName.orEmpty()
             Reply(fallback(spoken(l), store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
@@ -924,11 +924,12 @@ class Assistant(
             return
         }
         update(interaction) { it.copy(answer = text, problem = problem, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
+        if (reply.ends) say("The model ended the conversation: the glasses stop listening after this answer")
         // Every tool did what was asked and that is the answer, such as music that now plays: the turn ends without a word (#48).
         val quiet = store.config.value.quietAfterActions && problem.isEmpty() && !l.sessionTurn &&
             reply.actions.isNotEmpty() && reply.actions.all { it.ok } && !ASKS.containsMatchIn(text)
         try {
-            val sentMs = if (quiet) 0L.also { speakOnGlasses(l, interaction, transcript, "") } else deliver(l, interaction, transcript, text)
+            val sentMs = if (quiet) 0L.also { speakOnGlasses(l, interaction, transcript, "") } else deliver(l, interaction, transcript, text, listen = !reply.ends)
             l.answered.add(interaction)
             l.sessionOf[interaction]?.let { l.answered.add(it) }
             update(interaction) { it.copy(sentMs = sentMs) }
@@ -978,7 +979,7 @@ class Assistant(
         val text = reply.text
         update(sub) { it.copy(answer = text, problem = problem, modelMs = System.currentTimeMillis() - started, remembered = reply.remembered, actions = reply.actions) }
         try {
-            deliver(l, sub, question, text)
+            deliver(l, sub, question, text, live = true)
         } catch (error: Exception) {
             say("Live AI: the answer did not reach the glasses: ${error.message}")
         }
@@ -1041,15 +1042,19 @@ class Assistant(
         if (offerImage(got.bytes, got.from) && early === got) early = null
     }
 
-    /** Speak [text] as [interaction]'s answer in the voice chosen. The milliseconds of audio sent, 0 in the glasses' voice. */
-    private suspend fun deliver(l: Link, interaction: String, transcript: String, text: String): Long {
+    /**
+     * Speak [text] as [interaction]'s answer in the voice chosen; with [listen] false the glasses stop listening after
+     * it. The milliseconds of audio sent, 0 in the glasses' voice.
+     */
+    private suspend fun deliver(l: Link, interaction: String, transcript: String, text: String, listen: Boolean = true, live: Boolean = false): Long {
         // The glasses' own voice speaks only their own language.
         if (store.config.value.glassesVoice && !l.sessionTurn && store.config.value.speechLanguage.isEmpty()) {
-            speakOnGlasses(l, interaction, transcript, text)
+            speakOnGlasses(l, interaction, transcript, text, listen)
             return 0
         }
         val packets = voice.speak(text, spoken(l))
-        stream(l, interaction, transcript, text, packets)
+        // A session turn ends on the VARM; there, and in Live AI, ev60 would end the whole session.
+        stream(l, interaction, transcript, text, packets, complete = !l.sessionTurn && !live, listen = listen)
         return packets.sumOf { it.durationUs } / 1000
     }
 
@@ -1073,17 +1078,20 @@ class Assistant(
      * The answer in the glasses' own voice: a VARM that streams nothing, then ev60 with the text, which is what makes
      * them speak it with their own TTS.
      */
-    private suspend fun speakOnGlasses(l: Link, interaction: String, transcript: String, text: String) {
+    private suspend fun speakOnGlasses(l: Link, interaction: String, transcript: String, text: String, listen: Boolean = true) {
         val m0 = checkNotNull(l.m0)
         preamble(l, interaction, transcript, text)
         _phase.value = AssistantPhase.SPEAKING
         val voiceId = glassesVoice()
         val card = if (display() && text.isNotEmpty()) answerCard(text) else null
         val answer = netEvent(EV_VOICE_ACTION_RESPONSE, varm(interaction, transcript, text, onGlasses = true, voiceId = voiceId, card = card != null))
-        // An answer that asks something has the glasses listen for the reply, without the wake word.
+        // An answer that asks something has the glasses listen for the reply, without the wake word. Any other answer
+        // offers a follow-up, as the VARM's own shouldSmartFollowUp does.
         val complete = netEvent(
             EV_MWA_VOICE_INTERACTION_COMPLETE,
-            interactionComplete(interaction, text, expectsAnswer = ASKS.containsMatchIn(text), card = card),
+            interactionComplete(
+                interaction, text, expectsAnswer = listen && ASKS.containsMatchIn(text), followUp = listen && text.isNotEmpty(), card = card,
+            ),
         )
         // Without simplified forwarding the VARM is acted on as it lands, so the text must be there before it.
         for (event in if (l.simplified) listOf(answer, complete) else listOf(complete, answer)) {
@@ -1100,7 +1108,9 @@ class Assistant(
      * The answer, in the app's order: ev71, ev52, ev342, ev388; the stream header and the first
      * audio message; the VARM; the rest of the audio as bare frames in real time; 6000; ev389, ev392.
      */
-    private suspend fun stream(l: Link, interaction: String, transcript: String, text: String, packets: List<OpusPacket>) {
+    private suspend fun stream(
+        l: Link, interaction: String, transcript: String, text: String, packets: List<OpusPacket>, complete: Boolean, listen: Boolean,
+    ) {
         val mux = l.mux
         val m0 = checkNotNull(l.m0)
         val s0 = checkNotNull(l.s0)
@@ -1140,6 +1150,13 @@ class Assistant(
         }
         mux.send(s0, ByteArray(0), messageType = MT_STREAM_END)
         if (!l.simplified) sendNetEvent(l, m0, answer)
+        // Without it the glasses stay in their answering state with the mic on, and never offer a follow-up.
+        if (complete) {
+            val done = interactionComplete(
+                interaction, text, expectsAnswer = listen && ASKS.containsMatchIn(text), followUp = listen && text.isNotEmpty(), streamed = true,
+            )
+            sendNetEvent(l, m0, netEvent(EV_MWA_VOICE_INTERACTION_COMPLETE, done))
+        }
 
         val e389 = ThriftWriter().i64(1, System.currentTimeMillis()).i64(2, mono).i64(3, 7000).str(4, interaction).done()
         val e392 = ThriftWriter().str(1, "VoiceActionResponseMessage").i32(2, (mono and 0xFFFF).toInt()).i32(3, 1).done()
@@ -1296,8 +1313,9 @@ class Assistant(
         const val REGISTER_AGAIN_MS = 2_500L
         val CHANNEL_CLOSED = Regex("service 15 answered status 0xc0(?:02|10) on channel 0x([0-9a-f]{4})")
         const val QUESTION_GRACE_MS = 3_000L
-        // ev57 field 11, invocationMethod: 1 for the wake word, 3 for a follow-up the glasses listened for.
-        const val FOLLOW_UP_INVOCATION = 3L
+        // ev57 field 11, invocationMethod: 1 for the wake word, 3 for the reply to an answer that asked something, 5 for
+        // a question after any other answer.
+        val FOLLOW_UP_INVOCATIONS = setOf(3L, 5L)
         const val FRESH_WINDOW_MS = 2 * 60_000L
         val WAKE_WORD_ONLY = Regex("^(hey|hi|ehi|ei|ok|okay)?[ ,]*(meta|mata|metta|matta|meda)[.!?]*$", RegexOption.IGNORE_CASE)
         const val MIN_MODEL_MS = 6_000L
