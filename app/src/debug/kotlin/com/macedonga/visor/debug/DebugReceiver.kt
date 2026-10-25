@@ -69,6 +69,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var developer: com.macedonga.visor.outside.DeveloperMode
     @Inject lateinit var texts: com.macedonga.visor.connection.PhoneMessages
     @Inject lateinit var wifiLink: com.macedonga.visor.connection.WifiLink
+    @Inject lateinit var hearing: com.macedonga.visor.core.assistant.Hearing
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -211,6 +212,20 @@ class DebugReceiver : BroadcastReceiver() {
                             r.destroy()
                         }
                     })
+                }
+            }
+            // Delete the enrolled custom wake word from the glasses.
+            "CWW_CLEAR" -> answerLater { if (assistant.wakeWord.clear()) "sent; the glasses answer with a result in the log" else "not sent" }
+            // Hearing correction: --es do correction (start, waited for) | stop | state.
+            "HEARING" -> answerLater {
+                when (intent.getStringExtra("do") ?: "state") {
+                    "correction" -> {
+                        hearing.startCorrection()
+                        val on = hearing.awaitRunning(com.macedonga.visor.core.assistant.HearingMode.CORRECTION, 10_000)
+                        "running=$on ${hearing.state.value}"
+                    }
+                    "stop" -> { hearing.stop(); hearing.awaitStopped(); "${hearing.state.value}" }
+                    else -> "${hearing.state.value}"
                 }
             }
             // Restart only the glasses' assistant (it re-reads MobileConfig): live_caption_voice_id away and back.
