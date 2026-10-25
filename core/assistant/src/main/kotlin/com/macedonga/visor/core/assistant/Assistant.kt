@@ -924,8 +924,11 @@ class Assistant(
             return
         }
         update(interaction) { it.copy(answer = text, problem = problem, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
+        // Every tool did what was asked and that is the answer, such as music that now plays: the turn ends without a word (#48).
+        val quiet = store.config.value.quietAfterActions && problem.isEmpty() && !l.sessionTurn &&
+            reply.actions.isNotEmpty() && reply.actions.all { it.ok } && !ASKS.containsMatchIn(text)
         try {
-            val sentMs = deliver(l, interaction, transcript, text)
+            val sentMs = if (quiet) 0L.also { speakOnGlasses(l, interaction, transcript, "") } else deliver(l, interaction, transcript, text)
             l.answered.add(interaction)
             l.sessionOf[interaction]?.let { l.answered.add(it) }
             update(interaction) { it.copy(sentMs = sentMs) }
@@ -1090,7 +1093,7 @@ class Assistant(
         val mono = System.nanoTime() / 1_000_000
         val e392 = ThriftWriter().str(1, "VoiceActionResponseMessage").i32(2, (mono and 0xFFFF).toInt()).i32(3, 1).done()
         l.mux.send(m0, netEvent(EV_KEEP_AIR_SESSION_ALIVE, e392), messageType = MT_NET_EVENT)
-        say("Answered in the glasses' voice${voiceId?.let { " ($it)" }.orEmpty()}: \"$text\"")
+        say(if (text.isEmpty()) "Ended the turn without a word: every tool did what was asked" else "Answered in the glasses' voice${voiceId?.let { " ($it)" }.orEmpty()}: \"$text\"")
     }
 
     /**

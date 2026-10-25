@@ -23,7 +23,8 @@ interface Phone {
 
 /**
  * The app an action used, and why it did not work if it did not. [opened]: the app is open on the phone for it;
- * [tapToOpen]: it waits in a notification. [playing]: what plays now, when known.
+ * [tapToOpen]: it waits in a notification. [playing]: what plays now, when known. [gaveUp]: the step that did not work
+ * before the app was opened instead, as a clause.
  */
 data class PhoneDone(
     val app: String,
@@ -31,6 +32,7 @@ data class PhoneDone(
     val opened: Boolean = false,
     val tapToOpen: Boolean = false,
     val playing: String = "",
+    val gaveUp: String = "",
 )
 
 /** What plays on the phone, or [unknown] with the reason nothing is known. */
@@ -90,21 +92,23 @@ internal class PhoneTools(private val phone: Phone) {
                 told(done) {
                     if (it.tapToOpen) "The route to $to waits in a notification on the phone; tapping it opens ${it.app.ifEmpty { "the map app" }}."
                     else "The route to $to is open in ${it.app.ifEmpty { "the map app" }} on the phone; the wearer starts it there."
-                } to ToolAction(done.app.ifEmpty { PHONE }, "Directions · $to", done.failure == null)
+                } to ToolAction(done.app.ifEmpty { PHONE }, "Directions · $to", done.failure == null && !done.tapToOpen)
             }
         }
         "play_media" -> {
             val query = input.optString("query").trim()
             phone.play(query, input.optString("app").trim()).let { done ->
+                // Which step gave up, so the answer can say it (#45).
+                val why = done.gaveUp.takeIf { it.isNotEmpty() }?.let { ": $it" }.orEmpty()
                 told(done) {
                     when {
                         // Leading with the negative: a small model turned "open on the search" into "playing" (issue #37).
-                        it.tapToOpen -> "Nothing is playing yet. ${it.app} needs a tap: a notification on the phone opens it on the search."
-                        it.opened -> "Nothing is playing yet. ${it.app} is open on the phone on the search; the wearer picks the song there."
+                        it.tapToOpen -> "Nothing is playing yet$why. ${it.app} needs a tap: a notification on the phone opens it on the search."
+                        it.opened -> "Nothing is playing yet$why. ${it.app} is open on the phone on the search; the wearer picks the song there."
                         it.playing.isNotEmpty() -> "Playing in ${it.app}: ${it.playing}."
                         else -> "Playing in ${it.app}."
                     }
-                } to ToolAction(done.app.ifEmpty { PHONE }, if (query.isEmpty()) "Play" else "Play · $query", done.failure == null)
+                } to ToolAction(done.app.ifEmpty { PHONE }, if (query.isEmpty()) "Play" else "Play · $query", done.failure == null && !done.opened && !done.tapToOpen)
             }
         }
         "media_control" -> {
@@ -121,7 +125,8 @@ internal class PhoneTools(private val phone: Phone) {
     }
 
     private fun told(done: PhoneDone, ok: (PhoneDone) -> String) =
-        if (done.failure != null) ToolResult("It did not work: ${done.failure}.", true) else ToolResult(ok(done), false)
+        if (done.failure != null) ToolResult("It did not work: ${listOf(done.gaveUp, done.failure).filter { it.isNotEmpty() }.joinToString("; ")}.", true)
+        else ToolResult(ok(done), false)
 
     private companion object {
         fun text(help: String, vararg options: String): JSONObject = JSONObject().put("type", "string").put("description", help)

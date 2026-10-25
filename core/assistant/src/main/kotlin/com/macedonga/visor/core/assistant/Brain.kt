@@ -49,8 +49,11 @@ interface MemoryBook {
     fun forget(id: String): Memory?
 }
 
-/** What an OpenAI-compatible server and model take: reasoning_effort none, max_completion_tokens for max_tokens. */
-data class Fields(val reasoningOff: Boolean, val completionTokens: Boolean)
+/**
+ * What an OpenAI-compatible server and model take: reasoning_effort none, max_completion_tokens for max_tokens. [thinks]:
+ * the model thinks anyway, and its answer needs room for that.
+ */
+data class Fields(val reasoningOff: Boolean, val completionTokens: Boolean, val thinks: Boolean = false)
 
 /** Where [Fields] are kept, by address and model, until either changes. */
 interface FieldBook {
@@ -306,11 +309,18 @@ class Brain(
         var f = known ?: Fields(reasoningOff = true, completionTokens = "api.openai.com" in url)
         while (true) {
             try {
-                return post(url, headers, shaped(body, f)).also { if (f != known) fields?.keep(key, f) }
+                val answer = post(url, headers, shaped(body, f))
+                // A model that cannot stop thinking (Gemini's Pro models) spends a spoken answer's tokens on it.
+                if (known == null && !f.reasoningOff && !f.thinks && thoughtOnly(answer)) {
+                    f = f.copy(thinks = true)
+                    continue
+                }
+                return answer.also { if (f != known) fields?.keep(key, f) }
             } catch (error: IllegalStateException) {
                 val why = error.message.orEmpty()
                 f = when {
-                    known == null && f.reasoningOff && "reasoning" in why -> f.copy(reasoningOff = false)
+                    // Not every server names the field: Google's answer is "Request contains an invalid argument" (#46).
+                    known == null && f.reasoningOff && ("reasoning" in why || "answered 400:" in why) -> f.copy(reasoningOff = false)
                     known == null && !f.completionTokens && "max_completion_tokens" in why -> f.copy(completionTokens = true)
                     else -> throw error
                 }
@@ -318,8 +328,16 @@ class Brain(
         }
     }
 
+    private fun thoughtOnly(answer: JSONObject): Boolean {
+        val choice = answer.optJSONArray("choices")?.optJSONObject(0) ?: return false
+        val message = choice.optJSONObject("message") ?: return false
+        val text = message.optString("content").takeUnless { message.isNull("content") }.orEmpty().replace(THINKING, "")
+        return choice.optString("finish_reason") == "length" && text.isBlank() && message.optJSONArray("tool_calls") == null
+    }
+
     private fun shaped(body: JSONObject, f: Fields) = JSONObject(body.toString()).apply {
         if (f.reasoningOff) put("reasoning_effort", "none")
+        if (f.thinks) put("max_tokens", getInt("max_tokens") + THINKING_TOKENS)
         if (f.completionTokens) put("max_completion_tokens", remove("max_tokens"))
     }
 

@@ -90,6 +90,10 @@ class VisorToggles @Inject constructor(
             assistant.config.on { it.glassesVoice }, { on -> assistant.update { it.copy(glassesVoice = on) } },
         ),
         VisorToggle(
+            "quiet_actions", R.string.ai_quiet_actions, R.string.ai_quiet_actions_sub, Topic.META_AI,
+            assistant.config.on { it.quietAfterActions }, { on -> assistant.update { it.copy(quietAfterActions = on) } },
+        ),
+        VisorToggle(
             "web", R.string.ai_web, R.string.ai_web_sub, Topic.META_AI,
             assistant.config.on { it.webSearch && it.provider == Provider.CLAUDE }, { on -> assistant.update { it.copy(webSearch = on) } },
         ),

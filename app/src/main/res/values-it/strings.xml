@@ -507,6 +507,8 @@
     <string name="ai_vision_sub">Per le domande su ciò che stai guardando.</string>
     <string name="ai_web">Cerca sul web</string>
     <string name="ai_web_sub">Claude cerca quando ne ha bisogno. Più lento.</string>
+    <string name="ai_quiet_actions">Silenzio dopo le azioni</string>
+    <string name="ai_quiet_actions_sub">Nessuna risposta a voce quando ogni azione è riuscita.</string>
     <string name="ai_memory_window">Una conversazione resta aperta</string>
     <string name="ai_memory_window_sub">Dopo l\'ultima domanda, così una domanda successiva la continua.</string>
     <string name="ai_minutes">%1$d min</string>

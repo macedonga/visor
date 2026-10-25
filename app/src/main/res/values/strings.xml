@@ -508,6 +508,8 @@
     <string name="ai_vision_sub">For questions about what you are looking at.</string>
     <string name="ai_web">Search the web</string>
     <string name="ai_web_sub">Claude looks things up when it needs to. Slower.</string>
+    <string name="ai_quiet_actions">Quiet after actions</string>
+    <string name="ai_quiet_actions_sub">No spoken answer when every action worked.</string>
     <string name="ai_memory_window">A conversation stays open</string>
     <string name="ai_memory_window_sub">After the last question, so a follow-up continues it.</string>
     <string name="ai_minutes">%1$d min</string>

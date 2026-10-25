@@ -512,6 +512,8 @@
     <string name="ai_vision_sub">Для вопросов о том, на что вы смотрите.</string>
     <string name="ai_web">Искать в интернете</string>
     <string name="ai_web_sub">Claude ищет информацию, когда это нужно. Медленнее.</string>
+    <string name="ai_quiet_actions">Тишина после действий</string>
+    <string name="ai_quiet_actions_sub">Без голосового ответа, если все действия выполнены.</string>
     <string name="ai_memory_window">Разговор остаётся открытым</string>
     <string name="ai_memory_window_sub">После последнего вопроса, чтобы следующий вопрос продолжил его.</string>
     <string name="ai_minutes">%1$d мин</string>

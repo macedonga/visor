@@ -96,7 +96,7 @@ class Backups @Inject constructor(
                 "assistant",
                 JSONObject()
                     .put("enabled", a.enabled).put("provider", a.provider.name).put("model", a.model).put("linesModel", a.linesModel)
-                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("glassesVoice", a.glassesVoice).put("speechLanguage", a.speechLanguage)
+                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("glassesVoice", a.glassesVoice).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
                     .put("instructions", a.instructions).put("memoryMinutes", a.memoryMinutes)
                     .put("answerWaitSeconds", a.answerWaitSeconds),
             )
@@ -146,6 +146,7 @@ class Backups @Inject constructor(
                     webSearch = o.optBoolean("webSearch", it.webSearch),
                     vision = o.optBoolean("vision", it.vision),
                     glassesVoice = o.optBoolean("glassesVoice", it.glassesVoice),
+                    quietAfterActions = o.optBoolean("quietAfterActions", it.quietAfterActions),
                     speechLanguage = o.optString("speechLanguage", it.speechLanguage),
                     instructions = o.optString("instructions", it.instructions),
                     memoryMinutes = o.optInt("memoryMinutes", it.memoryMinutes),
