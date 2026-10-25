@@ -881,7 +881,7 @@
     <string name="hc_now_untested">Не настроено</string>
     <string name="hc_now_untested_sub">Пройдите тест слуха ниже.</string>
     <string name="hc_now_on_sub">Воспроизводятся звуки вокруг вас с учётом вашего слуха.</string>
-    <string name="hc_refused_chip">Аудиочип очков отклонил профиль правого уха.</string>
+    <string name="hc_refused_chip">Аудиочип очков не принял профиль слуха.</string>
     <string name="hc_now_off_sub">Запустите здесь.</string>
     <string name="hc_amplification">Усиление</string>
     <string name="hc_sharpness">Чёткость</string>

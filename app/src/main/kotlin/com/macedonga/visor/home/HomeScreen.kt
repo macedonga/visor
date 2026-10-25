@@ -310,7 +310,7 @@ fun HomeScreen(
     // What an import has to do and how far it is, across files: done captures plus the share of the one in flight,
     // never going back. Importing drops the Bluetooth link on purpose, so until it is back the glasses still count
     // as here, and the temples do not fold and open again.
-    val fresh = captures.filter { it.isNew }
+    val fresh by model.media.fresh.collectAsStateWithLifecycle()
     var importTotal by remember { mutableIntStateOf(0) }
     var importBest by remember { mutableFloatStateOf(0f) }
     var settling by remember { mutableStateOf(false) }

@@ -888,7 +888,7 @@
     <string name="hc_now_untested">Da configurare</string>
     <string name="hc_now_untested_sub">Fai il test dell\'udito qui sotto.</string>
     <string name="hc_now_on_sub">Riproduce i suoni intorno a te, regolati sul tuo udito.</string>
-    <string name="hc_refused_chip">Il chip audio degli occhiali ha rifiutato il profilo dell\'orecchio destro.</string>
+    <string name="hc_refused_chip">Il chip audio degli occhiali non ha accettato il profilo uditivo.</string>
     <string name="hc_now_off_sub">Avviala da qui.</string>
     <string name="hc_amplification">Amplificazione</string>
     <string name="hc_sharpness">Nitidezza</string>

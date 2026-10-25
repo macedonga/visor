@@ -890,7 +890,7 @@
     <string name="hc_now_untested">Not set up</string>
     <string name="hc_now_untested_sub">Take the hearing test below.</string>
     <string name="hc_now_on_sub">Playing the sound around you, set to your hearing.</string>
-    <string name="hc_refused_chip">The glasses\' audio chip refused the right ear\'s profile.</string>
+    <string name="hc_refused_chip">The glasses\' audio chip did not take the hearing profile.</string>
     <string name="hc_now_off_sub">Start it here.</string>
     <string name="hc_amplification">Amplification</string>
     <string name="hc_sharpness">Sharpness</string>

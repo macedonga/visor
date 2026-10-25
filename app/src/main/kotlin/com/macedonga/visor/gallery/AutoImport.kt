@@ -61,7 +61,7 @@ fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesC
             val mode = choice.mode.value
             val state = connection.state.value
             val device = state.device
-            val fresh = media.captures.value.filter { it.isNew && it.isMedia }
+            val fresh = media.fresh.value
             val wanted = mode != AutoImport.OFF &&
                 state.link == LinkState.READY &&
                 (mode == AutoImport.ALWAYS || device?.battery?.charging == true) &&

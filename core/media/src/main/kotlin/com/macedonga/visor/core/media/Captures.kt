@@ -11,6 +11,9 @@ const val SVC_MEDIA = 18
 private const val MT_ENUMERATE = 1
 const val MT_CAPTURE = 6
 const val MT_LIST_DONE = 2
+private const val MT_DELETE = 3
+const val MT_DELETE_OK = 4
+const val MT_DELETE_FAIL = 5
 private const val MT_ASSET_REQUEST = 0x83
 const val MT_ASSET_GONE = 0x85
 private const val MT_LINK_CHANGE = 0x86
@@ -106,6 +109,12 @@ suspend fun requestCapture(connection: DataXConnection, handle: String, linkType
 /** Queue one asset of a capture: payload `<handle>:<assetId>`. Used for previews, which ride on Bluetooth. */
 suspend fun requestAsset(connection: DataXConnection, handle: String, assetId: String) =
     request(connection, MT_ASSET_REQUEST, "$handle:$assetId".toByteArray())
+
+/**
+ * Delete a capture from the glasses, as the Meta app does once it has one: payload `<handle>`. They answer
+ * [MT_DELETE_OK] with the handle, or [MT_DELETE_FAIL] with `<handle>:<reason>`.
+ */
+suspend fun deleteCapture(connection: DataXConnection, handle: String) = request(connection, MT_DELETE, handle.toByteArray())
 
 private suspend fun request(connection: DataXConnection, type: Int, payload: ByteArray) =
     connection.sendOnService(SVC_MEDIA, type, payload)
