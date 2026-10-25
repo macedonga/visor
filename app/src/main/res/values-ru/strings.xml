@@ -259,7 +259,8 @@
     <string name="live_stopped_battery">Очки отключили камеру: низкий заряд батареи</string>
     <string name="live_stopped_folded">Очки отключили камеру: их сложили</string>
     <string name="settings_notifications">Уведомления на очках</string>
-    <string name="settings_notifications_sub">Уведомления телефона, которые зачитывают очки. Если выключено, Visor их не отправляет.</string>
+    <string name="settings_notifications_sub">Уведомления телефона, которые Visor отправляет на очки. Если выключено, Visor их не отправляет.</string>
+    <string name="settings_notifications_sub_chat">Сообщения из чатов телефона, которые зачитывают очки. Если выключено, Visor их не отправляет.</string>
     <string name="language_title">Язык</string>
     <string name="language_voice">Голос</string>
     <string name="language_voice_is">Голос · %1$s</string>

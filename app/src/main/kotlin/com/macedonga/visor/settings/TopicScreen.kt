@@ -101,8 +101,11 @@ fun TopicScreen(name: String, open: (NavKey) -> Unit, model: SettingsViewModel =
             Topic.NOTIFICATIONS -> item(key = "visor") {
                 val on by model.notifyChoice.enabled.collectAsStateWithLifecycle()
                 val muted by model.apps.muted.collectAsStateWithLifecycle()
+                val glasses by model.connection.state.collectAsStateWithLifecycle()
+                // Glasses without a display read out chat messages only.
+                val sub = if (hasDisplay(glasses.info?.build)) R.string.settings_notifications_sub else R.string.settings_notifications_sub_chat
                 Rows(
-                    { VisorToggleRow(model.toggles.byId("notifications")!!, sub = stringResource(R.string.settings_notifications_sub)) },
+                    { VisorToggleRow(model.toggles.byId("notifications")!!, sub = stringResource(sub)) },
                     if (on) row {
                         ValueRow(
                             stringResource(R.string.notify_apps_title),

@@ -245,7 +245,8 @@
     <string name="live_stopped_battery">Gli occhiali hanno fermato la fotocamera: batteria scarica</string>
     <string name="live_stopped_folded">Gli occhiali hanno fermato la fotocamera: sono stati chiusi</string>
     <string name="settings_notifications">Notifiche sugli occhiali</string>
-    <string name="settings_notifications_sub">Le notifiche del telefono, lette dagli occhiali. Spento, Visor non ne manda nessuna.</string>
+    <string name="settings_notifications_sub">Le notifiche del telefono, mandate agli occhiali. Spento, Visor non ne manda nessuna.</string>
+    <string name="settings_notifications_sub_chat">I messaggi delle chat del telefono, letti dagli occhiali. Spento, Visor non ne manda nessuno.</string>
     <string name="language_title">Lingua</string>
     <string name="language_voice">Voce</string>
     <string name="language_voice_is">Voce · %1$s</string>

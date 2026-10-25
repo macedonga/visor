@@ -111,6 +111,11 @@ class MirrorListener : NotificationListenerService(), Messaging {
 
     override fun onNotificationPosted(sbn: StatusBarNotification, rankingMap: RankingMap) {
         if (!wanted(sbn, rankingMap)) return
+        // Glasses without a display read out chat messages only and drop the rest unpresented: another app's
+        // chat goes to them as a WhatsApp message, anything else not at all.
+        val display = display()
+        val chatProvider = PROVIDERS[sbn.packageName] ?: PROVIDER_WHATSAPP.takeIf { !display && chat(sbn.notification) }
+        if (chatProvider == null && !display) return
         apps.saw(sbn.packageName)
         // The Messages app's conversations are kept whether or not the glasses listen: the Display's list reads them.
         val sms = sbn.packageName == Telephony.Sms.getDefaultSmsPackage(this)
@@ -123,7 +128,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
         val appName = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
         val r = Ranking()
         // The phone's texts, SMS or RCS, go as native messages, which the glasses' Messages app files by thread.
-        (if (sms) PROVIDER_NATIVE else PROVIDERS[sbn.packageName])?.let { provider ->
+        (if (sms) PROVIDER_NATIVE else chatProvider)?.let { provider ->
             message(sbn, provider, appName)?.let { m ->
                 deliver(m)
                 replyAction(n)?.let { action ->
@@ -313,6 +318,10 @@ class MirrorListener : NotificationListenerService(), Messaging {
         }.getOrNull()
     }
 
+    /** A conversation in the chat layout (MessagingStyle), which the glasses' announcer reads as a message. */
+    @Suppress("DEPRECATION")
+    private fun chat(n: Notification): Boolean = n.extras.getParcelableArray(Notification.EXTRA_MESSAGES)?.isNotEmpty() == true
+
     // The action that takes typed text: the app's own "Reply".
     private fun replyAction(n: Notification): Notification.Action? =
         n.actions?.firstOrNull { it.semanticAction == Notification.Action.SEMANTIC_ACTION_REPLY && !it.remoteInputs.isNullOrEmpty() }
@@ -373,6 +382,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
     companion object {
         private const val PROVIDER_MIRRORED = 8
         private const val PROVIDER_NATIVE = 3
+        private const val PROVIDER_WHATSAPP = 2
         private const val TYPE_INCOMING_MESSAGE = 1
 
         // The app id the glasses gate on, per provider, as the Meta app sends it. Messenger and Instagram are not their package names.

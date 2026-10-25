@@ -246,7 +246,8 @@
     <string name="live_stopped_battery">The glasses stopped the camera: the battery is low</string>
     <string name="live_stopped_folded">The glasses stopped the camera: they were folded</string>
     <string name="settings_notifications">Notifications on the glasses</string>
-    <string name="settings_notifications_sub">The phone\'s notifications, read out by the glasses. Off, Visor sends them none.</string>
+    <string name="settings_notifications_sub">The phone\'s notifications, sent to the glasses. Off, Visor sends them none.</string>
+    <string name="settings_notifications_sub_chat">Chat messages from the phone, read out by the glasses. Off, Visor sends them none.</string>
     <string name="language_title">Language</string>
     <string name="language_voice">Voice</string>
     <string name="language_voice_is">Voice · %1$s</string>
