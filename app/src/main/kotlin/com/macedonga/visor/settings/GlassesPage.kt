@@ -27,10 +27,16 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.navigation3.runtime.NavKey
+import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.OnboardingKey
+import com.macedonga.visor.WebAppsKey
+import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.connection.LinkKind
+import com.macedonga.visor.firmware.FirmwareUpdate
+import com.macedonga.visor.firmware.FirmwareWork
+import com.macedonga.visor.home.pairName
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
@@ -60,9 +66,11 @@ class GlassesPageModel @Inject constructor(
     val connection: GlassesConnection,
     val settings: GlassesSettings,
     val login: MetaLogin,
+    val firmware: FirmwareUpdate,
     val kind: LinkKind,
     private val store: IdentityStore,
     val looks: Looks,
+    val lastSeen: com.macedonga.visor.home.LastSeen,
 ) : ViewModel() {
     private val _glasses = MutableStateFlow<List<IdentityBundle>>(emptyList())
 
@@ -83,6 +91,7 @@ class GlassesPageModel @Inject constructor(
     fun forget(serial: String) {
         viewModelScope.launch(Dispatchers.IO) {
             store.remove(serial)
+            lastSeen.forget(serial)
             _glasses.value = runCatching { store.all() }.getOrDefault(emptyList())
         }
     }
@@ -95,6 +104,8 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val running by model.connection.running.collectAsStateWithLifecycle()
     val bundles by model.glasses.collectAsStateWithLifecycle()
+    val seen by model.lastSeen.seen.collectAsStateWithLifecycle()
+    val looks by model.looks.all.collectAsStateWithLifecycle()
     val login by model.login.status.collectAsStateWithLifecycle()
     val le by model.kind.overLe.collectAsStateWithLifecycle()
     LifecycleResumeEffect(Unit) {
@@ -120,22 +131,29 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
     val serial = glasses.target?.serial ?: info?.serial
     var renaming by remember { mutableStateOf(false) }
     var forgetting by remember { mutableStateOf(false) }
+    var firmwareOpen by remember { mutableStateOf(false) }
+    var confirmingFirmware by remember { mutableStateOf(false) }
+    val fwChecking by model.firmware.checking.collectAsStateWithLifecycle()
+    val fwChecked by model.firmware.checked.collectAsStateWithLifecycle()
+    val fwOffer by model.firmware.offer.collectAsStateWithLifecycle()
+    val fwProblem by model.firmware.problem.collectAsStateWithLifecycle()
+    val fwWork by model.firmware.work.collectAsStateWithLifecycle()
 
     SettingsPage(name, light = 0.6f) {
         item(key = "power") {
             Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(36.dp)) {
                 // Away, the last reading the home kept, dimmed.
-                val last = remember { context.getSharedPreferences("home", android.content.Context.MODE_PRIVATE) }
+                val last by model.lastSeen.battery.collectAsStateWithLifecycle()
                 val glassesNow = device?.battery?.percent?.toInt()
                 val caseNow = device?.case?.levelPercent()
                 Readout(
                     stringResource(R.string.glasses_battery),
-                    (glassesNow ?: last.getInt("glasses", -1).takeIf { it >= 0 })?.let { "$it%" },
+                    (glassesNow ?: last?.glasses)?.let { "$it%" },
                     device?.battery?.charging == true, fresh = glassesNow != null,
                 )
                 Readout(
                     stringResource(R.string.glasses_case_label),
-                    (caseNow ?: last.getInt("case", -1).takeIf { it >= 0 })?.let { "$it%" },
+                    (caseNow ?: last?.case)?.let { "$it%" },
                     device?.case?.charging == true, fresh = caseNow != null,
                 )
             }
@@ -168,7 +186,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     },
                     look?.let { l -> l.colorName ?: l.color }?.let { v -> @Composable { ValueRow(stringResource(R.string.glasses_color), v, onClick = null) } },
                     look?.let { l -> l.lensName ?: l.lens }?.let { v -> @Composable { ValueRow(stringResource(R.string.glasses_lenses), v, onClick = null) } },
-                    { ValueRow(stringResource(R.string.glasses_firmware), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = null) },
+                    { ValueRow(stringResource(R.string.glasses_firmware), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = { firmwareOpen = true }) },
                     { ValueRow(stringResource(R.string.glasses_serial), serial ?: stringResource(R.string.settings_unknown), onClick = null) },
                     device?.thermal?.let { t -> @Composable { ValueRow(stringResource(R.string.glasses_heat), heatWords(t.health, t.throttling), onClick = null) } },
                     device?.storage?.let { s -> @Composable { ValueRow(stringResource(R.string.glasses_storage), stringResource(R.string.glasses_storage_free, gb(s.freeMb), gb(s.totalMb)), onClick = null) } },
@@ -183,6 +201,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         RowFrame(
                             stringResource(
                                 when {
+                                    ready && glasses.target?.link is GlassesLink.Wifi -> R.string.glasses_link_wifi
                                     ready -> if (le) R.string.glasses_link_le else R.string.glasses_link_rfcomm
                                     running && glasses.link != LinkState.DISCONNECTED && glasses.link != LinkState.LOST -> R.string.glasses_searching
                                     else -> R.string.glasses_link_off
@@ -201,14 +220,19 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     },
                     *bundles.filter { it.serial != serial }.map { b ->
                         @Composable {
-                            RowFrame(b.serial, onClick = null, sub = b.glassesAddress) {
+                            val other = seen[b.serial]
+                            RowFrame(
+                                pairName(other, looks[b.serial]), onClick = null,
+                                sub = other?.glasses?.let { g -> other.case?.let { c -> stringResource(R.string.glasses_other_batteries, g, c) } ?: "$g%" },
+                            ) {
                                 ActionPill(stringResource(R.string.glasses_connect), {
-                                    GlassesService.stop(context)
                                     GlassesService.start(context, GlassesTarget(GlassesLink.Bluetooth(b.glassesAddress), b.serial))
                                 }, quiet = true, modifier = Modifier.padding(start = 12.dp))
                             }
                         }
                     }.toTypedArray(),
+                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) }, locked = !ready) } else null,
+                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) }, locked = !ready) } else null,
                 )
             }
         }
@@ -227,6 +251,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         }
                     },
                     { ValueRow(stringResource(R.string.glasses_change_owner), null, onClick = { open(OnboardingKey(login = true, address = (glasses.target?.link as? GlassesLink.Bluetooth)?.address)) }, sub = stringResource(R.string.glasses_change_owner_sub)) },
+                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) }, locked = !ready) } else null,
                 )
             }
         }
@@ -261,6 +286,43 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     model.forget(serial)
                 })
                 ActionPill(stringResource(R.string.language_cancel), { forgetting = false }, quiet = true)
+            }
+        }
+    }
+    if (firmwareOpen) {
+        VisorSheet({ firmwareOpen = false; confirmingFirmware = false; model.firmware.dismiss() }) {
+            SheetTitle(stringResource(R.string.firmware_title))
+            Rows(
+                { ValueRow(stringResource(R.string.firmware_current), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = null) },
+                fwOffer?.let { o -> @Composable { ValueRow(stringResource(R.string.firmware_update), o.displayName.ifEmpty { o.targetVersion }, onClick = null) } },
+            )
+            val status: String? = when (val w = fwWork) {
+                is FirmwareWork.Failed -> stringResource(R.string.firmware_failed, w.reason)
+                FirmwareWork.Installed -> stringResource(R.string.firmware_installed)
+                is FirmwareWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
+                FirmwareWork.Idle -> when {
+                    fwChecking -> stringResource(R.string.firmware_checking)
+                    fwProblem.isNotEmpty() -> fwProblem
+                    fwChecked && fwOffer == null -> stringResource(R.string.firmware_up_to_date)
+                    else -> null
+                }
+            }
+            Column(Modifier.padding(horizontal = SIDE, vertical = 16.dp)) {
+                if (status != null) Footnote(status)
+                val offer = fwOffer
+                val installing = fwWork is FirmwareWork.Installing
+                if (confirmingFirmware && offer != null) {
+                    Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionPill(stringResource(R.string.firmware_install), { confirmingFirmware = false; model.firmware.install() })
+                        ActionPill(stringResource(R.string.language_cancel), { confirmingFirmware = false }, quiet = true)
+                    }
+                    Footnote(stringResource(R.string.firmware_confirm, offer.displayName.ifEmpty { offer.targetVersion }))
+                } else {
+                    Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ActionPill(stringResource(R.string.firmware_check), { model.firmware.check() }, quiet = true, enabled = !fwChecking && !installing)
+                        if (offer != null) ActionPill(stringResource(R.string.firmware_install), { confirmingFirmware = true }, enabled = !installing)
+                    }
+                }
             }
         }
     }

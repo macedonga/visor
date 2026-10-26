@@ -62,6 +62,12 @@ internal const val EV_ON_PHONE_UNDERSTANDING = 342
 internal const val EV_TTS_START_INFO = 388
 internal const val EV_TTS_END_INFO = 389
 internal const val EV_KEEP_AIR_SESSION_ALIVE = 392
+// The glasses' own tools and intents, run for a Display turn (see GlassesTools.kt).
+internal const val EV_REMOTE_INTENT_REQUEST = 380
+internal const val EV_REMOTE_INTENT_RESPONSE = 381
+internal const val EV_MCP_REQUEST = 311
+internal const val EV_MCP_RESPONSE = 312
+internal const val EV_MCP_REQUEST_ACK = 387
 
 /** The glasses' name for a NetEvent id. */
 internal fun eventName(id: Int): String = EVENT_NAMES[id] ?: "event $id"
@@ -129,7 +135,14 @@ private fun inflate(data: ByteArray): ByteArray {
  * request and interaction ids were replaced in the file with neutral ones of the same shape.
  * Splicing keeps every other byte; re-encoding it would change integer widths.
  */
-internal fun varm(interactionId: String, transcript: String, text: String, onGlasses: Boolean = false, voiceId: String? = null): ByteArray {
+internal fun varm(
+    interactionId: String,
+    transcript: String,
+    text: String,
+    onGlasses: Boolean = false,
+    voiceId: String? = null,
+    card: Boolean = false,
+): ByteArray {
     val raw = checkNotNull(Assistant::class.java.getResourceAsStream("varm_template.bin")) { "varm_template.bin is missing" }
         .use { it.readBytes() }
     val old = Thrift.loads(raw)
@@ -144,19 +157,38 @@ internal fun varm(interactionId: String, transcript: String, text: String, onGla
     val spliced = Thrift.replaceStrings(raw, mapping)
     if (!onGlasses) return spliced
     // No audio follows: streamingBackTts (6) and isUsingPartialResponseStreaming (14) go false; ev60 then carries the text.
-    return listOf(6, 14).fold(spliced) { b, field -> Thrift.setBool(b, field, false) }
+    val quiet = listOf(6, 14).fold(spliced) { b, field -> Thrift.setBool(b, field, false) }
+    // expectedUxTemplate (24) tells the glasses a card is coming in ev60.
+    return if (card) Thrift.setBool(quiet, 24, true) else quiet
+}
+
+/**
+ * A simple card for a Display, as ev60's onDeviceUxMessage carries it: base64 of a compact AssistantTemplate
+ * (type 0, a SimpleTemplate inside). The Display throws on a template without hideAfterMs.
+ */
+internal fun answerCard(text: String): String {
+    // The dialog card shows its title only, in a scrolling block: the answer. The Display shows the question itself.
+    val simple = ThriftWriter().str(1, text).done()
+    val hideAfterMs = (8_000L + 60L * text.length).coerceAtMost(30_000L)
+    val template = ThriftWriter().i32(1, 0).str(2, simple).str(9, text).i64(10, hideAfterMs).done()
+    return java.util.Base64.getEncoder().encodeToString(template)
 }
 
 /**
  * ev60 MwaVoiceInteractionComplete, which ends the turn: ttsMessage, fulfillment type 1 (server), requiresAnswer when
  * they should listen for a reply, shouldSmartFollowUp (11) when they may listen for another question. With [streamed]
  * false the glasses speak the text themselves; true marks it as already played from the stream (7 and 8).
- * Status 1000 is success.
+ * Status 1000 is success. A [card] goes in onDeviceUxMessage (field 27) for the Display to draw.
  */
 internal fun interactionComplete(
-    interactionId: String, text: String, expectsAnswer: Boolean = false, followUp: Boolean = false, streamed: Boolean = false,
+    interactionId: String, text: String, expectsAnswer: Boolean = false, followUp: Boolean = false, card: String? = null,
+    streamed: Boolean = false,
 ): ByteArray {
-    val result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, streamed).bool(8, streamed)
-        .bool(11, followUp).done()
-    return ThriftWriter().str(1, interactionId).i32(2, 1000).str(3, "").struct(4, result).done()
+    var result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, streamed).bool(8, streamed)
+        .bool(11, followUp)
+    if (card != null) {
+        val ux = ThriftWriter().listOfBinaries(1, listOf(card.toByteArray(Charsets.UTF_8))).str(2, interactionId).done()
+        result = result.struct(27, ux)
+    }
+    return ThriftWriter().str(1, interactionId).i32(2, 1000).str(3, "").struct(4, result.done()).done()
 }

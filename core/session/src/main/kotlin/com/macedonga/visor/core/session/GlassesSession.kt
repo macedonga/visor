@@ -206,15 +206,22 @@ class GlassesSession(
         withLinkDeadline(END_LINK_SETUP_TIMEOUT_MILLIS, "the glasses did not send their EndLinkSetup") {
             while (true) {
                 val message = mux.receive()
-                if (message.info.channelId == LINK_SETUP_CHANNEL &&
-                    message.info.messageType == LinkSetupMsgType.END_LINK_SETUP.value
-                ) {
+                if (isTheirEndLinkSetup(message)) {
                     mux.sendStatus(DataXConnection.mirror(message.info.channelId), SUCCESS)
                     return@withLinkDeadline
                 }
                 handleMessage(message)
             }
         }
+    }
+
+    // The glasses answer on the link setup channel our RequestEncryption opened; the Neural Band on one of its own,
+    // 0x9001, that names no service.
+    private fun isTheirEndLinkSetup(message: DataXMessage): Boolean {
+        val info = message.info
+        if (info.messageType != LinkSetupMsgType.END_LINK_SETUP.value || info.flags.hasError) return false
+        return info.channelId == LINK_SETUP_CHANNEL ||
+            ((info.channelId and 0x8000) != 0 && info.serviceId == 0 && registry.serviceForInbound(info.channelId) == 0)
     }
 
     /** Drain what the glasses said during link setup before anyone allocates a local channel. */
@@ -258,6 +265,15 @@ class GlassesSession(
             // The glasses open svc30, their device-peer trust, and svc79, constellation auth,
             // toward every companion.
             mux.sendStatus(DataXConnection.mirror(info.channelId), SERVICE_NOT_FOUND)
+        }
+
+        // svc4, connection_monitor: the glasses' delivery check (type 0, a counter) is confirmed with a bare OK status.
+        if (serviceId == CONNECTION_MONITOR &&
+            (info.channelId and 0x8000) != 0 &&
+            !info.flags.hasError &&
+            !info.flags.isClosed
+        ) {
+            mux.sendStatus(DataXConnection.mirror(info.channelId), OK)
         }
 
         val responder = responders[serviceId]
@@ -385,12 +401,17 @@ class GlassesSession(
 
         private val BACKOFF_MILLIS = longArrayOf(1_000, 2_000, 4_000, 8_000)
 
-        /** 0x1000 is the DataX success status every service answers with. */
+        /** 0x1000 is the success status svc36 answers with; DataX's own is [OK]. */
         private const val SUCCESS = 0x1000
 
         /** DataX service_not_found: what a peer answers for a service it does not host. */
         private const val SERVICE_NOT_FOUND = 0xC001
 
         private val REFUSED_PEER_SERVICES = setOf(30, 79)
+
+        /** DataX OK, the status a delivery check is confirmed with. */
+        private const val OK = 0
+
+        private const val CONNECTION_MONITOR = 4
     }
 }

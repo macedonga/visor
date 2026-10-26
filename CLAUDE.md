@@ -37,6 +37,27 @@ the frame style and language packs. Works on real glasses as of 2026-10-05.
   `s` low-half. Any mistake shows up as `0x1043 INVALID_APP_IDENTITY`.
 - Airship: accepting a file (or refusing it) must end with a drop on type 7, or the glasses'
   send queue stalls behind it.
+- DataX OK on the wire is status 0. 0x1000 is svc36's own result; sent as OK, it made the Display's
+  image loader retry every image.
+- Replies on a channel the glasses opened go on `DataXConnection.mirror`. Replies on a channel Visor
+  opened keep the originator bit.
+
+Display:
+
+- svc28 device state comes wrapped in HNDeviceState `{1: stateCommon}`. Unwrapped as a plain
+  DeviceState, the battery reads 0%.
+- svc41108: the Display takes the phone's internet state only on a channel the phone opens. Until
+  then its apps stay off the phone's internet.
+- svc26 must be opened with an empty type 3 on every connection, or every share fails ("No remote
+  channel at identifier: MWA").
+- svc70 folder names are lowercase. With "SENT" a sent text reloads as still sending.
+- A text notification needs app id `com.android.sms`, provider 3 and the SMS thread id, or the
+  Messages app drops it.
+- Captions and translation turn on only through a svc29 pack install and FEATURE_CHANGE. The same
+  pack on airship `language_resource` turns nothing on.
+- Each Meta `/login` exchange ends the older sessions. Keep one token per run.
+- With an Android phone the music screen ignores AVRCP cover art. The cover comes only over svc9012.
+- The Phone app's recent calls wait on svc70 type 11, once per provider. svc11006 does not fill them.
 
 ## Build
 

@@ -171,6 +171,8 @@ class DataXConnection(
             append("\n   msg ch=0x%04x svc=%d mt=0x%04x len=%d hdr=%d payload=%d".format(
                 m.info.channelId, m.info.serviceId, m.info.messageType, m.info.length, m.info.headerLen, m.payload.size,
             ))
+            // Small ones whole: what a new service says is read from here.
+            if (m.payload.size <= TRACE_PAYLOAD) append(" data=").append(hex(m.payload))
         }
         if (carry.isNotEmpty()) append("\n   CARRY %d".format(carry.size))
     }
@@ -215,6 +217,8 @@ class DataXConnection(
         /** Debug builds: each decrypted frame and the messages walked out of it, as lensbreak's LENSBREAK_DATAX_TRACE. */
         @Volatile
         var trace: ((String) -> Unit)? = null
+
+        private const val TRACE_PAYLOAD = 512
 
         /** The ack channel for a peer-originated channel: clear the secure bit, 0x8000. */
         fun mirror(channelId: Int): Int = channelId and 0x7FFF

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_call_control">Effettua e rispondi alle chiamate</string>
+    <string name="access_call_control_why">Così gli occhiali possono effettuare e rispondere alle chiamate su questo telefono.</string>
+</resources>

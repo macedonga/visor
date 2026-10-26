@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accounts_title">Accounts</string>
+    <string name="accounts_meta">Meta account</string>
+    <string name="accounts_whatsapp">WhatsApp</string>
+    <string name="accounts_facebook">Facebook</string>
+    <string name="accounts_instagram">Instagram</string>
+    <string name="accounts_link">Link</string>
+    <string name="accounts_linked">Linked</string>
+    <string name="accounts_not_linked">Not linked</string>
+    <string name="accounts_scan">Scan the code on the glasses from WhatsApp, Linked devices.</string>
+    <string name="accounts_done">Done</string>
+    <string name="accounts_logged_out">Log in to Meta first</string>
+    <string name="accounts_unreachable">Meta could not be reached</string>
+    <string name="accounts_no_answer">The glasses did not answer</string>
+    <string name="accounts_refused">The glasses refused it</string>
+    <string name="accounts_linked_as">Linked as %1$s</string>
+    <string name="accounts_off_for_glasses">%1$s, turned off for glasses</string>
+    <string name="link_channel">Account linking</string>
+    <string name="link_title">Link %1$s to your glasses</string>
+    <string name="link_reconnect_title">Reconnect %1$s on your glasses</string>
+    <string name="link_text">Your glasses asked for it. Tap to open Accounts.</string>
+</resources>

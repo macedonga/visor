@@ -14,6 +14,7 @@ import com.macedonga.visor.core.connection.SessionHostFactory
 import com.macedonga.visor.core.connection.subscribeToDeviceStatus
 import com.macedonga.visor.core.connection.DeviceState
 import com.macedonga.visor.core.connection.decodeDeviceStateUpdate
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDeviceStateType
 import com.macedonga.visor.core.connection.mergeDeviceState
 import com.macedonga.visor.core.identity.IdentityStore
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -92,8 +94,14 @@ enum class StreamQuality(val width: Int, val height: Int, val label: String) {
  * One reassembled frame: the glasses' presentation time in microseconds, then Annex-B video. [seq]
  * counts frames, so a reader can tell one was lost and wait for the next keyframe.
  */
-class VideoFrame(val seq: Long, val ptsUs: Long, val data: ByteArray, val arrivedNs: Long = System.nanoTime()) {
-    val isKey: Boolean by lazy { nalTypes(data).any { it in HEVC_KEY_NALS } }
+class VideoFrame(
+    val seq: Long,
+    val ptsUs: Long,
+    val data: ByteArray,
+    val arrivedNs: Long = System.nanoTime(),
+    val codec: VideoCodec = VideoCodec.HEVC,
+) {
+    val isKey: Boolean by lazy { codec.isKeyFrame(data) }
 }
 
 /**
@@ -132,6 +140,11 @@ class StreamReceiver : Responder {
 
     private val _codecConfig = MutableStateFlow<ByteArray?>(null)
     val codecConfig: StateFlow<ByteArray?> = _codecConfig.asStateFlow()
+
+    // HEVC until the parameter sets or a picture say otherwise.
+    private var codec = VideoCodec.HEVC
+    private val _videoCodec = MutableStateFlow<VideoCodec?>(null)
+    val videoCodec: StateFlow<VideoCodec?> = _videoCodec.asStateFlow()
 
     private val audioChunks = ByteArrayOutputStream()
     private val _audio = MutableSharedFlow<AudioPacket>(extraBufferCapacity = 256, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -182,7 +195,17 @@ class StreamReceiver : Responder {
         fpsCount = 0
         gapMax = 0
         _codecConfig.value = null
+        codec = VideoCodec.HEVC
+        _videoCodec.value = null
         _stats.value = StreamStats()
+    }
+
+    private fun noteCodec(data: ByteArray) {
+        if (_videoCodec.value != null) return
+        detectVideoCodec(data)?.let {
+            codec = it
+            _videoCodec.value = it
+        }
     }
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
@@ -200,6 +223,7 @@ class StreamReceiver : Responder {
                 // Field 2 says which; failing that, video parameter sets are Annex-B and an AudioSpecificConfig is not.
                 if (type == CodecType.VIDEO || (type != CodecType.AUDIO && nalTypes(config).isNotEmpty())) {
                     _codecConfig.value = config
+                    noteCodec(config)
                     recording?.write(config)
                 } else {
                     aacFormatOf(config)?.let { _aac.value = it }
@@ -274,7 +298,8 @@ class StreamReceiver : Responder {
                 maxGapMs = if (gap >= 0) gap else it.maxGapMs,
             )
         }
-        _frames.tryEmit(VideoFrame(seq++, pts, data))
+        noteCodec(data)
+        _frames.tryEmit(VideoFrame(seq++, pts, data, codec = codec))
     }
 }
 
@@ -352,6 +377,10 @@ class LiveStream(
     /** The Wi-Fi session while the Live runs on one: the assistant moves onto it, since Bluetooth is paused. */
     private val _wifiSession = MutableStateFlow<DataXConnection?>(null)
     val wifiSession: StateFlow<DataXConnection?> = _wifiSession.asStateFlow()
+
+    // What the glasses send on the Wi-Fi session, for work run there with overWifi.
+    private val _wifiData = kotlinx.coroutines.flow.MutableSharedFlow<ServiceData>(extraBufferCapacity = 256)
+    val wifiData: kotlinx.coroutines.flow.SharedFlow<ServiceData> = _wifiData
 
     /** The picture now as a JPEG, decoded from the replay ring; null when no Live runs. */
     suspend fun frameNow(): ByteArray? = if (_running.value) outputs.replay.lastPicture()?.let { grabJpeg(it, quality = 88) } else null
@@ -444,6 +473,7 @@ class LiveStream(
         scope.launch { receiver.control.collect(::onControl) }
         scope.launch { receiver.frames.collect(outputs::onVideo) }
         scope.launch { receiver.codecConfig.collect { if (it != null) outputs.onConfig(it) } }
+        scope.launch { receiver.videoCodec.filterNotNull().collect { say("Video codec: ${it.label}") } }
         scope.launch { receiver.audio.collect(outputs::onAudio) }
         scope.launch { receiver.aac.collect { if (it != null) outputs.onAudioFormat(it) } }
         scope.launch {
@@ -849,6 +879,7 @@ class LiveStream(
                     }
                     is ServiceData -> {
                         messageAt = System.currentTimeMillis()
+                        _wifiData.tryEmit(event)
                         onWifiMessage(event)
                     }
                     is ProtocolError -> say("Wi-Fi: ${event.detail}")
@@ -878,11 +909,13 @@ class LiveStream(
             event.serviceId == 28 && event.messageType == MT_START_APP_RESPONSE ->
                 startAnswer?.complete(Wire.parse(event.payload).varint(1))
             event.serviceId == 28 && isDeviceStateType(event.messageType) -> runCatching {
-                val update = decodeDeviceStateUpdate(event.messageType, event.payload).state
+                val update = decodeDeviceStateUpdate(event.messageType, event.payload, display = isDisplayBuild(connection.state.value.info?.build)).state
                 _device.update { it?.let { base -> mergeDeviceState(base, update) } ?: update }
             }
             // Airship, whose receiver reports for itself; everything else goes in the log.
             event.serviceId == 28 || event.serviceId == SVC_AIRSHIP -> Unit
+            // The Display's screencast, which reads its own.
+            event.serviceId == SVC_HN_SCREENCAST || event.serviceId == SVC_HN_SCREENCAST_MANAGER -> Unit
             else -> say(
                 "Wi-Fi: service ${event.serviceId} type ${event.messageType}, ${event.payload.size} bytes " +
                     event.payload.take(16).joinToString("") { "%02x".format(it) },
@@ -1086,9 +1119,6 @@ private fun snappWords(code: Long): String = when (code) {
     15L -> "denied by peak power"
     else -> "error $code"
 }
-
-// HEVC NAL unit types: 16-21 are IRAP (keyframes), 32-34 VPS/SPS/PPS.
-private val HEVC_KEY_NALS = setOf(16, 17, 18, 19, 20, 21)
 
 /** The HEVC NAL unit types in an Annex-B buffer. */
 fun nalTypes(data: ByteArray): List<Int> {

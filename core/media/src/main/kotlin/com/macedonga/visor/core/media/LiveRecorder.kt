@@ -17,7 +17,7 @@ class AudioPacket(val ptsUs: Long, val data: ByteArray)
 class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
 
 /**
- * One MP4 in Movies/Visor, written as the frames come: the glasses' HEVC as it is, the audio as AAC. The file
+ * One MP4 in Movies/Visor, written as the frames come: the glasses' video as it is (HEVC or H.264), the audio as AAC. The file
  * stays pending, so the gallery does not list it, until [finish]. Audio before the first video frame is dropped,
  * and everything is timed from that frame.
  */
@@ -33,7 +33,6 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
     private val info = MediaCodec.BufferInfo()
 
     init {
-        val sps = hevcParameterSets(config)[33]?.firstOrNull()?.let(::parseHevcSps)
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
@@ -44,8 +43,10 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
         uri = checkNotNull(context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)) { "MediaStore refused the file" }
         fd = checkNotNull(context.contentResolver.openFileDescriptor(uri, "rw")) { "no file to write" }
         muxer = MediaMuxer(fd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val video = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, sps?.width ?: 1080, sps?.height ?: 1920)
-        video.setByteBuffer("csd-0", ByteBuffer.wrap(onlyParameterSets(config)))
+        val codec = configCodec(config)
+        val (width, height) = videoSize(config) ?: (1080 to 1920)
+        val video = MediaFormat.createVideoFormat(codec.mime, width, height)
+        video.setByteBuffer("csd-0", ByteBuffer.wrap(onlyParameterSets(codec, config)))
         videoTrack = muxer.addTrack(video)
         audioTrack = if (audio != null) {
             val a = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, audio.sampleRate, audio.channels)
@@ -64,7 +65,7 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
             firstPts = frame.ptsUs
         }
         if (frame.ptsUs < lastPts) return
-        val data = withoutParameterSets(frame.data)
+        val data = withoutParameterSets(frame.codec, frame.data)
         info.set(0, data.size, frame.ptsUs - firstPts, if (frame.isKey) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
         muxer.writeSampleData(videoTrack, ByteBuffer.wrap(data), info)
         lastPts = frame.ptsUs
@@ -103,7 +104,7 @@ class ReplayRing(@Volatile var windowUs: Long) {
 
     @Synchronized
     fun config(next: ByteArray) {
-        val size = { c: ByteArray? -> c?.let { hevcParameterSets(it)[33]?.firstOrNull()?.let(::parseHevcSps) }?.let { it.width to it.height } }
+        val size = { c: ByteArray? -> c?.let(::videoSize) }
         if (size(config) != size(next)) {
             video.clear()
             audio.clear()
@@ -155,14 +156,14 @@ class ReplayRing(@Volatile var windowUs: Long) {
 
 class Replay(val config: ByteArray, val video: List<VideoFrame>, val audio: List<AudioPacket>)
 
-/** Only the VPS, SPS and PPS of [config], Annex-B, as csd-0 wants them. */
-private fun onlyParameterSets(config: ByteArray): ByteArray = annexB(annexBUnits(config).filter { hevcNalType(it) in 32..34 })
+/** Only the parameter sets of [config], Annex-B, as csd-0 wants them. */
+private fun onlyParameterSets(codec: VideoCodec, config: ByteArray): ByteArray = annexB(annexBUnits(config).filter { codec.isParameterSet(it) })
 
-/** A frame with any parameter sets in it taken out: MP4's hvc1 keeps them in the sample entry only. */
-private fun withoutParameterSets(data: ByteArray): ByteArray {
+/** A frame with any parameter sets in it taken out: MP4 keeps them in the sample entry only. */
+private fun withoutParameterSets(codec: VideoCodec, data: ByteArray): ByteArray {
     val units = annexBUnits(data)
-    if (units.none { hevcNalType(it) in 32..34 }) return data
-    return annexB(units.filter { hevcNalType(it) !in 32..34 })
+    if (units.none { codec.isParameterSet(it) }) return data
+    return annexB(units.filter { !codec.isParameterSet(it) })
 }
 
 private fun annexB(units: List<ByteArray>): ByteArray {

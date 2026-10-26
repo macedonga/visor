@@ -559,6 +559,13 @@
     <string name="access_mic_why">Чтобы распознавать уточняющие вопросы и Live AI средствами телефона. Собственный микрофон телефона слушает, только пока вы удерживаете микрофон в Meta AI.</string>
     <string name="access_contacts">Контакты</string>
     <string name="access_contacts_why">Чтобы очки могли сказать, от кого сообщение.</string>
+    <string name="texts_photo">Фото</string>
+    <string name="texts_video">Видео</string>
+    <string name="texts_attachment">Вложение</string>
+    <string name="access_sms">SMS</string>
+    <string name="access_sms_why">Чтобы очки могли показывать ваши SMS и отправлять их.</string>
+    <string name="access_calls">Журнал звонков</string>
+    <string name="access_calls_why">Чтобы очки могли показывать ваши недавние звонки.</string>
     <string name="access_location">Местоположение</string>
     <string name="access_location_why">Чтобы отмечать, где очки сделали каждое фото.</string>
     <string name="access_location_always">Местоположение всегда</string>

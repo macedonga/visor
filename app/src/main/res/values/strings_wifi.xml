@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wifi_networks">Wi-Fi networks</string>
+    <string name="wifi_networks_title">Wi-Fi networks</string>
+    <string name="wifi_add">Add network</string>
+    <string name="wifi_remove">Remove</string>
+    <string name="wifi_network_name">Network name</string>
+    <string name="wifi_password">Password</string>
+    <string name="wifi_none">No saved networks</string>
+    <string name="wifi_unread">Could not read the networks</string>
+    <string name="wifi_saved">Saved</string>
+    <string name="wifi_wrong_password">Wrong password</string>
+    <string name="wifi_removed">Removed</string>
+    <string name="wifi_failed">Failed</string>
+</resources>

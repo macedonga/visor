@@ -21,6 +21,23 @@ class IdentityStore(directory: File, private val sealer: Sealer) {
         return bundles.firstOrNull { it.serial == serial }
     }
 
+    /** The pair last chosen, else the only one, else the newest set up. */
+    fun chosen(): IdentityBundle? {
+        val bundles = all()
+        return bundles.firstOrNull { it.serial == currentSerial() } ?: bundles.singleOrNull() ?: bundles.maxByOrNull { it.createdAt }
+    }
+
+    /** The serial last chosen, kept beside the store and unsealed: it is no secret, and reading it needs no key. */
+    fun currentSerial(): String? = currentPath.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun choose(serial: String) {
+        if (serial == currentSerial()) return
+        directory.mkdirs()
+        currentPath.writeText(serial)
+    }
+
+    private val currentPath: File get() = File(directory, CURRENT_FILE)
+
     /** The one owner key this account uses, or null before the first import. */
     fun ownerKeyPem(): ByteArray? = all().firstOrNull()?.privateKeyPem
 
@@ -41,6 +58,7 @@ class IdentityStore(directory: File, private val sealer: Sealer) {
         val bundles = all().filter { it.serial != serial }
         directory.mkdirs()
         writeAtomically(sealer.seal(bundlesToJson(bundles).toByteArray(Charsets.UTF_8)))
+        if (currentSerial() == serial) currentPath.delete()
     }
 
     /** DIVERGENCE: `store.py` calls `Path.write_bytes`, which truncates first. */
@@ -56,6 +74,7 @@ class IdentityStore(directory: File, private val sealer: Sealer) {
 
     companion object {
         const val STORE_FILE = "identities.sealed"
+        const val CURRENT_FILE = "current"
     }
 
     // DIVERGENCE: `migrate_legacy` does not port.

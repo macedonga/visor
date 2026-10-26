@@ -10,6 +10,7 @@ import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.core.settings.same
+import com.macedonga.visor.pairs.pairPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -78,10 +80,12 @@ class Features @Inject constructor(
     private val settings: GlassesSettings,
     private val connection: GlassesConnection,
     private val hearing: Hearing,
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val prefs = context.getSharedPreferences("features", Context.MODE_PRIVATE)
+    private var prefsFor = connection.pair.value
+    @Volatile
+    private var prefs = pairPrefs(context, "features", prefsFor)
 
     // MobileConfig values waiting for the next table, and the features they are for.
     private val queued = MutableStateFlow<Map<String, Any>>(emptyMap())
@@ -307,6 +311,25 @@ class Features @Inject constructor(
             .putStringSet(RESTART, restart.value.map { it.id }.toSet())
             .putStringSet(REFUSED, refused.value.map { it.id }.toSet())
             .apply()
+    }
+
+    // Last, so everything it resets is there: another pair has its own marks, sound and test.
+    init {
+        scope.launch {
+            connection.pair.filterNotNull().distinctUntilChanged().collect { serial ->
+                if (serial == prefsFor) return@collect
+                prefsFor = serial
+                prefs = pairPrefs(context, "features", serial)
+                flush?.cancel()
+                synchronized(turning) { turning.clear() }
+                queued.value = emptyMap()
+                problem.value = null
+                refused.value = load(REFUSED)
+                restart.value = load(RESTART).filter { f -> f.gates.any { it is Gate.Config && !it.live } }.toSet()
+                _focus.value = FocusStyle.entries.getOrElse(prefs.getInt(FOCUS_STYLE, 0)) { FocusStyle.STANDARD } to prefs.getInt(FOCUS_VOLUME, Hearing.DEFAULT_VOLUME)
+                _tested.value = prefs.getBoolean(HEARING_TESTED, false)
+            }
+        }
     }
 
     private companion object {

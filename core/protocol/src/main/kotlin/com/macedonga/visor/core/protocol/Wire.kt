@@ -53,6 +53,18 @@ object Wire {
     fun fieldBytes(fieldNumber: Int, value: ByteArray): ByteArray =
         tag(fieldNumber, 2) + encodeVarint(value.size.toLong()) + value
 
+    /** A float as protobuf writes it: fixed32, little-endian. */
+    fun fieldFloat(fieldNumber: Int, value: Float): ByteArray {
+        val bits = java.lang.Float.floatToRawIntBits(value)
+        return tag(fieldNumber, 5) + ByteArray(4) { i -> (bits ushr (8 * i)).toByte() }
+    }
+
+    /** A double as protobuf writes it: fixed64, little-endian. */
+    fun fieldDouble(fieldNumber: Int, value: Double): ByteArray {
+        val bits = java.lang.Double.doubleToRawLongBits(value)
+        return tag(fieldNumber, 1) + ByteArray(8) { i -> (bits ushr (8 * i)).toByte() }
+    }
+
     // --- decode ------------------------------------------------------------
 
     /** A varint and the offset just past it. */
@@ -101,6 +113,22 @@ object Wire {
             return default
         }
 
+        /** The first fixed32 value for [fn] as a float, or [default]. */
+        fun float(fn: Int, default: Float = 0f): Float {
+            byField[fn]?.forEach { (wireType, value) ->
+                if (wireType == 5) return Float.fromBits(value as Int)
+            }
+            return default
+        }
+
+        /** The first fixed64 value for [fn] as a double, or [default]. */
+        fun double(fn: Int, default: Double = 0.0): Double {
+            byField[fn]?.forEach { (wireType, value) ->
+                if (wireType == 1) return Double.fromBits(value as Long)
+            }
+            return default
+        }
+
         fun repeatedBytes(fn: Int): List<ByteArray> =
             byField[fn].orEmpty().filter { it.first == 2 }.map { it.second as ByteArray }
 
@@ -110,7 +138,13 @@ object Wire {
         fun fieldNumbers(): List<Int> = byField.keys.sorted()
     }
 
-    /** Parse a flat protobuf message: varint and length-delimited fields. */
+    private fun littleEndian(data: ByteArray, at: Int, size: Int): Long {
+        var v = 0L
+        for (i in size - 1 downTo 0) v = (v shl 8) or (data[at + i].toLong() and 0xFF)
+        return v
+    }
+
+    /** Parse a flat protobuf message: varint, fixed and length-delimited fields. */
     fun parse(data: ByteArray): Fields {
         val fields = Fields()
         var offset = 0
@@ -144,8 +178,14 @@ object Wire {
                     offset = if (fits) offset + take else n
                 }
 
-                5 -> offset += 4   // fixed32
-                1 -> offset += 8   // fixed64
+                5 -> {   // fixed32, little-endian
+                    if (offset + 4 <= n) fields.add(fieldNumber, 5, littleEndian(data, offset, 4).toInt())
+                    offset += 4
+                }
+                1 -> {   // fixed64, little-endian
+                    if (offset + 8 <= n) fields.add(fieldNumber, 1, littleEndian(data, offset, 8))
+                    offset += 8
+                }
                 else -> throw ProtocolFormatException(
                     "unsupported wire type ${key.value and 0x07L} for field $fieldNumber"
                 )

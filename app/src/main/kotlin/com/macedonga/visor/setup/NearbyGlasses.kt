@@ -69,9 +69,10 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
                 val data = record.getManufacturerSpecificData(META_COMPANY)
                 if (data == null && record.serviceUuids?.any { it.uuid == META_LE_SERVICE } != true) return
                 val advert = data?.let(::advert)
-                if (advert?.product == PRODUCT_BAND) return
+                if (advert?.product in PRODUCT_BANDS) return
                 val device = result.device
                 val name = record.deviceName ?: runCatching { device.name }.getOrNull() ?: productName(advert?.product)
+                if (BAND_NAME.containsMatchIn(name)) return
                 val pair = NearbyPair(device.address, name, result.rssi, advert?.pairing == true, device.bondState == BluetoothDevice.BOND_BONDED)
                 synchronized(heard) { heard[device.address] = pair to SystemClock.elapsedRealtime() }
                 publish()
@@ -99,7 +100,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
     @SuppressLint("MissingPermission")
     fun bonded(): List<NearbyPair> = runCatching {
         adapter?.bondedDevices.orEmpty()
-            .filter { d -> d.name?.let { GLASSES_NAME.containsMatchIn(it) } == true }
+            .filter { d -> d.name?.let { GLASSES_NAME.containsMatchIn(it) && !BAND_NAME.containsMatchIn(it) } == true }
             .map { NearbyPair(it.address, it.name, null, pairing = false, bonded = true) }
     }.getOrDefault(emptyList())
 
@@ -134,6 +135,30 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         throw BondFailed(BondFailed.Why.NO_ANSWER)
     }
 
+    /**
+     * The Neural Band heard nearby, one in pairing mode before the strongest: its address, or null when none answers
+     * within [BAND_SCAN_MS]. Bonded by [bond], as the glasses are.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun bandNearby(): String? {
+        val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
+        val heard = HashMap<String, Pair<Boolean, Int>>()
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val advert = result.scanRecord?.getManufacturerSpecificData(META_COMPANY)?.let(::advert) ?: return
+                if (advert.product !in PRODUCT_BANDS) return
+                synchronized(heard) { heard[result.device.address] = advert.pairing to result.rssi }
+            }
+        }
+        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        try {
+            delay(BAND_SCAN_MS)
+        } finally {
+            runCatching { scanner.stopScan(callback) }
+        }
+        return synchronized(heard) { heard.maxByOrNull { (_, v) -> (if (v.first) 1_000 else 0) + v.second }?.key }
+    }
+
     private class Advert(val product: Int, val pairing: Boolean)
 
     /** Manufacturer data after the company id: legacy [product:2 LE][flags], or V2 [version][product:2 LE][reserved][flags]. */
@@ -146,7 +171,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
 
     private fun productName(product: Int?) = when (product) {
         257 -> "Ray-Ban Stories"
-        259 -> "Meta Ray-Ban Display"
+        259, 270, 271 -> "Meta Ray-Ban Display"
         264 -> "Oakley Meta Vanguard"
         265 -> "Oakley Meta HSTN"
         else -> context.getString(R.string.glasses_default_name)
@@ -154,11 +179,15 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
 
     private companion object {
         const val META_COMPANY = 0x01AB
-        const val PRODUCT_BAND = 1537
+        val PRODUCT_BANDS = setOf(1537, 1538)
         const val FORGET_MS = 12_000L
         const val SWEEP_MS = 2_000L
         const val BOND_MS = 90_000L
+        const val BAND_SCAN_MS = 15_000L
         const val POLL_MS = 400L
         val GLASSES_NAME = Regex("ray-?ban|meta|oakley|stories", RegexOption.IGNORE_CASE)
+
+        // The Neural Band, "Meta Band 0064": set up from the Display's settings, never as glasses.
+        val BAND_NAME = Regex("^meta band", RegexOption.IGNORE_CASE)
     }
 }

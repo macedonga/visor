@@ -173,6 +173,10 @@ class CustomWakeWord internal constructor(
         return withTimeoutOrNull(ENROLL_MS) { waiting.await() }
     }
 
+    /** Delete the enrolled phrase, as the Meta app does: an empty utterance under a new id. The glasses answer with a result. */
+    suspend fun clear(): Boolean =
+        send(EV_UTTERANCE, ThriftWriter().i32(1, 0).i32(2, 1).str(3, "").str(4, ByteArray(0)).str(5, UUID.randomUUID().toString()).done())
+
     /** Close the session; false when the close could not go out. */
     suspend fun end(session: String, reason: Int = 0): Boolean =
         send(EV_SESSION_END, ThriftWriter().str(1, session).i32(2, reason).done())
@@ -204,6 +208,7 @@ class CustomWakeWord internal constructor(
         private const val BYTES_PER_MS = 32
         // A voice near the glasses peaks around a third of full scale.
         private const val LOUD = 12_000f
+        private const val EV_UTTERANCE = 365
         private const val EV_BATCH_ENROLLMENT = 386
         private const val EV_SESSION_BEGIN = 390
         private const val EV_SESSION_END = 391

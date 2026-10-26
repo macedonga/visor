@@ -228,6 +228,30 @@ object Thrift {
 
     fun loads(b: ByteArray): Map<Int, Any?> = readStruct(b, 0).fields
 
+    /** The bytes of top-level struct field [fid] as written, to pass a sub-struct on unread. */
+    fun rawStruct(b: ByteArray, fid: Int): ByteArray? {
+        var i = 0
+        var cur = 0
+        while (i < b.size) {
+            val h = b[i].toInt() and 0xFF
+            if (h == 0) break
+            i += 1
+            val delta = (h shr 4) and 0x0F
+            val t = h and 0x0F
+            if (delta == 0) {
+                val v = uvarint(b, i)
+                i = v.offset
+                cur = zz(v.value).toInt()
+            } else {
+                cur += delta
+            }
+            val end = readValue(b, i, t).offset
+            if (cur == fid) return if (t == STRUCT) b.copyOfRange(i, end) else null
+            i = end
+        }
+        return null
+    }
+
     // `thrift.py` also has `render`, a debug pretty-printer whose output is Python repr, and
     // a __main__ block that dumps a file from the command line. Neither is ported.
 

@@ -8,6 +8,8 @@ data class DeviceInfo(
     val serial: String,
     val deviceUuid: String = "",
     val model: String = "",
+    /** The wearables release version (field 9), e.g. 129.0.0.218.272: the store asks by it. */
+    val wearablesRelease: String = "",
 )
 
 private fun uuidShaped(text: String): Boolean =
@@ -22,5 +24,6 @@ fun decodePeerDeviceInfo(payload: ByteArray): DeviceInfo {
         serial = String(fields.bytes(2), Charsets.ISO_8859_1),
         deviceUuid = if (uuidShaped(deviceUuid)) deviceUuid else "",
         model = String(fields.bytes(8), Charsets.ISO_8859_1),
+        wearablesRelease = String(fields.bytes(9), Charsets.ISO_8859_1),
     )
 }

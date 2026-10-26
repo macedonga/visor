@@ -61,7 +61,7 @@ class EventLogViewModel @Inject constructor(val log: EventLog, val media: MediaI
 
 /** The log as one card of lines, opened at the end: what matters is what just happened. */
 @Composable
-fun EventLogScreen(model: EventLogViewModel = hiltViewModel()) {
+fun EventLogScreen(onRequests: () -> Unit = {}, model: EventLogViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val lines by model.log.lines.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
@@ -79,6 +79,7 @@ fun EventLogScreen(model: EventLogViewModel = hiltViewModel()) {
         light = 0.3f,
         list = list,
         actions = {
+            RoundIcon(VisorIcons.Globe, stringResource(R.string.requests_title), onRequests)
             RoundIcon(VisorIcons.Download, stringResource(R.string.event_log_save), { create.launch("visor-log-${LocalDateTime.now().format(FILE_TIME)}.txt") })
             RoundIcon(VisorIcons.Share, stringResource(R.string.event_log_share), { share(context, model.log.text()) })
             RoundIcon(VisorIcons.Trash, stringResource(R.string.event_log_clear), model.log::clear)

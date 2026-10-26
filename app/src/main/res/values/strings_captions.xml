@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="captions_title">Captions</string>
+    <string name="captions_mode">Mode</string>
+    <string name="captions_mode_captions">Captions</string>
+    <string name="captions_mode_translation">Translation</string>
+    <string name="captions_language">Language</string>
+    <string name="captions_self">You speak</string>
+    <string name="captions_other">They speak</string>
+    <string name="captions_pair">%1$s to %2$s</string>
+    <string name="captions_heard">Heard</string>
+    <string name="captions_listening">Listening…</string>
+    <string name="captions_start">Start on glasses</string>
+    <string name="captions_stop">Stop</string>
+    <string name="captions_live">On the glasses</string>
+    <string name="captions_not_connected">Connect the glasses to start</string>
+    <string name="captions_start_anyway">Start</string>
+    <string name="captions_get_size">Download · %1$s</string>
+    <string name="captions_pack_failed">Did not install: %1$s</string>
+    <string name="captions_installing">Installing on the glasses</string>
+</resources>

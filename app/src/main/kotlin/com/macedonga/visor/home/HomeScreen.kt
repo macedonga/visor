@@ -28,6 +28,8 @@ import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -43,8 +45,10 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -53,11 +57,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -84,6 +91,9 @@ import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesState
+import com.macedonga.visor.pairs.Pairs
+import com.macedonga.visor.R
+import com.macedonga.visor.settings.TextSheet
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.media.LiveStream
@@ -101,11 +111,13 @@ import com.macedonga.visor.stage.LightPool
 import com.macedonga.visor.stage.LocalStage
 import com.macedonga.visor.stage.Looks
 import com.macedonga.visor.stage.Mood
+import com.macedonga.visor.stage.modelled
 import com.macedonga.visor.stage.POOL_Y
 import com.macedonga.visor.stage.SHEET_RADIUS
 import com.macedonga.visor.stage.STAGE_ASPECT
 import com.macedonga.visor.stage.StageDebug
 import com.macedonga.visor.stage.StageLight
+import com.macedonga.visor.stage.StagePages
 import com.macedonga.visor.stage.StageSpot
 import com.macedonga.visor.stage.closedOf
 import com.macedonga.visor.stage.liveliness
@@ -142,7 +154,10 @@ class HomeViewModel @Inject constructor(
     private val store: IdentityStore,
     keeper: LeKeeper,
     val looks: Looks,
-    lastSeen: LastSeen,
+    val lastSeen: LastSeen,
+    val pairs: Pairs,
+    val band: com.macedonga.visor.band.BandLink,
+    val bands: com.macedonga.visor.band.Bands,
     val star: StarAsk,
 ) : ViewModel() {
     /** The LE link is up: the glasses are right here, whatever RFCOMM says. */
@@ -151,29 +166,10 @@ class HomeViewModel @Inject constructor(
     val paired = MutableStateFlow<Boolean?>(null)
     val shots = MutableStateFlow<List<PhoneShot>>(emptyList())
     val firstName = MutableStateFlow<String?>(null)
-    private val prefs = context.getSharedPreferences("home", Context.MODE_PRIVATE)
     val lastBattery = lastSeen.battery
-    val lastFacts = MutableStateFlow(readFacts())
     val lastPosture = lastSeen.posture
 
     init {
-        viewModelScope.launch {
-            connection.state.collect { state ->
-                val was = lastFacts.value
-                // A volume the glasses have not reported comes as -1: until they do, the one Android holds for them.
-                val now = GlassesFacts(
-                    freeMb = state.device?.storage?.freeMb?.takeIf { it >= 0 } ?: was.freeMb,
-                    volume = state.device?.volume?.percent?.toInt()?.takeIf { it in 0..100 }
-                        ?: heldVolume(context, (state.target?.link as? GlassesLink.Bluetooth)?.address) ?: was.volume,
-                    temperatureC = state.device?.battery?.temperatureC?.takeIf { it > -40 && it < 100 } ?: was.temperatureC,
-                )
-                if (now != was) {
-                    lastFacts.value = now
-                    prefs.edit().putLong("free_mb", now.freeMb ?: -1).putInt("volume", now.volume ?: -1)
-                        .putFloat("temperature", now.temperatureC?.toFloat() ?: Float.NaN).apply()
-                }
-            }
-        }
         // Whatever is saved shows up here as soon as it lands.
         viewModelScope.launch { media.saved.collect { shots.value = recentShots(context) } }
     }
@@ -182,13 +178,8 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) { paired.value = runCatching { store.all().isNotEmpty() }.getOrDefault(false) }
         viewModelScope.launch { shots.value = recentShots(context) }
         viewModelScope.launch { firstName.value = ownerFirstName(context) }
+        pairs.refresh()
     }
-
-    private fun readFacts() = GlassesFacts(
-        freeMb = prefs.getLong("free_mb", -1).takeIf { it >= 0 },
-        volume = prefs.getInt("volume", -1).takeIf { it in 0..100 },
-        temperatureC = prefs.getFloat("temperature", Float.NaN).takeIf { !it.isNaN() }?.toDouble(),
-    )
 }
 
 /**
@@ -232,6 +223,7 @@ fun HomeScreen(
     onLive: () -> Unit,
     onMetaAi: () -> Unit,
     onSettings: () -> Unit,
+    onDisplayTool: (com.macedonga.visor.display.DisplayTool) -> Unit = {},
     model: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -247,10 +239,28 @@ fun HomeScreen(
     val shots by model.shots.collectAsStateWithLifecycle()
     val lastBattery by model.lastBattery.collectAsStateWithLifecycle()
     val firstName by model.firstName.collectAsStateWithLifecycle()
-    val lastFacts by model.lastFacts.collectAsStateWithLifecycle()
     val lastPosture by model.lastPosture.collectAsStateWithLifecycle()
     val nearby by model.nearby.collectAsStateWithLifecycle()
     val paired by model.paired.collectAsStateWithLifecycle()
+    // Every pair set up here; the stage shows one at a time and a drag goes to the next.
+    val pairs by model.pairs.all.collectAsStateWithLifecycle()
+    val seen by model.lastSeen.seen.collectAsStateWithLifecycle()
+    val looks by model.looks.all.collectAsStateWithLifecycle()
+    val pictures by model.looks.pictures.collectAsStateWithLifecycle()
+    val peeking by model.pairs.peeking.collectAsStateWithLifecycle()
+    val current by model.connection.pair.collectAsStateWithLifecycle()
+    // The page shown: a pair's serial, null for the pair Visor is for, or ADD_PAGE after the last pair.
+    var page by remember { mutableStateOf<String?>(null) }
+    val adding = page == ADD_PAGE && pairs.isNotEmpty()
+    val shownIndex = if (adding) pairs.size else pairs.indexOfFirst { it.serial == (page ?: current) }
+    val shown = pairs.getOrNull(shownIndex)
+    // A pair that is not the one Visor is for: it shows as last heard from, and can be connected.
+    val other = shown != null && current != null && shown.serial != current
+    // Away from the pair Visor is for, its Live, Meta AI and settings are not this page's.
+    val elsewhere = other || adding
+    val shownSeen = shown?.let { seen[it.serial] }
+    val lastFacts = (if (elsewhere) shownSeen else current?.let(seen::get))?.facts ?: GlassesFacts(null, null, null)
+    var renaming by remember { mutableStateOf<String?>(null) }
     val forced by StageDebug.mood.collectAsStateWithLifecycle()
     val variant by StageDebug.variant.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
@@ -366,7 +376,13 @@ fun HomeScreen(
         wasLive = live
     }
     val mood = forced ?: when {
-        paired == false -> Mood.ABSENT
+        paired == false || adding -> Mood.ABSENT
+        other -> when {
+            peeking == shown?.serial -> Mood.SEARCHING
+            shownSeen?.inCase == true -> Mood.IN_CASE
+            shownSeen?.folded == true -> Mood.ASLEEP
+            else -> Mood.FAR
+        }
         transferring -> Mood.IMPORTING
         live && state.link != LinkState.READY -> Mood.RECORDING
         (importing || settling || liveSettling) && state.link != LinkState.READY -> Mood.CONNECTED
@@ -384,13 +400,38 @@ fun HomeScreen(
     LaunchedEffect(stage) { if (firstVisit) stage.light.dark() }
     StageLight(lookOf(mood, colors))
     val look by model.looks.look.collectAsStateWithLifecycle()
-    stage.pose.variants = variant?.let(::listOf) ?: variantsOf(look)
+    val shownLook = if (other) shown?.let { looks[it.serial] } else look
+    stage.pose.variants = variant?.let(::listOf) ?: variantsOf(shownLook)
+    // The model is a Wayfarer: another frame, or a pair not connected, shows as Meta pictures it, once Meta has.
+    val currentPicture = current?.takeIf { !modelled(looks[it]) }?.let(pictures::get)
+    val picture = when {
+        other -> shown?.let { pictures[it.serial] }
+        !modelled(shownLook) -> currentPicture
+        else -> null
+    }
+    SideEffect {
+        stage.picture = picture
+        stage.vacant = adding
+    }
+    // Other screens show the pair Visor is for.
+    val leavingPicture = rememberUpdatedState(currentPicture)
+    DisposableEffect(Unit) {
+        onDispose {
+            stage.picture = leavingPicture.value
+            stage.vacant = false
+        }
+    }
+    // A pair shown that is not connected gets a quick look at its batteries.
+    LaunchedEffect(shown?.serial, other) {
+        if (other && shown != null) model.pairs.peek(shown.serial)
+    }
+    DisposableEffect(Unit) { onDispose { model.pairs.stopPeek() } }
     // Other screens that show the pair take its mood and hinge from here.
     SideEffect {
         stage.mood = mood
         stage.lastFolded = lastPosture.folded
     }
-    Choreography(state, mood, stage.light, stage.pose, haptics::connected, haptics::shutter)
+    Choreography(if (elsewhere) GlassesState() else state, mood, stage.light, stage.pose, haptics::connected, haptics::shutter)
 
     val list = rememberLazyListState()
     remember {
@@ -414,7 +455,7 @@ fun HomeScreen(
             if (list.firstVisibleItemIndex == 0) list.firstVisibleItemScrollOffset.toFloat() else fullPx
         }
         // Folded, the pair sits small in the middle of the strip, clear of the camera cut-out; at launch it fades in.
-        val spot = StageSpot(closedOf(state, mood, lastPosture.folded), liveliness(mood)) {
+        val spot = StageSpot(if (elsewhere) closedOf(GlassesState(), mood, shownSeen?.folded ?: true) else closedOf(state, mood, lastPosture.folded), liveliness(mood)) {
             folding(fullPx, stripPx, fold, HOME_STRIP_SCALE, topPx + (stripPx - topPx) / 2)
             alpha = entranceAlpha(entrance, STAGE_FADE_FROM_MS, STAGE_FADE_MS)
         }
@@ -475,11 +516,16 @@ fun HomeScreen(
                             waitingCount = fresh.size, leaving = leaving, onLeft = { leaving = false },
                         )
                     }
-                    Facts(lastFacts, live = here, lastCapture = lastCapture, modifier = Modifier.padding(top = GAP).appear(entrance, 2))
+                    Facts(lastFacts, live = here && !elsewhere, lastCapture = lastCapture, modifier = Modifier.padding(top = GAP).appear(entrance, 2))
                     Spacer(Modifier.height(FOOT))
                 }
             }
-            item(key = "places") { Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5)) }
+            // The Display's tools, for a Display: known by its build while connected, by its band while away.
+            val bandsHere = model.bands.all.value
+            if (!elsewhere && (com.macedonga.visor.settings.hasDisplay(state.info?.build) || bandsHere.any { it.glasses == current })) {
+                item(key = "display") { com.macedonga.visor.display.DisplayShelf(onDisplayTool, Modifier.padding(top = 4.dp, bottom = 8.dp).appear(entrance, 4)) }
+            }
+            item(key = "places") { Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5), forThisPair = !elsewhere) }
         }
 
 
@@ -493,18 +539,68 @@ fun HomeScreen(
                     layout(placeable.width, h) { placeable.place(0, 0) }
                 }
                 .scrollable(list, Orientation.Vertical, reverseDirection = true)
-                .turnsThePair { haptics.tick(0.35f) },
+                .turnsThePair(
+                    // The pairs, then the page for adding one.
+                    pages = if (pairs.isNotEmpty() && shownIndex >= 0) StagePages(
+                        can = { d -> shownIndex + d in 0..pairs.size },
+                        go = { d -> page = pairs.getOrNull(shownIndex + d)?.serial ?: ADD_PAGE },
+                    ) else null,
+                ) { haptics.tick(0.35f) },
         ) {
             val fade = Modifier.graphicsLayer { alpha = (1f - (fold * 2.5f).coerceIn(0f, 1f)) * stage.shown(spot) }
-            Greeting(
-                firstName,
-                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp).then(fade).appear(entrance, 0),
-            )
-            StatusPill(
-                state, mood, lastBattery, paired, allowed, transferring, importProgress, waiting = if (importing) 0 else fresh.size, onImport = onImport,
-                onAllow = { ask.launch(wanted()) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp).then(fade).appear(entrance, 0),
-            )
+            Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp).then(fade).appear(entrance, 0)) {
+                Greeting(firstName, Modifier)
+                // Which pair this is; a tap names it.
+                if (shown != null) {
+                    Text(
+                        pairName(shownSeen, looks[shown.serial]),
+                        style = Visor.type.label,
+                        color = Visor.colors.textSecondary,
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { renaming = shown.serial }
+                            .padding(vertical = 4.dp),
+                    )
+                }
+            }
+            Column(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = if (pairs.size > 1) 12.dp else 26.dp).then(fade).appear(entrance, 0),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (adding) {
+                    Pill(stringResource(R.string.glasses_set_up_new), onSetUp)
+                } else if (other && shown != null) {
+                    OtherPairPill(
+                        mood, shownSeen, peeking = peeking == shown.serial,
+                        onConnect = if (live || importing) null else ({
+                            haptics.toggle()
+                            model.pairs.connect(shown.serial)
+                        }),
+                        modifier = Modifier,
+                    )
+                } else {
+                    val band by model.band.state.collectAsStateWithLifecycle()
+                    val bands by model.bands.all.collectAsStateWithLifecycle()
+                    val ours = band.takeIf { b -> b.battery != null && bands.any { it.serial == b.serial && it.glasses == current } }
+                    StatusPill(
+                        state, mood, lastBattery, paired, allowed, transferring, importProgress, waiting = if (importing) 0 else fresh.size, onImport = onImport,
+                        onAllow = { ask.launch(wanted()) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner, modifier = Modifier,
+                        band = state.device?.bandBattery ?: ours?.battery,
+                        bandCharging = state.device?.bandCharging ?: (ours?.charging == true),
+                    )
+                }
+                if (pairs.isNotEmpty()) PairDots(pairs.size + 1, shownIndex, Modifier.padding(top = 12.dp))
+            }
+            renaming?.let { serial ->
+                TextSheet(
+                    stringResource(R.string.glasses_name), seen[serial]?.name.orEmpty(),
+                    onSave = { model.lastSeen.rename(serial, it.trim()) },
+                    onDismiss = { renaming = null },
+                    hint = pairName(null, looks[serial]),
+                    valid = { it.isNotBlank() && it.trim().length <= 40 },
+                )
+            }
         }
     }
 
@@ -566,4 +662,7 @@ private val FOOT = 20.dp
 private const val SETTLE_MS = 25_000L
 private const val DONE_HOLD_MS = 2_000L
 private const val REFRESH_MS = 60_000L
+
+/** The home's page after the last pair, for setting up another. */
+private const val ADD_PAGE = "+"
 private const val STAR_DELAY_MS = 4_000L

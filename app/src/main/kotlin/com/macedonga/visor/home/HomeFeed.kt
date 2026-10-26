@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.macedonga.visor.R
+import com.macedonga.visor.core.identity.language.GlassesLook
 import com.macedonga.visor.core.connection.CaseBattery
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.design.Visor
@@ -150,6 +152,9 @@ fun StatusPill(
     onSetUp: () -> Unit,
     onChangeOwner: (address: String?) -> Unit,
     modifier: Modifier,
+    // The Display's Neural Band, when Visor has read it.
+    band: Int? = null,
+    bandCharging: Boolean = false,
 ) {
     when {
         !allowed -> return Pill(stringResource(R.string.home_allow_bluetooth), onAllow, modifier)
@@ -205,6 +210,11 @@ fun StatusPill(
                     Level(VisorIcons.Case, stringResource(R.string.glasses_case_label), case, critical = false)
                     if (caseCharging) Icon(VisorIcons.Bolt, stringResource(R.string.mood_charging), Modifier.padding(start = 2.dp).size(13.dp), tint = colors.textPrimary)
                 }
+                if (band != null) {
+                    Spacer(Modifier.size(14.dp))
+                    Level(VisorIcons.Band, stringResource(R.string.topic_band), band, critical = band <= 10 && !bandCharging)
+                    if (bandCharging) Icon(VisorIcons.Bolt, stringResource(R.string.mood_charging), Modifier.padding(start = 2.dp).size(13.dp), tint = colors.textPrimary)
+                }
             }
         }
         // Over Wi-Fi Direct the battery is not reported: the last reading stays, and the import takes the place of
@@ -232,6 +242,79 @@ fun StatusPill(
         }
     }
 }
+
+/**
+ * A pair that is not connected, in one capsule: how it is, or how long ago it said so, its batteries as last read,
+ * dimmed once old, and the button that connects to it set into the capsule's end. No button while the Live or an
+ * import has the pair that is connected.
+ */
+@Composable
+fun OtherPairPill(mood: Mood, seen: PairSeen?, peeking: Boolean, onConnect: (() -> Unit)?, modifier: Modifier) {
+    val colors = Visor.colors
+    val said = seen?.at?.takeIf { it > 0 }
+    val fresh = said != null && rememberNow() - said < FRESH_MS
+    Row(
+        modifier
+            .clip(RoundedCornerShape(50))
+            .background(colors.surface)
+            .animateContentSize(spring(dampingRatio = 0.8f, stiffness = 300f))
+            .padding(start = 16.dp, end = if (onConnect != null) 4.dp else 16.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val words = when {
+            peeking || fresh -> stringResource(moodWords(mood))
+            said != null -> stringResource(R.string.pill_seen, shortAgo(said))
+            else -> stringResource(R.string.pill_not_connected)
+        }
+        Text(words, style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(vertical = 5.dp))
+        val glasses = seen?.glasses
+        if (glasses != null && !peeking) {
+            Spacer(Modifier.size(12.dp))
+            Row(Modifier.graphicsLayer { alpha = if (fresh) 1f else 0.6f }, verticalAlignment = Alignment.CenterVertically) {
+                Level(VisorIcons.Glasses, stringResource(R.string.glasses_battery), glasses, critical = false)
+                seen.case?.let {
+                    Spacer(Modifier.size(14.dp))
+                    Level(VisorIcons.Case, stringResource(R.string.glasses_case_label), it, critical = false)
+                }
+            }
+        }
+        if (onConnect != null) {
+            Spacer(Modifier.size(12.dp))
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.textPrimary)
+                    .clickable(onClick = onConnect)
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
+            ) {
+                Text(stringResource(R.string.glasses_connect), style = Visor.type.label, color = colors.canvas)
+            }
+        }
+    }
+}
+
+/** Which of the pairs the stage shows: one dot each, the shown one drawn out. */
+@Composable
+fun PairDots(count: Int, index: Int, modifier: Modifier = Modifier) {
+    val colors = Visor.colors
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(count) { i ->
+            val on by animateFloatAsState(if (i == index) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "dot")
+            Box(
+                Modifier
+                    .size(width = (5 + 9 * on).dp, height = 5.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(lerp(colors.control, colors.textPrimary, on)),
+            )
+        }
+    }
+}
+
+/** What to call a pair: the name it gave itself, else its frame and colour as Meta has them. */
+@Composable
+fun pairName(seen: PairSeen?, look: GlassesLook?): String =
+    seen?.name ?: look?.styleName?.let { style -> look.colorName?.let { stringResource(R.string.pair_look_name, style, it) } ?: style }
+        ?: stringResource(R.string.glasses_default_name)
 
 /**
  * The case's charge as a percentage. The glasses report a level on a scale that is not always 100, and they
@@ -529,20 +612,22 @@ private fun Fact(label: String, value: String, dim: Boolean, modifier: Modifier)
 }
 
 @Composable
-fun Places(onMedia: () -> Unit, onLive: () -> Unit, onMetaAi: () -> Unit, onSettings: () -> Unit, modifier: Modifier) {
+fun Places(onMedia: () -> Unit, onLive: () -> Unit, onMetaAi: () -> Unit, onSettings: () -> Unit, modifier: Modifier, forThisPair: Boolean = true) {
     Column(modifier) {
         Place(VisorIcons.Gallery, stringResource(R.string.home_place_media), stringResource(R.string.home_place_media_sub), onMedia)
-        Place(VisorIcons.Live, stringResource(R.string.home_place_live), stringResource(R.string.home_place_live_sub), onLive)
-        Place(VisorIcons.Voice, stringResource(R.string.home_place_meta_ai), stringResource(R.string.home_place_meta_ai_sub), onMetaAi)
-        Place(VisorIcons.Settings, stringResource(R.string.home_place_settings), stringResource(R.string.home_place_settings_sub), onSettings)
+        // The Live, Meta AI and settings are the connected pair's: not while the home shows another.
+        Place(VisorIcons.Live, stringResource(R.string.home_place_live), stringResource(R.string.home_place_live_sub), onLive, forThisPair)
+        Place(VisorIcons.Voice, stringResource(R.string.home_place_meta_ai), stringResource(R.string.home_place_meta_ai_sub), onMetaAi, forThisPair)
+        Place(VisorIcons.Settings, stringResource(R.string.home_place_settings), stringResource(R.string.home_place_settings_sub), onSettings, forThisPair)
     }
 }
 
 @Composable
-private fun Place(icon: ImageVector, title: String, detail: String, onClick: () -> Unit) {
+private fun Place(icon: ImageVector, title: String, detail: String, onClick: () -> Unit, enabled: Boolean = true) {
     val colors = Visor.colors
+    val shown by animateFloatAsState(if (enabled) 1f else 0.35f, tween(220), label = "place")
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().graphicsLayer { alpha = shown }.clickable(enabled = enabled, onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(44.dp).clip(RoundedCornerShape(13.dp)).background(colors.raised), contentAlignment = Alignment.Center) {
@@ -645,6 +730,8 @@ fun moodWords(mood: Mood): Int = when (mood) {
 }
 
 private val RISE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+// A reading newer than this, from a quick look, counts as now.
+private const val FRESH_MS = 5 * 60_000L
 private const val FIRST_MS = 350f
 private const val STEP_MS = 80f
 private const val RISE_MS = 620f
