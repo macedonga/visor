@@ -485,6 +485,13 @@
     <string name="ai_answer_sub">Если выключено, собственный ассистент очков работает сам по себе, без телефона.</string>
     <string name="ai_section_model">Модель</string>
     <string name="ai_provider">Провайдер</string>
+    <string name="ai_claude_subscription">Подписка Claude</string>
+    <string name="ai_bridge">Мост</string>
+    <string name="ai_bridge_start">Запустить</string>
+    <string name="ai_bridge_stop">Остановить</string>
+    <string name="ai_bridge_up">Работает в Termux.</string>
+    <string name="ai_bridge_down">Не запущен.</string>
+    <string name="ai_bridge_note">Подписка Claude работает, только пока работает мост. Чтобы запускать его отсюда, в Termux должен быть включён allow-external-apps.</string>
     <string name="ai_openai_compatible">Совместимый с OpenAI</string>
     <string name="ai_base_url">Адрес</string>
     <string name="ai_key">API-ключ</string>
@@ -929,6 +936,7 @@
     <string name="hct_retry">Повторить</string>
     <string name="phone_directions">Маршрут до %1$s</string>
     <string name="phone_play">Воспроизвести %1$s</string>
+    <string name="phone_open">Открыть %1$s</string>
     <string name="live_settings_glasses_host">Wi-Fi создают очки</string>
     <string name="live_problem_vpn">VPN не пускает Visor в сеть очков. Исключите Visor из VPN.</string>
     <string name="live_drops">Трансляция часто обрывается</string>

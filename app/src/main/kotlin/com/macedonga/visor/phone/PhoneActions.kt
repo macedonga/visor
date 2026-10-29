@@ -140,6 +140,14 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         return PhoneDone(label(c.packageName))
     }
 
+    override suspend fun openApp(app: String): PhoneDone {
+        val pkg = launchable(app) ?: return PhoneDone("", "there is no app called $app on the phone")
+        val label = label(pkg)
+        note("Opening $label")
+        val launch = pm.getLaunchIntentForPackage(pkg) ?: return PhoneDone(label, "$label has no screen to open")
+        return open(launch, OPEN_ID, context.getString(R.string.phone_open, label), label)
+    }
+
     override fun nowPlaying(): NowPlaying {
         val sessions = sessions() ?: return NowPlaying(unknown = "Visor has no notification access, so it cannot see what plays")
         val c = sessions.firstOrNull { it.playing() } ?: sessions.firstOrNull() ?: return NowPlaying(unknown = "nothing is playing")
@@ -263,6 +271,19 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
             .filter { it.packageName != context.packageName && pm.getLaunchIntentForPackage(it.packageName) != null }
     }.getOrNull()
 
+    /** The installed app with a launcher called [name]: the same label, else the closest one that contains it. */
+    private fun launchable(name: String): String? {
+        val want = simple(name)
+        if (want.isEmpty()) return null
+        val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
+            .map { it.activityInfo.packageName }.filter { it != context.packageName }.toSet()
+            .associateWith { simple(label(it)) }
+        // An app called X must not open for "Zorbax": the name said may contain the app's only from four letters up.
+        return apps.entries.firstOrNull { it.value == want }?.key
+            ?: apps.entries.filter { it.value.isNotEmpty() && (it.value.contains(want) || it.value.length >= 4 && want.contains(it.value)) }
+                .maxByOrNull { it.value.length }?.key
+    }
+
     /** The installed app called [name], among the ones that play media. */
     private fun named(name: String, sessions: List<MediaController>?): String? {
         val want = simple(name)
@@ -350,6 +371,7 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         const val CHANNEL = "assistant_actions"
         const val DIRECTIONS_ID = 11
         const val PLAY_ID = 12
+        const val OPEN_ID = 13
         const val LAST = "last_player"
         const val PLAY_WAIT_MS = 6_000L
         const val POLL_MS = 250L

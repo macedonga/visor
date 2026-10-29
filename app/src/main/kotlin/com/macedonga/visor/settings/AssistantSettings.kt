@@ -88,7 +88,11 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     val askHearing = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hearing = it }
 
     var check by remember { mutableStateOf<KeyCheck>(KeyCheck.None) }
-    LaunchedEffect(config.provider, config.apiKey, config.baseUrl) {
+    var bridgeTick by remember { mutableStateOf(0) }
+    var bridgeNote by remember { mutableStateOf<String?>(null) }
+    var termux by remember { mutableStateOf(context.checkSelfPermission(TermuxBridge.PERMISSION) == PackageManager.PERMISSION_GRANTED) }
+    val askTermux = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { termux = it }
+    LaunchedEffect(config.provider, config.apiKey, config.baseUrl, bridgeTick) {
         if (config.provider == Provider.CLAUDE && config.apiKey.isBlank()) {
             check = KeyCheck.None
             return@LaunchedEffect
@@ -125,13 +129,44 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                     {
                         PillsRow(
                             stringResource(R.string.ai_provider),
-                            listOf(Provider.CLAUDE to "Claude", Provider.OPENAI_COMPATIBLE to stringResource(R.string.ai_openai_compatible)),
+                            listOf(
+                                Provider.CLAUDE to "Claude API",
+                                Provider.CLAUDE_SUBSCRIPTION to stringResource(R.string.ai_claude_subscription),
+                                Provider.OPENAI_COMPATIBLE to stringResource(R.string.ai_openai_compatible),
+                            ),
                             config.provider,
-                            onPick = { p -> model.store.update { it.copy(provider = p) } },
+                            onPick = { p ->
+                                model.store.update {
+                                    // The bridge's own address and model, unless the address already points at this phone.
+                                    if (p == Provider.CLAUDE_SUBSCRIPTION) it.copy(
+                                        provider = p, model = "claude-code",
+                                        baseUrl = it.baseUrl.takeIf { u -> u.startsWith("http://127.0.0.1") } ?: "http://127.0.0.1:8080/v1",
+                                    ) else it.copy(provider = p)
+                                }
+                            },
                         )
                     },
                     if (!claude) row {
                         ValueRow(stringResource(R.string.ai_base_url), config.baseUrl, onClick = { sheet = "url" })
+                    } else null,
+                    if (config.provider == Provider.CLAUDE_SUBSCRIPTION) row {
+                        val up = check is KeyCheck.Works
+                        RowFrame(
+                            stringResource(R.string.ai_bridge), onClick = null,
+                            sub = (bridgeNote ?: stringResource(if (up) R.string.ai_bridge_up else R.string.ai_bridge_down)) +
+                                "\n" + stringResource(R.string.ai_bridge_note),
+                        ) {
+                            ActionPill(
+                                stringResource(if (!termux) R.string.access_allow else if (up) R.string.ai_bridge_stop else R.string.ai_bridge_start),
+                                {
+                                    if (!termux) askTermux.launch(TermuxBridge.PERMISSION) else {
+                                        bridgeNote = TermuxBridge.run(context, !up)
+                                        scope.launch { delay(6_000); bridgeTick++ }
+                                    }
+                                },
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
                     } else null,
                     {
                         val (sub, problem) = when (val c = check) {

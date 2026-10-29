@@ -18,6 +18,9 @@ interface Phone {
 
     suspend fun control(control: MediaControl): PhoneDone
 
+    /** The installed app called [app], opened on the phone. */
+    suspend fun openApp(app: String): PhoneDone
+
     fun nowPlaying(): NowPlaying
 }
 
@@ -55,7 +58,7 @@ internal class PhoneTools(private val phone: Phone) {
 
     val prompt = " You can also act on the wearer's phone: directions opens the route to a place in the map app, play_media " +
         "plays music, podcasts or radio in a phone app, media_control pauses, resumes or skips what plays, now_playing " +
-        "says what plays. Use them whenever the wearer asks for these, without asking first; say it was done only when the " +
+        "says what plays, open_app opens an app on the phone by its name. Use them whenever the wearer asks for these, without asking first; say it was done only when the " +
         "tool says so."
 
     /** Name, description and input schema of each tool. */
@@ -81,6 +84,10 @@ internal class PhoneTools(private val phone: Phone) {
             schema("action" to text("What to do.", *MediaControl.entries.map { it.name.lowercase() }.toTypedArray()), required = "action"),
         ),
         Triple("now_playing", "What plays on the phone now.", schema()),
+        Triple(
+            "open_app", "Open an app on the phone by its name, such as Maps, Spotify or WhatsApp.",
+            schema("app" to text("The app's name as the wearer said it."), required = "app"),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -115,6 +122,15 @@ internal class PhoneTools(private val phone: Phone) {
             val control = MediaControl.entries.firstOrNull { it.name.equals(input.optString("action").trim(), ignoreCase = true) }
             if (control == null) ToolResult("unknown action", true) to null
             else phone.control(control).let { done -> told(done) { "Done: ${control.done}." } to control.action(done) }
+        }
+        "open_app" -> {
+            val app = input.optString("app").trim()
+            if (app.isEmpty()) ToolResult("no app was named", true) to null
+            else phone.openApp(app).let { done ->
+                told(done) {
+                    if (it.tapToOpen) "${it.app} waits in a notification on the phone; tapping it opens it." else "${it.app} is open on the phone."
+                } to ToolAction(done.app.ifEmpty { PHONE }, "Open · $app", done.failure == null && !done.tapToOpen)
+            }
         }
         "now_playing" -> phone.nowPlaying().let { now ->
             val text = now.unknown ?: (if (now.playing) "Playing" else "Paused") + " in ${now.app}: " +

@@ -28,6 +28,8 @@
     <!-- The phone's speech recogniser requires it, though Visor hands it the glasses' microphone, never the phone's. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Lets the Claude subscription settings start and stop the bridge in Termux, which must allow external apps. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
 
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
     <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
@@ -35,6 +37,7 @@
     <!-- The settings the phone app fills in: the default SMS app and the media apps on this phone. Also the map and
          music apps the assistant opens. -->
     <queries>
+        <package android:name="com.termux" />
         <intent>
             <action android:name="android.intent.action.SENDTO" />
             <data android:scheme="smsto" />

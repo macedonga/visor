@@ -34,7 +34,7 @@ suspend fun listModels(config: AssistantConfig): List<ModelInfo> = withContext(D
             } while (after != null)
             all
         }
-        Provider.OPENAI_COMPATIBLE -> {
+        Provider.OPENAI_COMPATIBLE, Provider.CLAUDE_SUBSCRIPTION -> {
             val headers = if (config.apiKey.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${config.apiKey}")
             val page = get(config.baseUrl.trimEnd('/') + "/models", headers)
             val data = page.optJSONArray("data")

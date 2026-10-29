@@ -609,7 +609,7 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
 
 @Composable
 internal fun assistantWords(config: AssistantConfig): String {
-    val configured = config.apiKey.isNotBlank() || config.provider == Provider.OPENAI_COMPATIBLE
+    val configured = config.apiKey.isNotBlank() || config.provider != Provider.CLAUDE
     return when {
         !config.enabled -> stringResource(R.string.sum_ai_off)
         !configured -> stringResource(R.string.sum_ai_unset)

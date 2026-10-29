@@ -472,6 +472,13 @@
     <string name="ai_answer_sub">Spento, l\'assistente degli occhiali non ha un telefono dietro.</string>
     <string name="ai_section_model">Modello</string>
     <string name="ai_provider">Fornitore</string>
+    <string name="ai_claude_subscription">Abbonamento Claude</string>
+    <string name="ai_bridge">Bridge</string>
+    <string name="ai_bridge_start">Avvia</string>
+    <string name="ai_bridge_stop">Ferma</string>
+    <string name="ai_bridge_up">Attivo in Termux.</string>
+    <string name="ai_bridge_down">Non attivo.</string>
+    <string name="ai_bridge_note">L\'abbonamento Claude funziona solo mentre il bridge è attivo. Per avviarlo da qui serve Termux con allow-external-apps attivo.</string>
     <string name="ai_openai_compatible">Compatibile OpenAI</string>
     <string name="ai_base_url">Server</string>
     <string name="ai_key">Chiave API</string>
@@ -928,6 +935,7 @@
     <string name="hct_retry">Riprova</string>
     <string name="phone_directions">Indicazioni per %1$s</string>
     <string name="phone_play">Riproduci %1$s</string>
+    <string name="phone_open">Apri %1$s</string>
     <string name="live_settings_glasses_host">Wi-Fi creato dagli occhiali</string>
     <string name="live_problem_vpn">Una VPN tiene Visor fuori dalla rete degli occhiali. Escludi Visor dalla VPN.</string>
     <string name="live_drops">Lo streaming si interrompe spesso</string>

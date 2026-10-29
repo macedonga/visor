@@ -23,12 +23,14 @@ internal class Visual(
             val context = understanding[4].asStruct()
             val onDevice = request[55].asStruct()
             val inline = context[4].asBytes().takeIf { it.size > 100 } ?: context[16].asBytes().takeIf { it.size > 100 }
+            val intent = onDevice[1].asText()
             return Visual(
                 inline = inline,
                 imageUuid = context[3].asText(),
                 captureHandle = context[8].asText(),
-                glassesWantImage = context[20] == true || understanding[5] == true || onDevice[8] == true,
-                intent = onDevice[1].asText(),
+                // IMPLICIT_DESCRIBE_IMAGE ("what can I cook with this") sets none of the flags, but it is a picture question.
+                glassesWantImage = context[20] == true || understanding[5] == true || onDevice[8] == true || "IMAGE" in intent,
+                intent = intent,
             )
         }
     }

@@ -119,7 +119,7 @@ fun MetaAiScreen(onSettings: () -> Unit, onMemories: () -> Unit, onSession: (Str
     val attention = rememberUpdatedState(glasses.device?.assistantAttention)
     val speech = rememberSpeech(turns, { attention.value }, light)
     var phoneListening by remember { mutableStateOf(false) }
-    val configured = config.apiKey.isNotBlank() || config.provider == Provider.OPENAI_COMPATIBLE
+    val configured = config.apiKey.isNotBlank() || config.provider != Provider.CLAUDE
     val now = rememberNow()
     val newest = turns.lastOrNull()
     val waiting = turns.takeLast(4).any { it.answer.isEmpty() && it.problem.isEmpty() && System.currentTimeMillis() - it.at < WAITING_MS }

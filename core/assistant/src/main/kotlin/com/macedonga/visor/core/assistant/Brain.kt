@@ -24,7 +24,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Where an answer comes from. */
-enum class Provider { CLAUDE, OPENAI_COMPATIBLE }
+/** CLAUDE_SUBSCRIPTION is the OpenAI-compatible path pointed at a Claude Code bridge on the phone. */
+enum class Provider { CLAUDE, OPENAI_COMPATIBLE, CLAUDE_SUBSCRIPTION }
 
 /** One question, its answer and what the tools did for it: the conversation behind the next question. */
 data class Exchange(val question: String, val answer: String, val actions: List<ToolAction> = emptyList())
@@ -97,7 +98,7 @@ class Brain(
         canEnd: Boolean = false,
     ): Reply = withContext(Dispatchers.IO) {
         val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        check(c.apiKey.isNotBlank() || c.provider != Provider.CLAUDE) { "no API key is set" }
         // The tools never stand in the way of an answer: without them the model still answers.
         val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, canEnd)
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
@@ -114,7 +115,7 @@ class Brain(
         val tokens = if (audience == Audience.PHONE) PHONE_TOKENS else GLASSES_TOKENS
         val text = when (c.provider) {
             Provider.CLAUDE -> claude(c, c.model.ifBlank { DEFAULT_CLAUDE_MODEL }, system, recent, question, image, tokens, c.webSearch, turn)
-            Provider.OPENAI_COMPATIBLE -> openAi(c, c.model, system, recent, question, image, tokens, turn)
+            Provider.OPENAI_COMPATIBLE, Provider.CLAUDE_SUBSCRIPTION -> openAi(c, c.model, system, recent, question, image, tokens, turn)
         }.replace(VISOR_NOTE, "").trim()
         check(text.isNotEmpty()) { "the model gave an empty answer" }
         Reply(text, turn.remembered, turn.actions, turn.ends)
@@ -123,7 +124,7 @@ class Brain(
     /** One sentence for the wearer, in [locale]'s language, written from [what]; outside the conversation. */
     suspend fun phrase(what: String, locale: Locale): String = withContext(Dispatchers.IO) {
         val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        check(c.apiKey.isNotBlank() || c.provider != Provider.CLAUDE) { "no API key is set" }
         val system = "You write one short sentence that smart glasses speak to their wearer, in " +
             "${locale.getDisplayLanguage(Locale.ENGLISH)}. Answer with that sentence only."
         write(c, c.model, system, what, 200)
@@ -132,7 +133,7 @@ class Brain(
     /** A day's lines for the diary, in [locale]'s language, from [exchanges] in order; with the lines' own model if one is set. */
     suspend fun dayLines(exchanges: String, locale: Locale): String = withContext(Dispatchers.IO) {
         val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        check(c.apiKey.isNotBlank() || c.provider != Provider.CLAUDE) { "no API key is set" }
         val system = "You keep the diary of a person who wears smart glasses with a voice assistant. From the day's " +
             "exchanges with the assistant, write the day's entry: one to three short sentences in " +
             "${locale.getDisplayLanguage(Locale.ENGLISH)}, in the second person (\"You asked about...\"), dry and precise, " +
@@ -143,7 +144,7 @@ class Brain(
 
     private suspend fun write(c: AssistantConfig, model: String, system: String, text: String, tokens: Int): String = when (c.provider) {
         Provider.CLAUDE -> claude(c, model.ifBlank { DEFAULT_CLAUDE_MODEL }, system, emptyList(), text, null, tokens, false, null)
-        Provider.OPENAI_COMPATIBLE -> openAi(c, model, system, emptyList(), text, null, tokens, null)
+        Provider.OPENAI_COMPATIBLE, Provider.CLAUDE_SUBSCRIPTION -> openAi(c, model, system, emptyList(), text, null, tokens, null)
     }.trim().also { check(it.isNotEmpty()) { "the model gave an empty answer" } }
 
     /** What the model knows of the wearer, and how to keep it. Empty when there is nowhere to keep it. */
