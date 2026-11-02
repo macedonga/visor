@@ -374,6 +374,9 @@
     <string name="settings_flags_sub">Переключатели Meta для функций, которые она не включила</string>
     <string name="settings_developer">Режим разработчика</string>
     <string name="settings_developer_sub">Интенты камеры и события съёмки для других приложений</string>
+    <string name="settings_developer_token">Токен</string>
+    <string name="settings_developer_token_new">Новый токен</string>
+    <string name="settings_developer_token_required">Действия только с токеном</string>
     <string name="settings_diagnostics_sub">Связь, ключ и то, что сообщают очки</string>
     <string name="settings_event_log_sub">Всё, что делала связь, новые внизу</string>
     <string name="tiles_hint">Удерживайте настройку, чтобы закрепить её здесь</string>

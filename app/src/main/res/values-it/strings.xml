@@ -356,6 +356,9 @@
     <string name="settings_flags_sub">Gli interruttori di Meta per funzioni che non ha attivato</string>
     <string name="settings_developer">Modalità sviluppatore</string>
     <string name="settings_developer_sub">Intent della fotocamera ed eventi di scatto per altre app</string>
+    <string name="settings_developer_token">Token</string>
+    <string name="settings_developer_token_new">Nuovo token</string>
+    <string name="settings_developer_token_required">Le azioni richiedono il token</string>
     <string name="settings_diagnostics_sub">Il collegamento, la chiave e cosa riportano gli occhiali</string>
     <string name="settings_event_log_sub">Tutto ciò che ha fatto il collegamento, dal più vecchio</string>
     <string name="tiles_hint">Tieni premuta un\'impostazione per fissarla qui</string>

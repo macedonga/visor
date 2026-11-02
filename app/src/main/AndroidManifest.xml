@@ -137,6 +137,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- The Live view's frames for an app holding developer mode's token. -->
+        <service
+            android:name=".outside.FrameService"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.macedonga.visor.action.LIVE_FRAMES" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

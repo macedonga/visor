@@ -10,6 +10,9 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.MediaStore
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.connection.GlassesConnection
@@ -60,6 +63,12 @@ class DeveloperMode @Inject constructor(
     private val _on = MutableStateFlow(prefs.getBoolean(ON, false))
     val on: StateFlow<Boolean> = _on.asStateFlow()
 
+    /** What an app shows to get Live frames, and to send actions while [tokenRequired]. */
+    private val _token = MutableStateFlow(prefs.getString(TOKEN, null) ?: newToken())
+    val token: StateFlow<String> = _token.asStateFlow()
+    private val _tokenRequired = MutableStateFlow(prefs.getBoolean(TOKEN_REQUIRED, false))
+    val tokenRequired: StateFlow<Boolean> = _tokenRequired.asStateFlow()
+
     /** Where the intents run: they outlive the receiver and the activity that took them. */
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -76,10 +85,31 @@ class DeveloperMode @Inject constructor(
         open(on)
     }
 
-    /** The intents reach Visor, and the launcher offers the shutter, only while the mode is on. */
+    fun requireToken(required: Boolean) {
+        prefs.edit().putBoolean(TOKEN_REQUIRED, required).apply()
+        _tokenRequired.value = required
+    }
+
+    /** A new token: apps holding the old one lose their frames and, while it is required, their actions. */
+    fun renewToken() {
+        _token.value = newToken()
+        log.add("Developer mode: a new token")
+        // The launcher's shortcuts carry it.
+        if (on.value) open(true)
+    }
+
+    /** Whether [given] is the token. */
+    fun holds(given: String?): Boolean = given != null && MessageDigest.isEqual(given.toByteArray(), token.value.toByteArray())
+
+    private fun newToken(): String {
+        val bytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes).also { prefs.edit().putString(TOKEN, it).apply() }
+    }
+
+    /** The intents and the frames reach Visor, and the launcher offers the shutter, only while the mode is on. */
     private fun open(on: Boolean) {
         val state = if (on) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
-        for (component in listOf(DeveloperActivity::class.java, DeveloperReceiver::class.java)) {
+        for (component in listOf(DeveloperActivity::class.java, DeveloperReceiver::class.java, FrameService::class.java)) {
             context.packageManager.setComponentEnabledSetting(ComponentName(context, component), state, PackageManager.DONT_KILL_APP)
         }
         val shortcuts = context.getSystemService(ShortcutManager::class.java) ?: return
@@ -102,13 +132,17 @@ class DeveloperMode @Inject constructor(
     private fun shortcut(id: String, label: Int, icon: Int, action: String) = ShortcutInfo.Builder(context, id)
         .setShortLabel(context.getString(label))
         .setIcon(Icon.createWithResource(context, icon))
-        .setIntent(Intent(action).setClass(context, DeveloperActivity::class.java))
+        .setIntent(Intent(action).setClass(context, DeveloperActivity::class.java).putExtra(I.EXTRA_TOKEN, token.value))
         .build()
 
     /** Do what [intent] asks, waking the connection first when the glasses are not there yet. */
     suspend fun handle(intent: Intent) {
         val action = intent.action ?: return
         if (!on.value || action !in I.ACTIONS) return
+        if (tokenRequired.value && !holds(intent.getStringExtra(I.EXTRA_TOKEN))) {
+            log.add("Developer mode: ignored ${action.substringAfterLast('.')} without the token")
+            return
+        }
         if (connection.state.value.link != LinkState.READY) {
             runCatching { GlassesService.reconnect(context) }
             withTimeoutOrNull(WAKE_MS) { connection.state.first { it.link == LinkState.READY } }
@@ -261,6 +295,8 @@ class DeveloperMode @Inject constructor(
 
     private companion object {
         const val ON = "on"
+        const val TOKEN = "token"
+        const val TOKEN_REQUIRED = "token_required"
         const val PHOTO = "shutter_photo"
         const val VIDEO = "shutter_video"
         val SHORTCUTS = listOf(PHOTO, VIDEO)
