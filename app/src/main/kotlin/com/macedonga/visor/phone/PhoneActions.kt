@@ -173,7 +173,7 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
     }
 
     /**
-     * Searches [pkg]'s media browser for [query] and plays the first playable item it finds by its id, on [c]; null once
+     * Searches [pkg]'s media browser for [query] and plays the best playable item it finds by its id, on [c]; null once
      * it plays, else the step that did not work. Only the compat browser asks a service to search, and the music apps'
      * services are compat ones.
      */
@@ -192,7 +192,8 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
                                 connected = true
                                 b.search(query, null, object : MediaBrowserCompat.SearchCallback() {
                                     override fun onSearchResult(query: String, extras: Bundle?, items: List<MediaBrowserCompat.MediaItem>) {
-                                        if (call.isActive) call.resume(items.firstOrNull { it.isPlayable }?.mediaId)
+                                        val match = chooseMediaSearchMatch(query, items)
+                                        if (call.isActive) call.resume(match?.mediaId)
                                     }
 
                                     override fun onError(query: String, extras: Bundle?) {
@@ -359,3 +360,46 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         fun simple(name: String) = name.lowercase().filter { it.isLetterOrDigit() }
     }
 }
+
+internal fun chooseMediaSearchMatch(query: String, items: List<MediaBrowserCompat.MediaItem>): MediaBrowserCompat.MediaItem? {
+    val normalizedQuery = normalizeSearchText(query)
+    if (normalizedQuery.isEmpty()) return items.firstOrNull { it.isPlayable }
+
+    val playable = items.filter { it.isPlayable }
+    return playable.maxByOrNull { scoreMediaSearchMatch(normalizedQuery, it) }
+        ?.takeIf { scoreMediaSearchMatch(normalizedQuery, it) > 0 }
+}
+
+private fun scoreMediaSearchMatch(query: String, item: MediaBrowserCompat.MediaItem): Int {
+    val desc = item.description ?: return 0
+    val title = normalizeSearchText(desc.title?.toString().orEmpty())
+    val subtitle = normalizeSearchText(desc.subtitle?.toString().orEmpty())
+
+    val candidates = buildList {
+        if (title.isNotEmpty()) add(title)
+        if (subtitle.isNotEmpty()) add(subtitle)
+        if (title.isNotEmpty() && subtitle.isNotEmpty()) {
+            add("$title by $subtitle")
+            add("$subtitle by $title")
+        }
+    }
+
+    var best = 0
+    for (candidate in candidates) {
+        when {
+            candidate == query -> best = maxOf(best, 200)
+            candidate.startsWith(query) || query.startsWith(candidate) -> best = maxOf(best, 150)
+            candidate.contains(query) || query.contains(candidate) -> best = maxOf(best, 120)
+            else -> {
+                val queryWords = query.split(' ').filter { it.isNotEmpty() }
+                val candidateWords = candidate.split(' ').filter { it.isNotEmpty() }
+                val shared = queryWords.count { it in candidateWords }
+                if (shared > 0) best = maxOf(best, shared * 25)
+            }
+        }
+    }
+    return best
+}
+
+private fun normalizeSearchText(value: String): String =
+    value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
