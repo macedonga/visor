@@ -262,6 +262,8 @@
     <string name="language_switching">Cambio la voce</string>
     <string name="language_done">%1$s è sugli occhiali.</string>
     <string name="language_failed">%1$s non è stata installata: %2$s</string>
+    <string name="language_partner_done">%1$s è selezionata.</string>
+    <string name="language_partner_failed">Impossibile selezionare %1$s: %2$s</string>
     <string name="language_cancel">Annulla</string>
     <string name="language_ok">OK</string>
     <string name="language_confirm_title">Scaricare %1$s?</string>
@@ -270,6 +272,12 @@
     <string name="language_need_glasses">Collega gli occhiali per cambiare lingua.</string>
     <string name="language_offers_problem">Impossibile chiedere i pacchetti a Meta: %1$s</string>
     <string name="language_footnote">I pacchetti arrivano da Meta con il tuo accesso. Ognuno contiene il riconoscimento vocale e le voci della lingua.</string>
+    <string name="language_partner">Lingue del telefono (3P)</string>
+    <string name="language_partner_sub">Il telefono riconosce le domande e genera le risposte vocali. Gli occhiali riproducono la voce. Il riconoscimento può richiedere internet o un modello vocale da scaricare.</string>
+    <string name="language_checking_phone">Verifica del riconoscimento e della voce sul telefono</string>
+    <string name="language_recognition_unknown">Il servizio non ha confermato il supporto per questa lingua. Il riconoscimento potrebbe non funzionare.</string>
+    <string name="language_partner_voice">Le lingue 3P usano una voce del telefono, riprodotta dagli occhiali.</string>
+    <string name="language_partner_speed">Cambia la velocità della voce nelle impostazioni di sintesi vocale di Android.</string>
     <!-- Meta AI: il diario -->
     <string name="meta_ai_title">Meta AI</string>
     <string name="meta_ai_ask">Chiedi qualsiasi cosa</string>

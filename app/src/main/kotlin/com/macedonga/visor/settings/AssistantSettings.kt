@@ -83,6 +83,8 @@ private sealed interface KeyCheck {
 fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val config by model.store.config.collectAsStateWithLifecycle()
+    val settingsState by model.settings.state.collectAsStateWithLifecycle()
+    val partner = (settingsState.stored["assistant_voice_id"] ?: model.settings.value("assistant_voice_id"))?.startsWith("3p_") == true
     val phase by model.assistant.phase.collectAsStateWithLifecycle()
     var hearing by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     val askHearing = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hearing = it }
@@ -186,20 +188,23 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                 SectionLabel(stringResource(R.string.ai_section_answers))
                 Rows(
                     {
-                        PillsRow(
+                        if (partner) ValueRow(
+                            stringResource(R.string.ai_voice), stringResource(R.string.ai_voice_phone), onClick = null,
+                            sub = stringResource(R.string.language_partner_voice), dim = true,
+                        ) else PillsRow(
                             stringResource(R.string.ai_voice),
                             listOf(true to stringResource(R.string.ai_voice_glasses), false to stringResource(R.string.ai_voice_phone)),
                             config.glassesVoice,
                             onPick = { on -> model.store.update { it.copy(glassesVoice = on) } },
                         )
                     },
-                    {
+                    if (!partner) row {
                         ValueRow(
                             stringResource(R.string.ai_speech_language),
                             config.speechLanguage.takeIf { it.isNotEmpty() }?.let(::languageName) ?: stringResource(R.string.ai_speech_language_glasses),
                             onClick = { sheet = "speech" },
                         )
-                    },
+                    } else null,
                     { VisorToggleRow(model.toggles.byId("vision")!!, sub = stringResource(R.string.ai_vision_sub)) },
                     if (claude) row { VisorToggleRow(model.toggles.byId("web")!!, sub = stringResource(R.string.ai_web_sub)) } else null,
                     { VisorToggleRow(model.toggles.byId("quiet_actions")!!, sub = stringResource(R.string.ai_quiet_actions_sub)) },

@@ -13,9 +13,10 @@ data class GlassesVoice(val id: String, val en: String, val it: String, val name
 
 /**
  * A language the glasses' assistant can run in: recognition, understanding and voice. [pack] is the suffix of
- * Meta's language feature; null for the one the firmware ships with.
+ * Meta's language feature; null for the built-in language and phone-based partner languages.
  */
 data class GlassesLanguage(val locale: String, val pack: String?, val voices: List<GlassesVoice>, val defaultVoice: String) {
+    val partner: Boolean get() = defaultVoice.startsWith("3p_")
     private val javaLocale: Locale get() = Locale.forLanguageTag(locale.replace('_', '-'))
 
     /** Its own name, in itself: "Italiano (Italia)". */
@@ -73,8 +74,22 @@ val GLASSES_LANGUAGES: List<GlassesLanguage> = listOf(
     GlassesLanguage("zh_CN", "zh_cn", listOf(v("zh_CN.0", "High, gentle", "Tono acuto, gentile"), v("zh_CN.1", "Low, deep", "Tono basso, profondo")), "zh_CN.0"),
 )
 
-/** The language a voice id belongs to: "it_IT.1" is it_IT; "3p_" voices are the same language's. */
+val PARTNER_LANGUAGES: List<GlassesLanguage> = listOf(
+    "ar_EG", "bn_IN", "cs_CZ", "da_DK", "de_DE", "el_GR", "en_AU", "en_GB", "en_IN", "en_US",
+    "es_ES", "es_US", "fi_FI", "fil_PH", "fr_FR", "gu_IN", "he_IL", "hi_IN", "hr_HR", "hu_HU",
+    "it_IT", "ja_JP", "kn_IN", "ko_KR", "ml_IN", "ms_MY", "nl_NL", "pa_IN", "pl_PL", "pt_BR",
+    "ru_RU", "sv_SE", "te_IN", "tr_TR", "vi_VN", "yue_CN", "zh_CN", "zh_HK",
+).map { locale ->
+    val id = "3p_$locale.0"
+    GlassesLanguage(locale, null, listOf(v(id, "Phone", "Telefono")), id)
+}
+
+/** The native or partner language a confirmed voice id belongs to. */
 fun languageOfVoice(voiceId: String?): GlassesLanguage? {
     val locale = voiceId?.removePrefix("3p_")?.substringBefore('.') ?: return null
-    return GLASSES_LANGUAGES.firstOrNull { it.locale == locale }
+    val languages = if (voiceId.startsWith("3p_")) PARTNER_LANGUAGES else GLASSES_LANGUAGES
+    return languages.firstOrNull { it.locale == locale }
 }
+
+fun unavailableLanguageSettings(voiceId: String?): Set<String> =
+    if (voiceId?.startsWith("3p_") == true) setOf("tts_speak_speed") else emptySet()

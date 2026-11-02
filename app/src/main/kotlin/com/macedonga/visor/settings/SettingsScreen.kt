@@ -441,7 +441,8 @@ private fun Tiles(model: SettingsViewModel, open: (NavKey) -> Unit) {
 @Composable
 private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, onLift: () -> Unit, onMove: (Offset) -> Unit, onDrop: (Float) -> Unit) {
     val host = LocalHost.current
-    val blocked = stringResource(R.string.settings_locked)
+    val restriction = if (id.startsWith("f:")) null else languageRestriction(id.substringAfter(':'))
+    val blocked = restriction ?: stringResource(R.string.settings_locked)
     var sheet by remember { mutableStateOf(false) }
     val title: String
     val state: String
@@ -453,9 +454,9 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
         val toggle = model.toggles.byId(id.removePrefix("v:")) ?: return
         val now by toggle.on.collectAsState()
         title = stringResource(toggle.label)
-        on = now
-        state = stringResource(if (now) R.string.sum_on else R.string.sum_off)
-        locked = false
+        on = now && restriction == null
+        state = if (restriction != null) stringResource(R.string.ai_voice_phone) else stringResource(if (now) R.string.sum_on else R.string.sum_off)
+        locked = restriction != null
         busy = false
         act = { toggle.set(!now) }
     } else if (id.startsWith("f:")) {
@@ -472,7 +473,7 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
         val spec = specOf(host.settings, key)
         val value = host.state.valueOf(key, info)
         title = spec.label
-        locked = !host.ready || info?.writable != true
+        locked = !host.ready || info?.writable != true || restriction != null
         busy = key in host.state.pending
         on = if (spec.control == Control.Toggle) value?.let { asBool(it) != spec.invert } else null
         state = value?.let { spec.display(it) } ?: stringResource(R.string.settings_not_read)
@@ -486,7 +487,7 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
                 host.openDetails(id)
             }
         }
-        if (sheet) {
+        if (sheet && !locked) {
             val c = spec.control as Control.Choice
             ChoiceSheet(spec.label, c.options.filter { !it.hidden || it.value == value }.map { Triple(it.value, it.label, null) }, value?.trim(), onPick = { host.settings.write(key, it) }, onDismiss = { sheet = false })
         }
@@ -563,11 +564,15 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
     val base = when (topic) {
         Topic.META_AI -> {
             val config by model.assistant.config.collectAsStateWithLifecycle()
-            assistantWords(config)
+            assistantWords(config.copy(glassesVoice = config.glassesVoice && settings.value("assistant_voice_id")?.startsWith("3p_") != true))
         }
         Topic.LANGUAGE -> {
             val language = languageOfVoice(settings.value("assistant_voice_id"))
-            listOfNotNull(language?.nativeName(), language?.voices?.firstOrNull { it.id == settings.value("assistant_voice_id") }?.label()).joinToString(" · ")
+            listOfNotNull(
+                language?.nativeName() ?: settings.value("assistant_voice_id"),
+                if (language?.partner == true) stringResource(R.string.ai_voice_phone)
+                else language?.voices?.firstOrNull { it.id == settings.value("assistant_voice_id") }?.label(),
+            ).joinToString(" · ")
         }
         Topic.NOTIFICATIONS -> {
             val on by model.notifyChoice.enabled.collectAsStateWithLifecycle()

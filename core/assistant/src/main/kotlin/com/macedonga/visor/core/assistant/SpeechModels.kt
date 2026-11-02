@@ -11,6 +11,11 @@ import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import java.util.Locale
+import kotlin.coroutines.resume
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The phone's on-device speech models. Visor hears what the glasses leave to the server with them, in the glasses'
@@ -25,6 +30,48 @@ object SpeechModels {
     private val main = Handler(Looper.getMainLooper())
 
     private const val DESTROY_DELAY_MS = 5_000L
+
+    suspend fun check(context: Context, locale: Locale): Boolean = withContext(Dispatchers.Main.immediate) {
+        if (Build.VERSION.SDK_INT < 33) error("recognizing 3P audio from the glasses requires Android 13 or newer")
+        val wanted = speechTag(locale)
+        val services = buildList {
+            if (SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) add(true)
+            if (SpeechRecognizer.isRecognitionAvailable(context)) add(false)
+        }
+        check(services.isNotEmpty()) { "the phone has no speech recognition service" }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, wanted)
+        var unknown = false
+        for (onDevice in services) {
+            val r = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
+            val supported = try {
+                withTimeoutOrNull(8_000) {
+                    suspendCancellableCoroutine<Boolean?> { cont ->
+                        r.checkRecognitionSupport(intent, context.mainExecutor, object : RecognitionSupportCallback {
+                            override fun onSupportResult(support: RecognitionSupport) {
+                                if (onDevice) installed = support.installedOnDeviceLanguages
+                                val languages = support.installedOnDeviceLanguages + support.supportedOnDeviceLanguages +
+                                    support.pendingOnDeviceLanguages + if (onDevice) emptyList() else support.onlineLanguages
+                                val matches = languages.any { matchesSpeechLanguage(it, locale) }
+                                if (cont.isActive) cont.resume(matches)
+                            }
+
+                            override fun onError(error: Int) {
+                                if (cont.isActive) cont.resume(if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) false else null)
+                            }
+                        })
+                    }
+                }
+            } finally {
+                r.destroy()
+            }
+            if (supported == true) return@withContext true
+            if (supported == null) unknown = true
+        }
+        check(unknown) { "the phone has no speech recognition for $wanted" }
+        false
+    }
 
     /** Read what is held and, if [locale]'s model is not, ask the phone to download it. Any thread. */
     fun prepare(context: Context, locale: Locale, note: (String) -> Unit) = main.post {
@@ -94,7 +141,12 @@ object SpeechModels {
     fun pick(locale: Locale): String {
         val wanted = speechTag(locale)
         return installed.firstOrNull { it.equals(wanted, ignoreCase = true) }
-            ?: installed.firstOrNull { it.substringBefore('-').equals(wanted.substringBefore('-'), ignoreCase = true) }
+            ?: installed.firstOrNull { matchesSpeechLanguage(it, locale) }
             ?: wanted
     }
+}
+
+internal fun matchesSpeechLanguage(tag: String, locale: Locale): Boolean {
+    val available = Locale.forLanguageTag(tag)
+    return available.language == locale.language && (locale.language != "zh" || available.country == locale.country)
 }

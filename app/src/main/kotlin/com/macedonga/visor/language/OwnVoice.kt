@@ -43,7 +43,10 @@ fun keepAssistantConfig(
         combine(
             connection.state.map { it.link == LinkState.READY }.distinctUntilChanged(),
             store.config.map { Triple(it.enabled, it.glassesVoice, it.answerWaitSeconds.toLong()) }.distinctUntilChanged(),
-        ) { ready, wanted -> wanted.takeIf { ready } }.collectLatest { wanted ->
+            settings.state.map { state -> state.readAt?.let { settings.value("assistant_voice_id")?.startsWith("3p_") == true } }.distinctUntilChanged(),
+        ) { ready, wanted, partner ->
+            Triple(wanted.first, wanted.second && partner == false, wanted.third).takeIf { ready && partner != null }
+        }.collectLatest { wanted ->
             val (enabled, own, wait) = wanted ?: return@collectLatest
             if (!(enabled || own)) return@collectLatest
             // Let the link settle; the configuration comes in a bug report, a minute over Bluetooth.

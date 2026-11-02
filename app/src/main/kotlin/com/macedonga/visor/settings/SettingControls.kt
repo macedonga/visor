@@ -44,6 +44,7 @@ import com.macedonga.visor.core.settings.same
 import com.macedonga.visor.core.settings.unitSuffix
 import com.macedonga.visor.features.Feature
 import com.macedonga.visor.features.FeatureDetails
+import com.macedonga.visor.language.unavailableLanguageSettings
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -88,6 +89,17 @@ internal fun ReadSettingsWhenReady(settings: GlassesSettings, ready: Boolean) {
     }
 }
 
+@Composable
+internal fun languageRestriction(key: String): String? {
+    val host = LocalHost.current
+    val voice = host.settings.value("assistant_voice_id")
+    return when {
+        key == "glasses_voice" && voice?.startsWith("3p_") == true -> stringResource(R.string.language_partner_voice)
+        key in unavailableLanguageSettings(voice) -> stringResource(R.string.language_partner_speed)
+        else -> null
+    }
+}
+
 /**
  * One glasses setting as its mapping calls for: a switch, pills, a slider, or a value that opens a sheet. Away from
  * the glasses it shows the value last read, locked. [engineering] adds the firmware's key and the stored value.
@@ -124,6 +136,16 @@ fun GlassesRow(key: String, engineering: Boolean = false, overline: String? = nu
     val refused = stringResource(R.string.settings_not_sent)
     val write: (String) -> Unit = { if (!settings.write(key, it)) host.notice.show(refused) }
     var sheet by remember { mutableStateOf(false) }
+
+    val restriction = languageRestriction(key)
+    if (restriction != null) {
+        ValueRow(
+            spec.label, value?.let(spec::display), onClick = null, onLongClick = long,
+            sub = restriction,
+            changed = changed, overline = overline, keyLine = keyLine, problem = problem, dense = dense, busy = busy, dim = true,
+        )
+        return
+    }
 
     if (!writable || value == null) {
         ValueRow(
@@ -279,7 +301,11 @@ fun GlassesRow(key: String, engineering: Boolean = false, overline: String? = nu
 fun VisorToggleRow(toggle: VisorToggle, overline: String? = null, sub: String? = null) {
     val host = LocalHost.current
     val on by toggle.on.collectAsState()
-    ToggleRow(stringResource(toggle.label), on, toggle.set, onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = sub)
+    val restriction = languageRestriction(toggle.id)
+    if (restriction != null) ValueRow(
+        stringResource(toggle.label), stringResource(R.string.ai_voice_phone), onClick = null,
+        onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = restriction, dim = true,
+    ) else ToggleRow(stringResource(toggle.label), on, toggle.set, onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = sub)
 }
 
 private const val SLOW_MS = 8_000L
@@ -331,7 +357,7 @@ internal fun SettingDetails(id: String, onDismiss: () -> Unit) {
     if (id.startsWith("v:")) {
         val toggle = host.toggles.byId(id.removePrefix("v:")) ?: return
         VisorSheet(onDismiss) {
-            SheetTitle(stringResource(toggle.label), toggle.note?.let { stringResource(it) })
+            SheetTitle(stringResource(toggle.label), languageRestriction(toggle.id) ?: toggle.note?.let { stringResource(it) })
             Row(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ActionPill(stringResource(if (pinned) R.string.settings_unpin else R.string.settings_pin), { host.pins.toggle(id); onDismiss() }, quiet = true)
             }
@@ -345,9 +371,10 @@ internal fun SettingDetails(id: String, onDismiss: () -> Unit) {
     val spec = specOf(settings, key)
     val value = state.valueOf(key, info)
     val default = info?.default
-    val canRestore = host.ready && info?.writable == true && default != null && state.changed(key, info)
+    val restriction = languageRestriction(key)
+    val canRestore = restriction == null && host.ready && info?.writable == true && default != null && state.changed(key, info)
     VisorSheet(onDismiss) {
-        SheetTitle(spec.label, spec.note)
+        SheetTitle(spec.label, restriction ?: spec.note)
         Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
             Reading(stringResource(R.string.settings_now), value?.let { spec.display(it) } ?: stringResource(R.string.settings_not_read))
             Reading(stringResource(R.string.settings_default), default?.let { spec.display(it) } ?: stringResource(R.string.settings_unknown))
