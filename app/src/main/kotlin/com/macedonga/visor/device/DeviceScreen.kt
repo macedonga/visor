@@ -35,6 +35,7 @@ import com.macedonga.visor.ui.Line
 import com.macedonga.visor.ui.PlainScreen
 import com.macedonga.visor.ui.Reading
 import com.macedonga.visor.ui.Section
+import com.macedonga.visor.ui.temperatureWords
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -143,7 +144,7 @@ fun DeviceScreen(
 @Composable
 private fun DeviceReadings(device: DeviceState) {
     Reading("Battery", device.battery?.let { "${it.percent}%" + if (it.charging) ", charging" else "" })
-    Reading("Battery temperature", device.battery?.let { "%.1f °C".format(it.temperatureC) })
+    Reading("Battery temperature", device.battery?.let { temperatureWords(it.temperatureC, decimals = 1) })
     Reading(
         "Case",
         device.case?.let { case ->

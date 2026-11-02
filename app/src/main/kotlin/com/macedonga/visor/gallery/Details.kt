@@ -55,6 +55,7 @@ import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.CaptureType
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
+import com.macedonga.visor.ui.temperatureWords
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -176,7 +177,7 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
             Section(stringResource(R.string.details_raw)) {
                 Fact(stringResource(R.string.details_accel), "x %.2f · y %.2f · z %.2f m/s²".format(r.accel[0], r.accel[1], r.accel[2]))
                 Fact(stringResource(R.string.details_rotation), "x %.1f · y %.1f · z %.1f °/s".format(r.gyroDps[0], r.gyroDps[1], r.gyroDps[2]))
-                Fact(stringResource(R.string.details_temperature), "%.1f °C".format(r.dieC))
+                Fact(stringResource(R.string.details_temperature), temperatureWords(r.dieC.toDouble(), decimals = 1))
                 Fact(stringResource(R.string.details_samples), stringResource(R.string.details_samples_value, r.samples, r.rateHz.roundToInt(), "%.2f".format(r.spanS)))
             }
         }
