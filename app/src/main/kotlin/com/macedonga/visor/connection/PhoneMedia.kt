@@ -1,6 +1,10 @@
 package com.macedonga.visor.connection
 
 import android.app.ActivityManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -16,6 +20,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import com.macedonga.visor.R
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -41,8 +46,10 @@ import kotlinx.coroutines.sync.withLock
  * channel, MediaPlayerInfo {1 player, 2 content type, 3 liked, 4 package} (type 100) and the cover art as a JPEG in
  * 1024-byte pieces (101, the last one 102; an empty 102 clears it), again whenever the playing session changes. With an
  * Android phone the Display's music screen takes the cover only from here; title and artist come over AVRCP.
- * Playlists are answered empty (9, 13). Like (15) sets the heart rating or the app's like action. Launch (1) starts an
- * app from the foreground or as a companion only. Other requests are logged once and not answered.
+ * SystemUI's music screen asks for playlists (8, 12), answered empty (9, 13), likes (15, the heart or thumb rating or
+ * the app's like action; no reply, the new state goes in the next 100) and asks for notification access (11). The
+ * native music handler launches apps (1, and 7 with a package) on a channel it closes at once, so they get no reply;
+ * an app starts from the foreground or as a companion only. Other requests are logged once and not answered.
  */
 @Singleton
 class PhoneMedia @Inject constructor(@ApplicationContext private val context: Context, private val log: Provider<EventLog>) : Responder {
@@ -77,22 +84,29 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
                 sentArt = null
                 watch()
                 push()
-                runCatching { sending.withLock { connection.send(reply, EMPTY, messageType = MT_SPOTIFY_PLAYLISTS_RESPONSE) } }
             }
             MT_INFO_REQUEST -> {
                 val (player, name) = player(controller)
                 connection.send(reply, Wire.fieldVarint(1, player) + Wire.fieldBytes(2, name.encodeToByteArray()), messageType = MT_INFO_RESPONSE)
             }
+            // TryLaunchAppMessage {1 package, 2 payload, 3 metadata}.
             MT_TRY_LAUNCH -> {
                 val f = fields(message)
-                val pkg = f?.bytes(2)?.decodeToString().orEmpty()
-                val ok = pkg.isNotEmpty() && launch(pkg)
-                if (!ok) log.get().add("Partner app $pkg: not started from the background")
-                connection.send(reply, Wire.fieldVarint(1, if (ok) 1 else 0) + Wire.fieldBytes(4, f?.bytes(3) ?: EMPTY), messageType = MT_TRY_LAUNCH)
+                val pkg = f?.bytes(1)?.decodeToString().orEmpty()
+                val payload = f?.bytes(2)?.decodeToString().orEmpty()
+                scope.launch { tryLaunch(pkg, payload) }
+            }
+            // Empty from the music screen's connect button; AIActionsLaunchApp {2 Android package} from the native handler.
+            MT_CONNECT_AUDIO_APP -> {
+                val pkg = fields(message)?.bytes(2)?.decodeToString().orEmpty()
+                if (pkg.isEmpty()) log.get().add("Partner ecosystem: the glasses asked to connect a music app")
+                else scope.launch { tryLaunch(pkg, "") }
             }
             MT_LIKE -> scope.launch { setLiked(fields(message)?.varint(1) == 1L) }
             MT_NOTIFICATION_ACCESS -> scope.launch {
-                if (!startFromHere(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) log.get().add("Notification access: Visor may not open settings from the background")
+                if (!startFromHere(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) && !askAccess()) {
+                    log.get().add("Notification access: Visor may not open settings from the background")
+                }
             }
             MT_SPOTIFY_PLAYLISTS_REQUEST -> connection.send(reply, EMPTY, messageType = MT_SPOTIFY_PLAYLISTS_RESPONSE)
             MT_PLAYLIST_REQUEST -> {
@@ -188,32 +202,69 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
         return (PLAYERS[pkg] ?: 0L) to pkg
     }
 
-    // The heart rating of the track, when the session keeps one.
+    // The track's heart or thumb rating; for Spotify its like action, CHECK_FILL when the track is liked, ADD_TO when not.
     private fun liked(session: MediaController?): Long {
+        if (session?.packageName == SPOTIFY) {
+            val actions = session.playbackState?.customActions.orEmpty().map { it.action }
+            if (SPOTIFY_LIKED in actions) return LIKED_YES
+            if (SPOTIFY_NOT_LIKED in actions) return LIKED_NO
+        }
         val rating = session?.metadata?.getRating(MediaMetadata.METADATA_KEY_USER_RATING) ?: return LIKED_UNKNOWN
-        if (rating.ratingStyle != Rating.RATING_HEART || !rating.isRated) return LIKED_UNKNOWN
-        return if (rating.hasHeart()) LIKED_YES else LIKED_NO
+        if (!rating.isRated) return LIKED_UNKNOWN
+        return when (rating.ratingStyle) {
+            Rating.RATING_HEART -> if (rating.hasHeart()) LIKED_YES else LIKED_NO
+            Rating.RATING_THUMB_UP_DOWN -> if (rating.isThumbUp) LIKED_YES else LIKED_NO
+            else -> LIKED_UNKNOWN
+        }
     }
 
-    // Heart rating when the session takes it, else its like action; the glasses get no reply, only the new state.
+    // The heart or thumb rating when the session takes one, else its like action; the glasses get only the new state.
     private fun setLiked(wanted: Boolean) {
         val session = controller ?: return
-        val action = session.playbackState?.customActions?.firstOrNull { a ->
+        val actions = session.playbackState?.customActions.orEmpty()
+        val action = actions.firstOrNull { it.action == SPOTIFY_LIKED || it.action == SPOTIFY_NOT_LIKED } ?: actions.firstOrNull { a ->
             val words = a.action + " " + a.name
             LIKE_WORDS.any { words.contains(it, ignoreCase = true) } && !NOT_LIKE.containsMatchIn(words)
         }
         when {
             session.ratingType == Rating.RATING_HEART -> session.transportControls.setRating(Rating.newHeartRating(wanted))
+            session.ratingType == Rating.RATING_THUMB_UP_DOWN -> session.transportControls.setRating(Rating.newThumbRating(wanted))
             action == null -> log.get().add("Like: ${session.packageName} has no like control")
             liked(session) != (if (wanted) LIKED_YES else LIKED_NO) -> session.transportControls.sendCustomAction(action.action, null)
         }
         push()
     }
 
+    // Tap and hold on a music tile asks for the app and its music: its session plays when it has one.
+    private fun tryLaunch(pkg: String, payload: String) {
+        if (pkg.isEmpty() || pkg == BE_MY_EYES) return
+        if (!launch(pkg)) return log.get().add("Partner app $pkg: not started from the background")
+        if (payload == TAP_AND_HOLD) sessions?.let { active(it) }?.firstOrNull { it.packageName == pkg }?.transportControls?.play()
+    }
+
     // Starts the partner app as the Meta app would: only from the foreground or as a companion, else it stays put.
     private fun launch(pkg: String): Boolean {
         val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
         return startFromHere(intent)
+    }
+
+    // Android keeps Visor from opening the settings from the background, so a notification opens them.
+    private fun askAccess(): Boolean {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+        if (!manager.areNotificationsEnabled()) return false
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.finish_conn_channel), NotificationManager.IMPORTANCE_DEFAULT))
+        val open = PendingIntent.getActivity(
+            context, ACCESS_ID,
+            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = Notification.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_visor)
+            .setContentTitle(context.getString(R.string.finish_conn_notification_access))
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        return runCatching { manager.notify(ACCESS_ID, notification) }.isSuccess
     }
 
     private fun startFromHere(intent: Intent): Boolean =
@@ -228,6 +279,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
         private const val MT_INFO_REQUEST = 3
         private const val MT_INFO_RESPONSE = 4
         private const val MT_SUBSCRIBE = 5
+        private const val MT_CONNECT_AUDIO_APP = 7
         private const val MT_SPOTIFY_PLAYLISTS_REQUEST = 8
         private const val MT_SPOTIFY_PLAYLISTS_RESPONSE = 9
         private const val MT_NOTIFICATION_ACCESS = 11
@@ -246,6 +298,14 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
         private const val MAX_SIDE = 300
         private const val JPEG_QUALITY = 70
         private val EMPTY = ByteArray(0)
+        private const val SPOTIFY = "com.spotify.music"
+        private const val SPOTIFY_LIKED = "CHECK_FILL"
+        private const val SPOTIFY_NOT_LIKED = "ADD_TO"
+        // The Meta app does not launch it either.
+        private const val BE_MY_EYES = "com.bemyeyes.bemyeyes"
+        private const val TAP_AND_HOLD = "EXECUTE_TAP_AND_HOLD"
+        private const val CHANNEL = "glasses_requests"
+        private const val ACCESS_ID = 9012
         private val LIKE_WORDS = listOf("like", "thumbs", "heart", "favorite", "favourite")
         // Thumbs down and dislike sit beside the like action in many players.
         private val NOT_LIKE = Regex("dislike|unlike|down|remove", RegexOption.IGNORE_CASE)

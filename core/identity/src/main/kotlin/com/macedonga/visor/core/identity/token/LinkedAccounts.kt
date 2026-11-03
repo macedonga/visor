@@ -67,8 +67,45 @@ fun fetchLinkedTokens(
     return LinkedTokens(token, node.text("first_party_token")?.takeIf { it.isNotEmpty() })
 }
 
+/** The provider account's ids for LinkedAccountCredentials field 3, one compact JSON line, empty ones left out; null when an id is missing. */
+fun fetchLinkedMetadata(type: LinkedAccountType, tokens: LinkedTokens, http: HttpPost = UrlConnectionPost): String? {
+    fun root(json: JsonObject, name: String) = (json["data"] as? JsonObject)?.get(name) as? JsonObject
+    val fields: Map<String, String> = when (type) {
+        LinkedAccountType.FACEBOOK -> {
+            val json = graphql(FACEBOOK_URL, "OAuth ${tokens.accessToken}", "FacebookAccountQuery", FACEBOOK_DOC, "{}", http)
+            val actor = root(json, "viewer")?.get("actor") as? JsonObject ?: return null
+            val id = actor.text("id")?.takeIf { it.isNotEmpty() } ?: return null
+            mapOf("user_id" to id, "name" to actor.text("name").orEmpty())
+        }
+        LinkedAccountType.INSTAGRAM -> {
+            val session = tokens.firstPartyToken ?: return null
+            val viewer = root(graphql(INSTAGRAM_URL, session, "InstagramAccountQuery", INSTAGRAM_DOC, "{}", http), "ig_viewer") ?: return null
+            val id = viewer.text("id")?.takeIf { it.isNotEmpty() } ?: return null
+            val messaging = viewer.text("messaging_user_id")?.takeIf { it.isNotEmpty() } ?: return null
+            mapOf("user_id" to id, "username" to viewer.text("username").orEmpty(), "messaging_user_id" to messaging)
+        }
+        LinkedAccountType.THREADS -> {
+            val viewer = root(graphql(INSTAGRAM_URL, tokens.accessToken, "ThreadsAccountQuery", THREADS_DOC, "{}", http), "wearables_display_th_viewer") ?: return null
+            val id = viewer.text("id")?.takeIf { it.isNotEmpty() } ?: return null
+            // Both have defaults on the glasses, so an empty one is left out.
+            mapOf("user_id" to id, "username" to viewer.text("username").orEmpty()).filterValues { it.isNotEmpty() }
+        }
+    }
+    return JsonObject(fields.mapValues { JsonPrimitive(it.value) }).toString()
+}
+
+private const val FACEBOOK_URL = "https://graph.facebook.com/graphql"
+private const val INSTAGRAM_URL = "https://i.instagram.com/graphql_www"
+private const val FACEBOOK_DOC = "28485218910396071647441165961"
+private const val INSTAGRAM_DOC = "202856306910776971470899218030"
+private const val THREADS_DOC = "131157504210866109592346958212"
+
 /** One persisted query on Meta's ar GraphQL, as the Meta app's own calls send it. */
-private fun graphql(accessToken: String, name: String, doc: String, variables: String, http: HttpPost): JsonObject {
+private fun graphql(accessToken: String, name: String, doc: String, variables: String, http: HttpPost): JsonObject =
+    graphql(GRAPH_URL, "OAuth $accessToken", name, doc, variables, http)
+
+/** The same form on [url], with the whole Authorization value: the providers' own GraphQL takes a bare token. */
+private fun graphql(url: String, authorization: String, name: String, doc: String, variables: String, http: HttpPost): JsonObject {
     val body = pyUrlencode(
         linkedMapOf(
             "fb_api_req_friendly_name" to name,
@@ -81,8 +118,8 @@ private fun graphql(accessToken: String, name: String, doc: String, variables: S
     ).toByteArray(Charsets.US_ASCII)
     val reply = try {
         http.post(
-            GRAPH_URL,
-            mapOf("Authorization" to "OAuth $accessToken", "Content-Type" to "application/x-www-form-urlencoded"),
+            url,
+            mapOf("Authorization" to authorization, "Content-Type" to "application/x-www-form-urlencoded"),
             body,
         )
     } catch (error: Exception) {

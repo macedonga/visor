@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.settings
 
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.LinkState
@@ -103,8 +104,17 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
 
     // One sync at a time; the versions and stores below only change under it.
     private val reads = Mutex()
+
+    // Swapped whole, so answering the glasses' own syncs reads it without the lock.
+    @Volatile
     private var versions: Map<String, Versions> = emptyMap()
     private var byNamespace: Map<String, Map<String, String>> = emptyMap()
+
+    // Syncs the Display started, by request id: answered with round 1, waiting for round 2.
+    private class PeerSync(val namespace: String, val tag: String, val types: Set<String>, val at: Long)
+
+    private val peers = ConcurrentHashMap<String, PeerSync>()
+    private val unanswered = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     private var sync: Sync? = null
@@ -141,6 +151,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
                     raw.clear()
                     retried.clear()
                     writtenAt.clear()
+                    peers.clear()
                     _state.value = SettingsState(pair = serial)
                 }
             }
@@ -254,37 +265,13 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val finished = withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() } != null
         sync = null
 
-        val stores = byNamespace.toMutableMap()
-        for ((namespace, objects) in s.objects) {
-            val before = if (full) emptyMap() else stores[namespace].orEmpty()
-            stores[namespace] = before.toMutableMap().apply {
-                for (o in synchronized(objects) { objects.toList() }) {
-                    raw[o.uri] = namespace to o.raw
-                    if (o.type != TYPE_KV) continue
-                    if (o.deleted) remove(o.uri) else put(o.uri, o.data)
-                }
-            }
-        }
-        byNamespace = stores
-        versions = versions + s.versions
-        val stored = stores.values.fold(emptyMap<String, String>()) { acc, m -> acc + m }
         val changed = s.objects.values.sumOf { it.size }
-
         val now = System.currentTimeMillis()
-        val pending = _state.value.pending
-        val settled = pending.filter { (key, want) -> same(catalogue[key]?.kind, stored[key] ?: catalogue[key]?.default, want) }
-        val kept = pending.keys.filter { it !in settled && now - (writtenAt[it] ?: now) > SETTLE_MILLIS }
-        settled.forEach { (key, want) -> say("$key is now $want") }
-        kept.forEach { key -> say("The glasses kept $key at ${stored[key] ?: catalogue[key]?.default}") }
-        // An svc31 write the settings service took and did not apply goes once more straight into the store.
-        val retry = kept.filter { key -> catalogue[key]?.viaDrive == false && retried.add(key) }.associateWith { pending.getValue(it) }
-        _state.update {
+        val objects = s.objects.mapValues { (_, list) -> synchronized(list) { list.toList() } }
+        val stored = merge(objects, s.versions, full) {
             it.copy(
-                stored = stored,
                 reading = false,
                 readAt = if (finished || changed > 0) now else it.readAt,
-                pending = it.pending - settled.keys - kept.toSet(),
-                kept = it.kept + kept,
                 problem = when {
                     !finished && s.objects.isEmpty() -> "The glasses did not answer the settings read."
                     uuid.isEmpty() -> "The glasses did not give their device id, so most settings show their defaults."
@@ -296,7 +283,6 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
             (if (full) "Read" else "Re-read") + " settings: $changed objects from ${s.objects.size} of ${namespaces.size} namespaces" +
                 if (finished) "" else ", timed out",
         )
-        retry.forEach { (key, want) -> scope.launch { writeDrive(key, want) } }
         // The glasses leave the factory with Meta AI off and nothing in RLDrive; the Meta app's setup turns it on.
         if (full && finished && uuid.isNotEmpty() && ASSISTANT_ENABLED !in stored) {
             say("Meta AI was never turned on on these glasses; turning it on")
@@ -310,7 +296,100 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         }
     }
 
+    /**
+     * Folds [objects] (namespace to objects) into the stores, takes [seen] as the versions now known and settles the
+     * writes the result answers, [more] adding to the state. Under [reads]. Returns the settings as they now stand.
+     */
+    private fun merge(
+        objects: Map<String, List<DriveObject>>,
+        seen: Map<String, Versions>,
+        full: Boolean,
+        more: (SettingsState) -> SettingsState,
+    ): Map<String, String> {
+        val stores = byNamespace.toMutableMap()
+        for ((namespace, list) in objects) {
+            val before = if (full) emptyMap() else stores[namespace].orEmpty()
+            stores[namespace] = before.toMutableMap().apply {
+                for (o in list) {
+                    raw[o.uri] = namespace to o.raw
+                    if (o.type != TYPE_KV) continue
+                    if (o.deleted) remove(o.uri) else put(o.uri, o.data)
+                }
+            }
+        }
+        byNamespace = stores
+        versions = versions + seen
+        val stored = stores.values.fold(emptyMap<String, String>()) { acc, m -> acc + m }
+
+        val now = System.currentTimeMillis()
+        val pending = _state.value.pending
+        val settled = pending.filter { (key, want) -> same(catalogue[key]?.kind, stored[key] ?: catalogue[key]?.default, want) }
+        val kept = pending.keys.filter { it !in settled && now - (writtenAt[it] ?: now) > SETTLE_MILLIS }
+        settled.forEach { (key, want) -> say("$key is now $want") }
+        kept.forEach { key -> say("The glasses kept $key at ${stored[key] ?: catalogue[key]?.default}") }
+        // An svc31 write the settings service took and did not apply goes once more straight into the store.
+        val retry = kept.filter { key -> catalogue[key]?.viaDrive == false && retried.add(key) }.associateWith { pending.getValue(it) }
+        _state.update {
+            more(it.copy(stored = stored, pending = it.pending - settled.keys - kept.toSet(), kept = it.kept + kept))
+        }
+        retry.forEach { (key, want) -> scope.launch { writeDrive(key, want) } }
+        return stored
+    }
+
+    private fun tracked(namespace: String): Boolean {
+        val uuid = connection.state.value.info?.deviceUuid.orEmpty()
+        return namespace in DEVICE_NAMESPACES ||
+            (uuid.isNotEmpty() && SCOPED_NAMESPACES.any { namespace == "$uuid@$it" })
+    }
+
+    /** Round 0 of a sync the Display started: claim what Visor last saw, so round 2 brings what changed since. */
+    private suspend fun answerPeer(round0: SyncReply, link: DataXConnection) {
+        val namespace = round0.namespace
+        if (!tracked(namespace)) {
+            if (unanswered.add(namespace)) say("Left the glasses' sync of $namespace unanswered")
+            return
+        }
+        peers[round0.requestId] = PeerSync(namespace, round0.usecaseTag, round0.versions.keys, System.currentTimeMillis())
+        val seen = versions[namespace].orEmpty()
+        // Never their own vector: equal versions leave nothing to send. Never above it either.
+        val claim = round0.versions.mapValues { (type, theirs) ->
+            seen[type].orEmpty().mapNotNull { (writer, n) -> theirs[writer]?.let { writer to minOf(n, it) } }.toMap() +
+                (LOCAL_WRITER to (theirs[LOCAL_WRITER] ?: 0L))
+        }
+        val round1 = buildSync(namespace, round0.requestId, 1, claim, round0.versions.keys, usecaseTag = round0.usecaseTag)
+        chunks(round1).forEach { link.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, it) }
+        say("Answered the glasses' sync of $namespace")
+    }
+
+    /** Round 2 carries the objects newer than the claim: round 3 ends the sync, the merge redraws the screens. */
+    private suspend fun finishPeer(peer: PeerSync, round2: SyncReply, link: DataXConnection) {
+        if (!round2.terminated) {
+            val types = round2.versions.keys.ifEmpty { peer.types }
+            val round3 = buildSync(peer.namespace, round2.requestId, 3, round2.versions, types, terminated = true, usecaseTag = peer.tag)
+            chunks(round3).forEach { link.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, it) }
+        }
+        scope.launch { reads.withLock { mergePeer(peer.namespace, round2) } }
+    }
+
+    private fun mergePeer(namespace: String, round2: SyncReply) {
+        // Round 2 names only this sync's types; the others stay as last seen.
+        val seen = mapOf(namespace to versions[namespace].orEmpty() + round2.versions)
+        val before = _state.value.stored
+        val now = System.currentTimeMillis()
+        val stored = merge(mapOf(namespace to round2.objects), seen, full = false) { it.copy(readAt = now) }
+        for (key in round2.objects.filter { it.type == TYPE_KV }.map { it.uri }.distinct()) {
+            if (stored[key] != before[key]) say("Glasses changed $key = ${stored[key] ?: catalogue[key]?.default}")
+        }
+    }
+
     private suspend fun onReply(reply: SyncReply, link: DataXConnection) {
+        // The Display starts syncs of its own after a change on it; Visor answers them as the responder.
+        if (isDisplayBuild(connection.state.value.info?.build)) {
+            val now = System.currentTimeMillis()
+            peers.values.removeIf { now - it.at > PEER_MILLIS }
+            if (reply.round == 0L && sync?.waiting?.containsKey(reply.requestId) != true) return answerPeer(reply, link)
+            if (reply.round == 2L) peers.remove(reply.requestId)?.let { return finishPeer(it, reply, link) }
+        }
         val s = sync ?: return
         val namespace = s.waiting[reply.requestId] ?: return
         if (reply.round == 1L) {
@@ -340,6 +419,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         private const val SETTLE_MILLIS = 3_000L
         private const val ASSISTANT_ENABLED = "assistant_enabled"
         private const val TWO_STAGE_EIS = "two_stage_eis"
+        private const val PEER_MILLIS = 30_000L
 
         // Ray-Ban Meta Optics, Meta glasses, Oakley Meta Vanguard and HSTN, Ray-Ban Meta Gen 2; not Gen 1 or the Display.
         private val TWO_STAGE_EIS_PRODUCTS = setOf(262, 263, 264, 265, 266)

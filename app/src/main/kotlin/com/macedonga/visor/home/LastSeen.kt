@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.macedonga.visor.core.settings.productId
 import org.json.JSONObject
 
 /** The glasses' batteries as last read, for when they are out of reach. */
@@ -47,6 +48,8 @@ data class PairSeen(
     val name: String? = null,
     // Named here while away: the glasses take the name when they are next connected.
     val nameToSend: Boolean = false,
+    // The model, from the build the glasses last gave: what the app shows for this pair while it is away.
+    val product: Int? = null,
 ) {
     val battery: LastBattery? get() = glasses?.let { LastBattery(it, case, at) }
     val posture: LastPosture get() = LastPosture(folded, inCase)
@@ -78,6 +81,9 @@ class LastSeen @Inject constructor(
     val posture: StateFlow<LastPosture> =
         current.map { it?.posture ?: LastPosture(false, false) }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, LastPosture(false, false))
 
+    /** The selected pair's model, connected or not; null until it has once said. */
+    val product: StateFlow<Int?> = current.map { it?.product }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
+
     init {
         // The pair Visor is for has its readings from the start, the old shared ones included.
         scope.launch { connection.pair.filterNotNull().collect { serial -> if (serial !in _seen.value) update(serial) { it } } }
@@ -108,6 +114,7 @@ class LastSeen @Inject constructor(
     /** Keep what [state] says about its pair: the connection's own, or a quick look at another pair. */
     fun record(state: GlassesState) {
         val target = state.target ?: return
+        productId(state.info?.build)?.let { id -> if (_seen.value[target.serial]?.product != id) update(target.serial) { it.copy(product = id) } }
         val device = state.device ?: return
         update(target.serial) { was ->
             val battery = device.battery
@@ -203,6 +210,7 @@ class LastSeen @Inject constructor(
         s.temperatureC?.let { put("temperature", it) }
         s.name?.let { put("name", it) }
         if (s.nameToSend) put("name_to_send", true)
+        s.product?.let { put("product", it) }
     }.toString()
 
     private fun decode(text: String): PairSeen? = runCatching {
@@ -219,6 +227,7 @@ class LastSeen @Inject constructor(
             temperatureC = o.optDouble("temperature").takeIf { !it.isNaN() },
             name = o.optString("name").takeIf { it.isNotEmpty() },
             nameToSend = o.optBoolean("name_to_send"),
+            product = o.optInt("product", -1).takeIf { it >= 0 },
         )
     }.getOrNull()
 

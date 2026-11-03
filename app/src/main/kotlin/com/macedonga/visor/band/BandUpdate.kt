@@ -4,11 +4,12 @@ import com.macedonga.visor.core.identity.token.withToken
 import android.content.Context
 import android.util.Base64
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.identity.firmware.BandOffer
+import com.macedonga.visor.core.identity.firmware.FirmwareOffer
 import com.macedonga.visor.core.identity.firmware.fetchBandKek
-import com.macedonga.visor.core.identity.firmware.fetchBandOffer
+import com.macedonga.visor.core.identity.firmware.fetchFirmwareOffer
 import com.macedonga.visor.core.identity.token.Token
 import com.macedonga.visor.core.protocol.Band
+import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.login.MetaLogin
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
@@ -71,8 +73,8 @@ class BandUpdate @Inject constructor(
     private val _checked = MutableStateFlow(false)
     /** Meta answered for the band's current build, offer or none. */
     val checked: StateFlow<Boolean> = _checked.asStateFlow()
-    private val _offer = MutableStateFlow<BandOffer?>(null)
-    val offer: StateFlow<BandOffer?> = _offer.asStateFlow()
+    private val _offer = MutableStateFlow<FirmwareOffer?>(null)
+    val offer: StateFlow<FirmwareOffer?> = _offer.asStateFlow()
     private val _work = MutableStateFlow<BandWork>(BandWork.Idle)
     val work: StateFlow<BandWork> = _work.asStateFlow()
     private val transfers = AtomicInteger(1)
@@ -94,9 +96,19 @@ class BandUpdate @Inject constructor(
             _work.value = BandWork.Checking
             try {
                 val serial = serial()
+                val display = connection.state.value.info ?: error("connect the glasses once, so they say which they are")
+                // Meta/greatwhite/greatwhite:14/UKQ1.250303.001/69951180085500080:user/release-keys
+                val parts = display.build.split('/')
+                val build = parts.getOrNull(4)?.substringBefore(':').orEmpty()
+                val displayType = "ota.${parts.getOrNull(1).orEmpty()}.${parts.getOrNull(4)?.substringAfter(':', "user").orEmpty()}"
                 val firmware = link.holdFor { withSession { deviceInfo().firmware } }
-                // The Meta app never sends a version below 1.
-                val found = login.source.withToken { fetchBandOffer(it, serial, firmware.coerceAtLeast(1).toString()) }
+                // The Meta app never sends a version below 1, and names the Display the band goes with.
+                val found = login.source.withToken {
+                    fetchFirmwareOffer(
+                        it, serial, BAND_DEVICE_TYPE, firmware.coerceAtLeast(1).toString(), fullOnly = false,
+                        constellationType = displayType, constellationFirmware = build, constellationSerial = display.serial,
+                    )
+                }?.takeUnless { it.targetVersion == firmware.toString() }
                 _offer.value = found
                 _checked.value = true
                 _work.value = BandWork.Idle
@@ -149,20 +161,22 @@ class BandUpdate @Inject constructor(
 
     private fun serial(): String = bands.forGlasses(connection.pair.value)?.serial ?: error("no band is set up with these glasses")
 
-    private suspend fun installOn(offer: BandOffer, serial: String, token: Token, blobs: List<Blob>) = withSession {
+    private suspend fun installOn(offer: FirmwareOffer, serial: String, token: Token, blobs: List<Blob>) = withSession {
         val target = offer.targetVersion.toLongOrNull() ?: error("the offer's version is not a number")
         var begun = false
-        try {
+        val committed = try {
             if (battery() < MIN_BATTERY) error("the band's battery is below $MIN_BATTERY%")
             var info = deviceInfo()
-            if (info.unavailable != Band.OTA_NO_REASON) error("the band cannot update now (reason ${info.unavailable})")
-            if (info.state == Band.OTA_IN_PROGRESS) {
+            // An update under way, or one received for another build, is aborted; one received for the target goes on.
+            if (info.state == Band.OTA_IN_PROGRESS || (info.state == Band.OTA_UPDATE_READY && info.latest != target)) {
                 fire(Band.otaAbort(link.nextSeq()))
                 delay(ABORT_MS)
                 info = deviceInfo()
                 if (info.state == Band.OTA_IN_PROGRESS) error("the band is still in an update")
             }
-            if (info.state == Band.OTA_UNAVAILABLE) error("the band is not ready for an update")
+            if (info.state == Band.OTA_UNAVAILABLE) error(unavailable(info))
+            // Recovery firmware takes an image whatever its version.
+            val skipCheck = info.device == Band.OTA_DEVICE_RECOVERY
 
             val items = ArrayList<Item>()
             if (info.firmware != target) {
@@ -174,6 +188,7 @@ class BandUpdate @Inject constructor(
             }
             if (items.isEmpty()) {
                 log.add("Band firmware: already on $target")
+                false
             } else {
                 offer.kekId?.takeIf { it != info.kek }?.let { kekId ->
                     val wrapped = fetchBandKek(token, serial, kekId)
@@ -187,20 +202,43 @@ class BandUpdate @Inject constructor(
                 for (item in items) {
                     begun = true
                     val size = item.blob.bytes.size.toLong()
-                    expectOk(call { Band.otaStartItem(it, item.type, target, size) }, "the update")
-                    transfer(item.blob) { n ->
-                        val now = done.addAndGet(n.toLong())
-                        _work.value = BandWork.Installing((now * 100 / total).toInt())
+                    expectOk(call { Band.otaStartItem(it, item.type, target, size, skipCheck) }, "the update")
+                    try {
+                        transfer(item.blob) { n ->
+                            val now = done.addAndGet(n.toLong())
+                            _work.value = BandWork.Installing((now * 100 / total).toInt())
+                        }
+                    } catch (failure: Exception) {
+                        // A band that stops taking the file may be low on power: its device info says so.
+                        if (failure !is kotlinx.coroutines.CancellationException) {
+                            val now = runCatching { deviceInfo() }.getOrNull()
+                            if (now != null && now.state == Band.OTA_UNAVAILABLE && now.unavailable == Band.OTA_POWER_LIMITATION) error(unavailable(now))
+                        }
+                        throw failure
                     }
                     expectOk(call(VERIFY_MS) { Band.otaVerifyItem(it, item.type, target) }, "the image")
                 }
                 expectOk(call(VERIFY_MS) { Band.otaCommit(it) }, "the commit")
+                true
             }
         } catch (error: Throwable) {
             if (begun) fire(Band.otaAbort(link.nextSeq()))
             throw error
         }
+        if (committed) confirm(target)
     }
+
+    /** After the commit the band restarts: wait for it to come back, then check it runs [target]. */
+    private suspend fun Session.confirm(target: Long) {
+        log.add("Band firmware: waiting for the band to restart")
+        withTimeoutOrNull(RESTART_MS) { link.state.first { it.link != LinkState.READY } }
+        withTimeoutOrNull(BACK_MS) { link.state.first { it.link == LinkState.READY } } ?: error("the band did not come back after its restart")
+        val now = deviceInfo().firmware
+        if (now != target) error("the band runs $now, not $target")
+    }
+
+    private fun unavailable(info: Band.OtaInfo): String =
+        if (info.unavailable == Band.OTA_POWER_LIMITATION) "the band's battery is too low" else "the band cannot update now (reason ${info.unavailable})"
 
     /** One image over the bulk transfer: the info request, then 950-byte chunks in the band's window. */
     private suspend fun Session.transfer(blob: Blob, sent: (Int) -> Unit) {
@@ -310,7 +348,7 @@ class BandUpdate @Inject constructor(
         if (code != Band.OTA_RESULT_OK) error("the band refused $what (code $code)")
     }
 
-    private suspend fun download(offer: BandOffer, file: File) = withContext(Dispatchers.IO) {
+    private suspend fun download(offer: FirmwareOffer, file: File) = withContext(Dispatchers.IO) {
         val c = URL(offer.url).openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 30_000
@@ -349,6 +387,7 @@ class BandUpdate @Inject constructor(
     private class Item(val type: Int, val blob: Blob)
 
     private companion object {
+        const val BAND_DEVICE_TYPE = "ota.ceres.user"
         const val MANIFEST_FIRMWARE = 1
         const val MANIFEST_ML = 2
         const val MIN_BATTERY = 10
@@ -360,5 +399,7 @@ class BandUpdate @Inject constructor(
         const val REPLY_MS = 5_000L
         const val VERIFY_MS = 60_000L
         const val ABORT_MS = 2_000L
+        const val RESTART_MS = 30_000L
+        const val BACK_MS = 180_000L
     }
 }

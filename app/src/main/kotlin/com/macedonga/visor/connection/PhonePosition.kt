@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.os.Looper
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -18,39 +19,66 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The phone's position for navigation and place search, from the provider [LocationShare] uses. Updates run only
- * while guidance does; otherwise the system's last known fix answers.
+ * The phone's position for navigation, place search and the Display's Maps, from the provider [LocationShare] uses.
+ * Updates run only while guidance or Maps does; otherwise the system's last known fix answers.
  */
 @Singleton
 class PhonePosition @Inject constructor(@ApplicationContext private val context: Context) {
     private val manager = context.getSystemService(LocationManager::class.java)
-    private val listener = LocationListener { last = it }
+    private val followers = CopyOnWriteArrayList<(Location) -> Unit>()
+    private val listener = LocationListener { fix ->
+        last = fix
+        followers.forEach { it(fix) }
+    }
 
     @Volatile
     private var last: Location? = null
     private var users = 0
 
+    // Off while a user holds on without the permission; the next user, once it is granted, asks.
+    @Volatile
+    private var requesting = false
+
     /** Asks for updates while guidance runs. Each call is paired with [release]. */
     @Synchronized
     @SuppressLint("MissingPermission")
     fun use() {
-        if (users++ == 0 && manager != null && granted()) {
+        users++
+        if (!requesting && manager != null && granted()) {
             manager.requestLocationUpdates(provider(manager), INTERVAL_MS, 0f, listener, Looper.getMainLooper())
+            requesting = true
         }
     }
 
     @Synchronized
     fun release() {
-        if (users > 0 && --users == 0) manager?.removeUpdates(listener)
+        if (users > 0 && --users == 0 && requesting) {
+            manager?.removeUpdates(listener)
+            requesting = false
+            last = null
+        }
+    }
+
+    /** [use], with every new fix handed to [follower] until [unfollow]. */
+    fun follow(follower: (Location) -> Unit) {
+        followers += follower
+        use()
+    }
+
+    fun unfollow(follower: (Location) -> Unit) {
+        if (followers.remove(follower)) release()
     }
 
     /** The latest fix while updates run, else the system's last known one. Null without the permission. */
     @SuppressLint("MissingPermission")
-    fun current(): LatLng? {
+    fun fix(): Location? {
         if (manager == null || !granted()) return null
-        val fix = if (users > 0) last else null
-        return (fix ?: manager.getLastKnownLocation(provider(manager)))?.let { LatLng(it.latitude, it.longitude) }
+        val latest = if (requesting) last else null
+        return latest ?: manager.getLastKnownLocation(provider(manager))
     }
+
+    /** [fix], as a point. */
+    fun current(): LatLng? = fix()?.let { LatLng(it.latitude, it.longitude) }
 
     /** A fix taken now, for when none is known yet; null without one in [timeoutMs]. */
     @SuppressLint("MissingPermission")

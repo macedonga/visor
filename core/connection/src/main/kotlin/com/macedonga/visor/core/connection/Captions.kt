@@ -23,13 +23,17 @@ enum class CaptionsMode { CAPTIONS, TRANSLATION }
 /** One speech turn as the glasses last sent it: [text] to read, [source] what was said when it is a translation. [time] is when it arrived. */
 data class CaptionLine(val id: String, val text: String, val source: String?, val done: Boolean, val time: Long)
 
-/** [refusal] is the app manager's code when the glasses would not start it. [earlier] is the turns of the session before. */
+/**
+ * [refusal] is the app manager's code when the glasses would not start it. [earlier] is the turns of the session before.
+ * [session] names this session's turns, by when it began.
+ */
 data class CaptionsState(
     val phase: CaptionsPhase = CaptionsPhase.IDLE,
     val mode: CaptionsMode = CaptionsMode.CAPTIONS,
     val refusal: Long? = null,
     val lines: List<CaptionLine> = emptyList(),
     val earlier: List<CaptionLine> = emptyList(),
+    val session: Long = System.currentTimeMillis(),
 )
 
 /**

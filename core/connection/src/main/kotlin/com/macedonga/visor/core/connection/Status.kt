@@ -12,6 +12,12 @@ const val MT_DEVICE_STATE: Int = 2005
 
 const val SUBSCRIPTION_DEVICE_STATE: Long = 1
 
+/** Every svc28 type the Display knows. Any other non-zero type kills its system process (an NPE in the svc28 parser). */
+val DISPLAY_STATUS_TYPES: Set<Int> = (
+    listOf(0, 1000, 1001, 2100, 2101, 2300, 2301, 2600, 2601, 2603, 2700, 2800, 2801) +
+        (2000..2045) + (2050..2052) + (2200..2207) + (2400..2402) + (2500..2503) + (2900..2903) + (3000..3002)
+    ).toSet()
+
 /** Every svc28 type that carries a DeviceState. 2005 is the snapshot; the rest name one field. */
 val DEVICE_STATE_TYPES: Map<Int, String> = mapOf(
     2005 to "device_state", 2006 to "device_state_update", 2007 to "battery",
@@ -474,12 +480,17 @@ suspend fun subscribeToDeviceStatus(connection: DataXConnection) {
 }
 
 /**
- * Subscribe on [channel], or on a new one when null, and return it. Every new channel is a subscription of its
- * own and gets every push again; asking again on the same one only brings a fresh snapshot.
+ * Subscribe on [channel], or on a new one when null or no longer open for svc28, and return it. Every new channel is a
+ * subscription of its own and gets every push again; asking again on the same one only brings a fresh snapshot.
  */
 suspend fun subscribeOn(connection: DataXConnection, channel: Int?): Int {
     val (payload, _) = buildSubscribe()
-    val on = channel ?: connection.openChannel(SVC_STATUS)
+    // Only a channel's first frame carries the service tag.
+    if (channel != null && connection.localService(channel) == SVC_STATUS) {
+        connection.send(channel, payload, messageType = MT_INIT)
+        return channel
+    }
+    val on = connection.openChannel(SVC_STATUS)
     connection.send(on, payload, messageType = MT_INIT, serviceId = SVC_STATUS)
     return on
 }

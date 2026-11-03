@@ -114,9 +114,16 @@ class PlaceSearch @Inject constructor(
         val found = if (here == null) {
             search(query, null, bounded = false)
         } else {
-            // A name farther than the radius is still found, the nearest first.
-            val box = box(here, radius)
-            search(query, box, bounded = true).ifEmpty { search(query, box, bounded = false) }.sortedBy { haversine(here, it.at) }
+            // Nominatim ranks by importance, not distance: a wide box gives the city's best known, so the box grows only
+            // until the list is full. A name farther than the radius is still found, the nearest first.
+            val near = LinkedHashMap<String, Place>()
+            for (r in NEAR_M.filter { it < radius } + radius) {
+                search(query, box(here, r), bounded = true).forEach { near.putIfAbsent(it.id, it) }
+                if (near.size >= MAX_RESULTS) break
+            }
+            near.values.ifEmpty { search(query, box(here, radius), bounded = false) }
+                .sortedBy { haversine(here, it.at) }
+                .take(MAX_RESULTS)
         }
         synchronized(cache) { cache[key] = Cached(now, found) }
         return found
@@ -219,6 +226,7 @@ class PlaceSearch @Inject constructor(
         private const val DEFAULT_RADIUS_M = 1_500.0
         private const val MIN_RADIUS_M = 300.0
         private const val MAX_RADIUS_M = 20_000.0
+        private val NEAR_M = listOf(1_000.0, 4_000.0)
         private const val METRES_PER_DEGREE = 111_320.0
         private const val MIN_COS = 0.01
         private const val MAX_RESULTS = 10

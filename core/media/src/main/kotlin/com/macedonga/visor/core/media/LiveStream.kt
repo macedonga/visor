@@ -6,8 +6,8 @@ import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
-import com.macedonga.visor.core.connection.MT_PEER_APP_INFO
 import com.macedonga.visor.core.connection.MT_PEER_DEVICE_INFO
+import com.macedonga.visor.core.connection.MT_PEER_GET_INFO
 import com.macedonga.visor.core.connection.SVC_PEER_BUILD_INFO
 import com.macedonga.visor.core.connection.SessionHost
 import com.macedonga.visor.core.connection.SessionHostFactory
@@ -932,7 +932,7 @@ class LiveStream(
         val since = System.currentTimeMillis()
         var told = false
         while (wifi === host) {
-            host.submit { it.sendOnService(SVC_PEER_BUILD_INFO, MT_PEER_APP_INFO, ByteArray(0)) }
+            host.submit { it.sendOnService(SVC_PEER_BUILD_INFO, MT_PEER_GET_INFO, ByteArray(0)) }
             delay(2_000)
             val answered = keepaliveAnsweredAt
             val now = System.currentTimeMillis()

@@ -87,6 +87,14 @@ dependencies {
     implementation(libs.filament.android)
     implementation(libs.gltfio.android)
 
+    // The Android build is the .aar; the module's main artifact is the desktop jar.
+    implementation(libs.zstd.jni) {
+        artifact {
+            type = "aar"
+            extension = "aar"
+        }
+    }
+
     implementation(libs.hilt.android)
     implementation(libs.androidx.hilt.navigation.compose)
     ksp(libs.hilt.compiler)

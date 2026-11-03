@@ -69,6 +69,7 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     { NavRow(VisorIcons.Flag, stringResource(R.string.settings_flags), stringResource(R.string.settings_flags_sub), onClick = { open(FlagsKey) }, onCard = true) },
                     { NavRow(VisorIcons.Pulse, stringResource(R.string.settings_diagnostics), stringResource(R.string.settings_diagnostics_sub), onClick = { open(DeviceKey) }, onCard = true) },
                     { NavRow(VisorIcons.Lines, stringResource(R.string.settings_event_log), stringResource(R.string.settings_event_log_sub), onClick = { open(EventLogKey) }, onCard = true) },
+                    if (display && classicBondOffered) ({ ClassicBondRows() }) else null,
                     { ToggleRow(stringResource(R.string.settings_developer), developer, { model.developer.set(it) }, sub = stringResource(R.string.settings_developer_sub)) },
                     if (developer) ({ TokenRow(model.developer) }) else null,
                     if (developer) ({ ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) }) else null,

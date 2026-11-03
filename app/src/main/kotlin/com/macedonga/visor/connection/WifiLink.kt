@@ -15,6 +15,8 @@ import com.macedonga.visor.core.media.MT_JOIN_ACCESS_POINT_RESULT
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.PhoneGroup
 import com.macedonga.visor.core.media.SVC_ATC
+import com.macedonga.visor.core.media.Screencast
+import com.macedonga.visor.core.media.ScreencastPhase
 import com.macedonga.visor.core.media.WifiUnavailable
 import com.macedonga.visor.core.media.joinAccessPoint
 import com.macedonga.visor.core.media.parseJoinResult
@@ -54,6 +56,7 @@ class WifiLink @Inject constructor(
     private val networks: GlassesWifi,
     private val live: Provider<LiveStream>,
     private val media: Provider<MediaImport>,
+    private val mirror: Provider<Screencast>,
     private val log: Provider<EventLog>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> say("failed: $e") })
@@ -68,6 +71,8 @@ class WifiLink @Inject constructor(
         connection.state.value.link != LinkState.READY -> "the glasses are not connected"
         live.get().running.value -> "the Live view is using Wi-Fi"
         media.get().importing.value -> "a media import is using Wi-Fi"
+        // Mirror runs its own Wi-Fi Direct session, which a lease's move would end.
+        mirror.get().state.value.phase.let { it == ScreencastPhase.STARTING || it == ScreencastPhase.LIVE } -> "the mirror is using Wi-Fi"
         else -> null
     }
 

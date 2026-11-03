@@ -53,6 +53,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
@@ -294,20 +301,70 @@ fun OtherPairPill(mood: Mood, seen: PairSeen?, peeking: Boolean, onConnect: (() 
     }
 }
 
-/** Which of the pairs the stage shows: one dot each, the shown one drawn out. */
+/** Which page the stage shows: a dot per pair, the shown one drawn out, then a plus for another pair. A tap goes there. */
 @Composable
-fun PairDots(count: Int, index: Int, modifier: Modifier = Modifier) {
+fun PairPager(names: List<String>, index: Int, onGo: (Int) -> Unit, modifier: Modifier = Modifier) {
     val colors = Visor.colors
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        repeat(count) { i ->
+    val add = stringResource(R.string.glasses_set_up_new)
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        repeat(names.size + 1) { i ->
             val on by animateFloatAsState(if (i == index) 1f else 0f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "dot")
+            val tint = lerp(colors.control, colors.textPrimary, on)
+            val label = names.getOrNull(i) ?: add
             Box(
                 Modifier
-                    .size(width = (5 + 9 * on).dp, height = 5.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(lerp(colors.control, colors.textPrimary, on)),
-            )
+                    .clickable(onClickLabel = label) { onGo(i) }
+                    .semantics {
+                        contentDescription = label
+                        selected = i == index
+                    }
+                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (i < names.size) {
+                    Box(Modifier.size(width = (5 + 9 * on).dp, height = 5.dp).clip(RoundedCornerShape(50)).background(tint))
+                } else {
+                    // Drawn rather than an icon: at this size the icon's strokes go thin.
+                    Canvas(Modifier.size(9.dp)) {
+                        val w = 1.6.dp.toPx()
+                        val r = CornerRadius(w / 2)
+                        drawRoundRect(tint, Offset(0f, (size.height - w) / 2), Size(size.width, w), r)
+                        drawRoundRect(tint, Offset((size.width - w) / 2, 0f), Size(w, size.height), r)
+                    }
+                }
+            }
         }
+    }
+}
+
+/** The shown pair's name, with a pencil that says a tap renames it. */
+@Composable
+fun PairName(name: String, onRename: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = Visor.colors
+    Row(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClickLabel = stringResource(R.string.glasses_name), onClick = onRename)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(name, style = Visor.type.label, color = colors.textSecondary)
+        Icon(VisorIcons.Edit, null, Modifier.padding(start = 6.dp).size(12.dp), tint = colors.textTertiary)
+    }
+}
+
+/** The page after the last pair: what it is for, and the way in. */
+@Composable
+fun AddPairPage(onSetUp: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = Visor.colors
+    Column(modifier.padding(horizontal = 40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(stringResource(R.string.home_add_title), style = Visor.type.heading, color = colors.textPrimary, textAlign = TextAlign.Center)
+        Text(
+            stringResource(R.string.home_add_body), style = Visor.type.label, color = colors.textSecondary, textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp, bottom = 18.dp),
+        )
+        Pill(stringResource(R.string.glasses_set_up_new), onSetUp)
     }
 }
 

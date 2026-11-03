@@ -27,10 +27,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.navigation3.runtime.NavKey
-import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.OnboardingKey
-import com.macedonga.visor.WebAppsKey
-import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.connection.LinkKind
@@ -231,8 +228,6 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                             }
                         }
                     }.toTypedArray(),
-                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) }, locked = !ready) } else null,
-                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) }, locked = !ready) } else null,
                 )
             }
         }
@@ -251,7 +246,6 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         }
                     },
                     { ValueRow(stringResource(R.string.glasses_change_owner), null, onClick = { open(OnboardingKey(login = true, address = (glasses.target?.link as? GlassesLink.Bluetooth)?.address)) }, sub = stringResource(R.string.glasses_change_owner_sub)) },
-                    if (hasDisplay(info?.build)) row { ValueRow(stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) }, locked = !ready) } else null,
                 )
             }
         }
@@ -300,6 +294,8 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                 is FirmwareWork.Failed -> stringResource(R.string.firmware_failed, w.reason)
                 FirmwareWork.Installed -> stringResource(R.string.firmware_installed)
                 is FirmwareWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
+                is FirmwareWork.Downloading -> stringResource(R.string.finish_accounts_fw_downloading, w.done / 1_000_000, w.total / 1_000_000)
+                is FirmwareWork.Sending -> stringResource(R.string.finish_accounts_fw_sending, w.done / 1_000_000, w.total / 1_000_000)
                 FirmwareWork.Idle -> when {
                     fwChecking -> stringResource(R.string.firmware_checking)
                     fwProblem.isNotEmpty() -> fwProblem
@@ -310,8 +306,10 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
             Column(Modifier.padding(horizontal = SIDE, vertical = 16.dp)) {
                 if (status != null) Footnote(status)
                 val offer = fwOffer
-                val installing = fwWork is FirmwareWork.Installing
-                if (confirmingFirmware && offer != null) {
+                val installing = fwWork is FirmwareWork.Installing || fwWork is FirmwareWork.Downloading || fwWork is FirmwareWork.Sending
+                if (installing) {
+                    Row(Modifier.padding(top = 16.dp)) { ActionPill(stringResource(R.string.language_cancel), { model.firmware.cancel() }, quiet = true) }
+                } else if (confirmingFirmware && offer != null) {
                     Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         ActionPill(stringResource(R.string.firmware_install), { confirmingFirmware = false; model.firmware.install() })
                         ActionPill(stringResource(R.string.language_cancel), { confirmingFirmware = false }, quiet = true)

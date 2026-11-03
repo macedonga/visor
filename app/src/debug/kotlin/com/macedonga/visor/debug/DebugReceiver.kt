@@ -70,6 +70,8 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var texts: com.macedonga.visor.connection.PhoneMessages
     @Inject lateinit var wifiLink: com.macedonga.visor.connection.WifiLink
     @Inject lateinit var hearing: com.macedonga.visor.core.assistant.Hearing
+    @Inject lateinit var bandPair: com.macedonga.visor.band.BandPair
+    @Inject lateinit var classicBond: com.macedonga.visor.connection.ClassicBond
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -370,13 +372,19 @@ class DebugReceiver : BroadcastReceiver() {
             // --ei svc --ei type --es hex: one message on a service; the answer is what the glasses said within 5 s.
             "SEND" -> answerLater {
                 val svc = intent.getIntExtra("svc", 0)
+                // A svc28 type the Display does not know kills its system process; a model not known yet may be one.
+                val display = connection.state.value.info.let { it == null || com.macedonga.visor.core.connection.isDisplayBuild(it.build) }
+                val type = intent.getIntExtra("type", 0)
+                if (svc == com.macedonga.visor.core.connection.SVC_STATUS && display && type !in com.macedonga.visor.core.connection.DISPLAY_STATUS_TYPES) {
+                    return@answerLater "refused: the Display has no svc28 type $type"
+                }
                 val body = intent.getStringExtra("hex").orEmpty().chunked(2).filter { it.length == 2 }.map { it.toInt(16).toByte() }.toByteArray()
                 val heard = java.util.Collections.synchronizedList(mutableListOf<String>())
                 val watch = scope.launch {
                     launch { connection.serviceData.collect { if (it.serviceId == svc) heard += "type ${it.messageType}: " + it.payload.joinToString("") { b -> "%02x".format(b) } } }
                     launch { connection.warnings.collect { if (it.contains("service $svc ")) heard += it } }
                 }
-                connection.submit { it.sendOnService(svc, intent.getIntExtra("type", 0), body) }
+                connection.submit { it.sendOnService(svc, type, body) }
                 kotlinx.coroutines.delay(5_000)
                 watch.cancel()
                 heard.joinToString("\n").ifEmpty { "nothing" }
@@ -447,6 +455,22 @@ class DebugReceiver : BroadcastReceiver() {
                 }
                 captions.state.value.let { s -> "${s.phase} ${s.mode} refusal=${s.refusal}\n" + s.lines.joinToString("\n") { "${if (it.done) "" else "… "}${it.text}${it.source?.let { src -> " ($src)" }.orEmpty()}" } }
             }
+            // The Neural Band paired with the Display over svc41109, set up here first when it has no record. It outlasts a
+            // broadcast, so it answers at once; BAND_PAIR_STATUS says how it ended.
+            "BAND_PAIR" -> {
+                bandPair.start()
+                resultData = "started; BAND_PAIR_STATUS for how it ended, LOG for the steps"
+            }
+            "BAND_PAIR_STATUS" -> resultData = bandPair.status.value.toString()
+            // A Display's classic bond for calls: CLASSIC_PROBE only reads. CLASSIC_REBOND and CLASSIC_UNDO unpair the glasses
+            // and pair them again, so they need --ez confirm true; they answer at once and log each step (LOG).
+            "CLASSIC_PROBE" -> answerLater { classicBond.perform(com.macedonga.visor.connection.ClassicBond.Action.PROBE).toString() }
+            "CLASSIC_REBOND", "CLASSIC_UNDO" -> resultData = if (!intent.getBooleanExtra("confirm", false)) {
+                "this unpairs the glasses and pairs them again: add --ez confirm true"
+            } else {
+                classicBond.start(if (action == "CLASSIC_REBOND") com.macedonga.visor.connection.ClassicBond.Action.REBOND else com.macedonga.visor.connection.ClassicBond.Action.UNDO)
+                "started; LOG for the steps"
+            }
             "PHONE" -> answerLater {
                 when (intent.getStringExtra("do")) {
                     "directions" -> phone.directions(intent.getStringExtra("to").orEmpty(), intent.getStringExtra("mode").orEmpty()).toString()
@@ -456,6 +480,19 @@ class DebugReceiver : BroadcastReceiver() {
                 }
             }
             "ASK" -> answerLater { withTimeoutOrNull(25_000) { assistant.ask(intent.getStringExtra("q") ?: "Say hello.") } ?: "no answer in 25 s" }
+            // --es q: a question typed for the Display, as the Meta AI page asks it; the answer is its turn's, the log says who gave it.
+            "ASK_DISPLAY" -> answerLater {
+                val id = assistant.askOnDisplay(intent.getStringExtra("q") ?: "What is the tallest mountain?")
+                    ?: return@answerLater "not sent: not a Display, or its assistant is not registered"
+                withTimeoutOrNull(25_000) {
+                    var turn = assistant.diary.turn(id)
+                    while (turn != null && turn.answer.isEmpty() && turn.problem.isEmpty()) {
+                        kotlinx.coroutines.delay(250)
+                        turn = assistant.diary.turn(id)
+                    }
+                    turn?.let { it.answer.ifEmpty { it.problem } }
+                } ?: "no answer in 25 s"
+            }
             "MCP_PROBE" -> answerLater {
                 val auth = com.macedonga.visor.core.assistant.mcp.AuthKind.valueOf(intent.getStringExtra("auth") ?: "NONE")
                 mcp.probe(intent.getStringExtra("url").orEmpty(), auth, intent.getStringExtra("secret").orEmpty(), intent.getStringExtra("header").orEmpty()).toString()

@@ -25,6 +25,9 @@ fun interface SessionCommand {
 /** Runs for every message of one service, before the message is published. */
 fun interface Responder {
     suspend fun respond(message: DataXMessage, connection: DataXConnection)
+
+    /** The peer closed [channelId], a channel of this service. A close frame names no service, so it reaches only this. */
+    suspend fun closed(channelId: Int, connection: DataXConnection) {}
 }
 
 /** The bounded wait this session owns ran out. See [GlassesSession.withLinkDeadline]. */
@@ -278,18 +281,11 @@ class GlassesSession(
 
         val responder = responders[serviceId]
         if (responder != null && !info.flags.hasError) {
-            try {
-                responder.respond(message, mux)
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Throwable) {
-                publish(
-                    ProtocolError(
-                        "responder for service $serviceId failed: ${error.message}",
-                        message.payload,
-                    ),
-                )
-            }
+            guarded(serviceId, message.payload) { responder.respond(message, mux) }
+        }
+        val closing = responders[message.closedService]
+        if (closing != null && info.flags.isClosed && !info.flags.hasError) {
+            guarded(message.closedService, message.payload) { closing.closed(info.channelId, mux) }
         }
 
         if (info.flags.hasError) {
@@ -302,12 +298,24 @@ class GlassesSession(
                             .format(java.util.Locale.ROOT, serviceId, info.errorId, info.channelId),
                     ),
                 )
+                publish(DataXError(serviceId, info.channelId, info.errorId))
             }
             return
         }
         // An empty close frame only ends a channel, and the registry has already forgotten whose it was.
         if (info.flags.isClosed && message.payload.isEmpty()) return
         publish(ServiceData(serviceId, info.messageType, message.payload))
+    }
+
+    /** A responder that fails is reported; the link goes on. */
+    private suspend fun guarded(serviceId: Int, payload: ByteArray, work: suspend () -> Unit) {
+        try {
+            work()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            publish(ProtocolError("responder for service $serviceId failed: ${error.message}", payload))
+        }
     }
 
     /** Run [body] with a bound on how long it may wait for the peer. */

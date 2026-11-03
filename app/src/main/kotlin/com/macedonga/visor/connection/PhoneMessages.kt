@@ -17,6 +17,7 @@ import android.telephony.SmsManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import com.macedonga.visor.R
+import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -24,6 +25,7 @@ import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.notify.RecentChats
 import com.macedonga.visor.notify.TextReplies
+import com.macedonga.visor.settings.hasDisplay
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.ByteBuffer
 import java.util.Locale
@@ -51,6 +53,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * Google Messages files RCS chats as MMS marked restricted, which Android shows only to the default SMS app. Those chats
  * come from what the SMS app's notifications showed ([RecentChats], this process only), listed and answered alongside.
+ * The Display's WhatsApp sends its own requests as an RPC envelope; they get the answers of a phone without WhatsApp.
  */
 @Singleton
 class PhoneMessages @Inject constructor(
@@ -62,6 +65,7 @@ class PhoneMessages @Inject constructor(
     private val control: PhoneCallControl,
     private val recent: RecentChats,
     private val linkPrompt: LinkPrompt,
+    private val glasses: Provider<GlassesConnection>,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Messages: failed: $e") })
 
@@ -75,6 +79,10 @@ class PhoneMessages @Inject constructor(
         // The Phone app's recent calls, asked once per provider, each waiting for its answer.
         if (type == MT_LOAD_CALL_LOG) return calls.loadCallLog(request, reply, connection)
         if (type == LinkPrompt.MT_TRIGGER) return linkPrompt.trigger(request, reply, connection)
+        // The RPC envelope's field 1 is a request id string; the texts' requests carry a provider number there.
+        if (type in RPC_TYPES && request.bytes(1).isNotEmpty() && hasDisplay(glasses.get().state.value.info?.build)) {
+            return nativeRpc(request, type, reply, connection)
+        }
         if (type !in SERVED) return log.get().add("Messages: type $type not served")
         // The phone's texts, and replies to a chat notification (Messenger, WhatsApp, Instagram) through its reply action.
         val provider = request.varint(1)
@@ -88,6 +96,25 @@ class PhoneMessages @Inject constructor(
             }
         }
     }
+
+    /** RPCRequest {1 id, 2 kind, 3 payload}: kind 28 gets a no-preference migration answer, any other API_ERRORED_OUT. */
+    private suspend fun nativeRpc(request: Wire.Fields, type: Int, reply: Int, mux: DataXConnection) {
+        val id = request.bytes(1)
+        val kind = request.varint(2)
+        if (type != MT_LOAD_THREADS || kind != RPC_MIGRATION_INTENT) {
+            mux.send(reply, Wire.fieldBytes(1, id) + Wire.fieldVarint(3, ERROR_API_ERRORED_OUT), messageType = type)
+            return log.get().add("Messages: WhatsApp request $kind refused, no WhatsApp on this phone")
+        }
+        // TetheredMigrationIntentRequest {1 id, 2 serial, 3 protocol, 4 capabilities}.
+        val intent = Wire.parse(request.bytes(3))
+        val answer = Wire.fieldBytes(1, intent.bytes(1)) + Wire.fieldBytes(2, intent.bytes(2)) + Wire.fieldBytes(3, epoch) +
+            Wire.fieldVarint(6, MIGRATION_PROTOCOL) + Wire.fieldVarint(7, intent.varint(4) and CAPABILITIES)
+        mux.send(reply, Wire.fieldBytes(1, id) + Wire.fieldVarint(2, 1) + Wire.fieldBytes(4, answer), messageType = type)
+        log.get().add("Messages: WhatsApp transport query answered (no preference)")
+    }
+
+    // The controller epoch: any non-empty id; with transport 0 the Display does not keep it.
+    private val epoch: ByteArray by lazy { UUID.randomUUID().toString().encodeToByteArray() }
 
     /** LoadThreadsRequest {2 request id, 3 count, 5 chunked}: the newest conversations, SMS, MMS and RCS alike. */
     private suspend fun threads(request: Wire.Fields, reply: Int, mux: DataXConnection) {
@@ -385,6 +412,12 @@ class PhoneMessages @Inject constructor(
         private const val MT_LOAD_CALL_LOG = 11
         private const val MT_CHUNK = 32
         private val SERVED = setOf(MT_LOAD_THREADS, MT_LOAD_MESSAGES, MT_OUTGOING)
+        // The types the Meta app reads WhatsApp's RPC envelope on.
+        private val RPC_TYPES = setOf(1, 2, 8, 16, 44, 50, 52)
+        private const val RPC_MIGRATION_INTENT = 28L
+        private const val ERROR_API_ERRORED_OUT = 12L
+        private const val MIGRATION_PROTOCOL = 1L
+        private const val CAPABILITIES = 15L
         private const val NATIVE = 3L
         private val CHAT = setOf(1L, 2L, 4L)
         private const val DEFAULT_THREADS = 10

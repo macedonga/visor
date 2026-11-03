@@ -7,6 +7,7 @@ import com.macedonga.visor.core.identity.token.TokenError
 import com.macedonga.visor.core.identity.token.exchangeAccountToken
 import com.macedonga.visor.core.identity.token.LinkedAccountRef
 import com.macedonga.visor.core.identity.token.fetchLinkedAccounts
+import com.macedonga.visor.core.identity.token.fetchLinkedMetadata
 import com.macedonga.visor.core.identity.token.fetchLinkedTokens
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.ServiceData
@@ -26,14 +27,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** What a link attempt came to, for the Accounts page to say. */
-enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED, NOT_LINKED }
+enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED, NOT_LINKED, NEEDS_INTERNET }
 
 /**
- * svc89, wearables_whatsapp_linking: the Meta account and WhatsApp linking the Meta app runs with the Display. Visor
- * opens the channel. 25 asks whether a Meta account is present (answered by 26). 5 is the Meta account sync, with the
- * user's token minted for the glasses' accounts app (answered by 13, after an ack 17 Visor does not wait for). 6 is a
- * linked provider account, Facebook or Instagram, with its tokens (answered by 14, after an ack 18). 22 is the WhatsApp
- * QR pairing: the glasses show a code for WhatsApp's Linked devices and answer 23 when it is scanned.
+ * svc89, wearables_whatsapp_linking: the Meta account linking the Meta app runs with the Display. Visor opens the
+ * channel. 25 asks whether a Meta account is present (answered by 26). 5 is the Meta account sync, with the user's token
+ * minted for the glasses' accounts app (answered by 13, after an ack 17 Visor does not wait for). 6 is a linked provider
+ * account, Facebook (which Messenger rides on), Instagram or Threads, with its tokens and ids (answered by 14, after an
+ * ack 18). WhatsApp's own linking is not here: the phone's WhatsApp takes it only from an app signed with Meta's key.
  */
 @Singleton
 class AccountLinking @Inject constructor(
@@ -95,14 +96,21 @@ class AccountLinking @Inject constructor(
         }
     }
 
-    /** Sends a provider account of the Meta account, with its tokens, to the glasses. */
+    /** Sends a provider account to the glasses: with its ids they set it up from the tokens, without them they look it up. */
     suspend fun syncLinked(type: LinkedAccountType): LinkOutcome {
         if (!login.source.hasCachedLogin) return LinkOutcome.LOGGED_OUT
         val found = try {
             withContext(Dispatchers.IO) {
                 val accountsToken = login.source.withToken { exchangeAccountToken(it) }.accessToken
                 val account = fetchLinkedAccounts(accountsToken).firstOrNull { it.type == type } ?: return@withContext null
-                account to (fetchLinkedTokens(accountsToken, account, login.deviceId) ?: return@withContext null)
+                val tokens = fetchLinkedTokens(accountsToken, account, login.deviceId) ?: return@withContext null
+                val metadata = try {
+                    fetchLinkedMetadata(type, tokens)
+                } catch (error: TokenError) {
+                    log.add("Accounts: no ${type.name.lowercase()} ids: ${error.message}")
+                    null
+                }
+                Triple(account, tokens, metadata)
             }
         } catch (error: TokenError) {
             log.add("Accounts: ${error.message}")
@@ -112,40 +120,28 @@ class AccountLinking @Inject constructor(
             log.add("Accounts: ${type.name.lowercase()} is not linked to this Meta account")
             return LinkOutcome.NOT_LINKED
         }
-        val (account, tokens) = found
-        val credentials = Wire.fieldBytes(1, str(tokens.accessToken)) +
-            (tokens.firstPartyToken?.let { Wire.fieldBytes(2, str(it)) } ?: ByteArray(0))
+        val (account, tokens, metadata) = found
+        val credentials = metadata?.let {
+            Wire.fieldBytes(1, str(tokens.accessToken)) +
+                (tokens.firstPartyToken?.let { t -> Wire.fieldBytes(2, str(t)) } ?: ByteArray(0)) +
+                Wire.fieldBytes(3, str(it))
+        }
         val request = Wire.fieldBytes(1, str(uuid())) +
             Wire.fieldVarint(2, type.wire.toLong()) +
             Wire.fieldBytes(4, str(account.obfuscatedId)) +
             Wire.fieldVarint(5, flag(true)) +
-            Wire.fieldBytes(6, str(uuid())) +
-            Wire.fieldBytes(7, credentials)
-        val f = ask(MT_LINKED_SYNC_REQUEST, MT_LINKED_SYNC_RESPONSE, request, ANSWER_MS)
+            (credentials?.let { Wire.fieldBytes(7, it) } ?: ByteArray(0))
+        if (credentials == null) log.add("Accounts: sending ${type.name.lowercase()} without its ids; the glasses look it up")
+        val f = ask(MT_LINKED_SYNC_REQUEST, MT_LINKED_SYNC_RESPONSE, request, LINKED_MS)
         if (f == null) {
             log.add("Accounts: the glasses did not answer the ${type.name.lowercase()} account")
             return LinkOutcome.NO_ANSWER
         }
         if (f.varint(2) != 1L) {
             log.add("Accounts: the glasses refused the ${type.name.lowercase()} account, code ${f.varint(3)}")
-            return LinkOutcome.REFUSED
+            return if (f.varint(3) == CODE_NO_INTERNET) LinkOutcome.NEEDS_INTERNET else LinkOutcome.REFUSED
         }
         log.add("Accounts: ${type.name.lowercase()} account sent to the glasses")
-        return LinkOutcome.LINKED
-    }
-
-    /** Has the glasses show their WhatsApp code; the answer comes once it is scanned from WhatsApp's Linked devices. */
-    suspend fun linkWhatsApp(): LinkOutcome {
-        val f = ask(MT_QR_PAIRING_REQUEST, MT_QR_PAIRING_RESPONSE, Wire.fieldBytes(1, str(uuid())), SCAN_MS)
-        if (f == null) {
-            log.add("Accounts: no WhatsApp pairing answer from the glasses")
-            return LinkOutcome.NO_ANSWER
-        }
-        if (f.varint(2) != 1L) {
-            log.add("Accounts: the glasses did not pair WhatsApp, code ${f.varint(3)}")
-            return LinkOutcome.REFUSED
-        }
-        log.add("Accounts: WhatsApp paired on the glasses")
         return LinkOutcome.LINKED
     }
 
@@ -176,11 +172,14 @@ class AccountLinking @Inject constructor(
     companion object {
         const val SVC = 89
 
-        // The phone's default for its account and WhatsApp waits.
+        // The phone's default for its account waits.
         private const val ANSWER_MS = 20_000L
 
-        // Until the code is scanned; the glasses refresh it while it waits.
-        private const val SCAN_MS = 180_000L
+        // Past the glasses' own 32 s deadline for a provider account, so their answer is heard.
+        private const val LINKED_MS = 35_000L
+
+        // LinkedAccountSyncResponse's error when the glasses could not reach the internet.
+        private const val CODE_NO_INTERNET = 101L
 
         // The Meta app's source constant for the account sync.
         private const val SOURCE = "306760944872162"
@@ -189,8 +188,6 @@ class AccountLinking @Inject constructor(
         private const val MT_META_SYNC_RESPONSE = 13
         private const val MT_PRESENT_REQUEST = 25
         private const val MT_PRESENT_RESPONSE = 26
-        private const val MT_QR_PAIRING_REQUEST = 22
-        private const val MT_QR_PAIRING_RESPONSE = 23
         private const val MT_LINKED_SYNC_REQUEST = 6
         private const val MT_LINKED_SYNC_RESPONSE = 14
     }

@@ -53,7 +53,7 @@ class BandSetup @Inject constructor(
         data class Failed(val reason: Reason, val detail: String = "") : Status
     }
 
-    enum class Reason { NO_GLASSES, NOT_PAIRED, NO_ANSWER, WRONG_OWNER, FAILED }
+    enum class Reason { NO_GLASSES, NOT_PAIRED, NO_ANSWER, REFUSED, WRONG_OWNER, FAILED }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _status = MutableStateFlow<Status>(Status.Idle)
@@ -89,7 +89,15 @@ class BandSetup @Inject constructor(
                 log.add("Band setup: owner changed. Serial ${result.serial}, device key from $from")
                 _status.value = Status.Done(result.serial)
             } catch (failed: BondFailed) {
-                fail(if (failed.why == BondFailed.Why.NO_ANSWER) Reason.NO_ANSWER else Reason.FAILED, failed.why.name)
+                fail(
+                    when (failed.why) {
+                        BondFailed.Why.NO_ANSWER -> Reason.NO_ANSWER
+                        // The band takes a new phone only while it is in pairing mode, on its charger.
+                        BondFailed.Why.REFUSED -> Reason.REFUSED
+                        else -> Reason.FAILED
+                    },
+                    failed.why.name,
+                )
             } catch (error: Exception) {
                 val wrong = error is WrongOwnerError
                 fail(if (wrong) Reason.WRONG_OWNER else Reason.FAILED, error.message ?: error.javaClass.simpleName)

@@ -11,7 +11,12 @@ import android.os.Build
 import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
@@ -249,6 +254,7 @@ fun HomeScreen(
     val pictures by model.looks.pictures.collectAsStateWithLifecycle()
     val peeking by model.pairs.peeking.collectAsStateWithLifecycle()
     val current by model.connection.pair.collectAsStateWithLifecycle()
+    val selectedProduct by model.lastSeen.product.collectAsStateWithLifecycle()
     // The page shown: a pair's serial, null for the pair Visor is for, or ADD_PAGE after the last pair.
     var page by remember { mutableStateOf<String?>(null) }
     val adding = page == ADD_PAGE && pairs.isNotEmpty()
@@ -520,9 +526,8 @@ fun HomeScreen(
                     Spacer(Modifier.height(FOOT))
                 }
             }
-            // The Display's tools, for a Display: known by its build while connected, by its band while away.
-            val bandsHere = model.bands.all.value
-            if (!elsewhere && (com.macedonga.visor.settings.hasDisplay(state.info?.build) || bandsHere.any { it.glasses == current })) {
+            // The Display's tools, for a Display: known by its build while connected, by what it last said while away.
+            if (!elsewhere && (com.macedonga.visor.settings.hasDisplay(state.info?.build) || com.macedonga.visor.settings.isDisplayProduct(selectedProduct))) {
                 item(key = "display") { com.macedonga.visor.display.DisplayShelf(onDisplayTool, Modifier.padding(top = 4.dp, bottom = 8.dp).appear(entrance, 4)) }
             }
             item(key = "places") { Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5), forThisPair = !elsewhere) }
@@ -552,45 +557,54 @@ fun HomeScreen(
                 Greeting(firstName, Modifier)
                 // Which pair this is; a tap names it.
                 if (shown != null) {
-                    Text(
-                        pairName(shownSeen, looks[shown.serial]),
-                        style = Visor.type.label,
-                        color = Visor.colors.textSecondary,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable { renaming = shown.serial }
-                            .padding(vertical = 4.dp),
-                    )
+                    PairName(pairName(shownSeen, looks[shown.serial]), { renaming = shown.serial }, Modifier.padding(top = 2.dp))
                 }
             }
             Column(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = if (pairs.size > 1) 12.dp else 26.dp).then(fade).appear(entrance, 0),
+                Modifier.align(Alignment.BottomCenter).padding(bottom = if (pairs.isNotEmpty()) 8.dp else 26.dp).then(fade).appear(entrance, 0),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (adding) {
-                    Pill(stringResource(R.string.glasses_set_up_new), onSetUp)
-                } else if (other && shown != null) {
-                    OtherPairPill(
-                        mood, shownSeen, peeking = peeking == shown.serial,
-                        onConnect = if (live || importing) null else ({
-                            haptics.toggle()
-                            model.pairs.connect(shown.serial)
-                        }),
-                        modifier = Modifier,
-                    )
-                } else {
-                    val band by model.band.state.collectAsStateWithLifecycle()
-                    val bands by model.bands.all.collectAsStateWithLifecycle()
-                    val ours = band.takeIf { b -> b.battery != null && bands.any { it.serial == b.serial && it.glasses == current } }
-                    StatusPill(
-                        state, mood, lastBattery, paired, allowed, transferring, importProgress, waiting = if (importing) 0 else fresh.size, onImport = onImport,
-                        onAllow = { ask.launch(wanted()) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner, modifier = Modifier,
-                        band = state.device?.bandBattery ?: ours?.battery,
-                        bandCharging = state.device?.bandCharging ?: (ours?.charging == true),
-                    )
+                // Paging, the old page's capsule gives way to the new one from the side the swipe came from.
+                AnimatedContent(
+                    targetState = if (adding) ADD_PAGE else shown?.serial,
+                    transitionSpec = {
+                        val order = { key: String? -> if (key == ADD_PAGE) pairs.size else pairs.indexOfFirst { it.serial == key } }
+                        val step = if (order(targetState) >= order(initialState)) 1 else -1
+                        (fadeIn(tween(260, delayMillis = 60)) + slideInHorizontally(tween(340, easing = PAGE_EASE)) { step * it / 4 })
+                            .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(220, easing = PAGE_EASE)) { -step * it / 4 })
+                            .using(SizeTransform(clip = false))
+                    },
+                    contentAlignment = Alignment.BottomCenter,
+                    label = "pair page",
+                ) { key ->
+                    val pair = pairs.firstOrNull { it.serial == key }
+                    when {
+                        key == ADD_PAGE && pairs.isNotEmpty() -> AddPairPage(onSetUp)
+                        pair != null && current != null && pair.serial != current -> OtherPairPill(
+                            if (pair.serial == shown?.serial) mood else Mood.FAR, seen[pair.serial], peeking = peeking == pair.serial,
+                            onConnect = if (live || importing) null else ({
+                                haptics.toggle()
+                                model.pairs.connect(pair.serial)
+                            }),
+                            modifier = Modifier,
+                        )
+                        else -> {
+                            val band by model.band.state.collectAsStateWithLifecycle()
+                            val bands by model.bands.all.collectAsStateWithLifecycle()
+                            val ours = band.takeIf { b -> b.battery != null && bands.any { it.serial == b.serial && it.glasses == current } }
+                            StatusPill(
+                                state, mood, lastBattery, paired, allowed, transferring, importProgress, waiting = if (importing) 0 else fresh.size, onImport = onImport,
+                                onAllow = { ask.launch(wanted()) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner, modifier = Modifier,
+                                band = state.device?.bandBattery ?: ours?.battery,
+                                bandCharging = state.device?.bandCharging ?: (ours?.charging == true),
+                            )
+                        }
+                    }
                 }
-                if (pairs.isNotEmpty()) PairDots(pairs.size + 1, shownIndex, Modifier.padding(top = 12.dp))
+                if (pairs.isNotEmpty()) {
+                    val names = pairs.map { pairName(seen[it.serial], looks[it.serial]) }
+                    PairPager(names, shownIndex, onGo = { i -> page = pairs.getOrNull(i)?.serial ?: ADD_PAGE }, Modifier.padding(top = 4.dp))
+                }
             }
             renaming?.let { serial ->
                 TextSheet(
@@ -665,4 +679,5 @@ private const val REFRESH_MS = 60_000L
 
 /** The home's page after the last pair, for setting up another. */
 private const val ADD_PAGE = "+"
+private val PAGE_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private const val STAR_DELAY_MS = 4_000L

@@ -39,6 +39,7 @@ class Navigation @Inject constructor(
     private val position: PhonePosition,
     private val router: OsrmRouter,
     private val requests: RequestLog,
+    private val maps: Provider<MapsConstellation>,
     private val log: Provider<EventLog>,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> log.get().add("Navigation: failed: $e") })
@@ -135,6 +136,8 @@ class Navigation @Inject constructor(
     private suspend fun tick(s: Session): Boolean {
         if (!s.guiding) return false
         val route = s.route ?: return false
+        // The Display's Maps guides from svc11004 then; this one stays quiet so turns are not told twice.
+        if (maps.get().guiding) return true
         val here = position.current()
         if (here == null) {
             sendUpdate(s, route, STATE_IN_PROGRESS, NAVIGATOR_BAD_GPS, max(s.notified, 0))

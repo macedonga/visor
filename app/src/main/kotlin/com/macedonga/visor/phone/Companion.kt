@@ -1,5 +1,6 @@
 package com.macedonga.visor.phone
 
+import android.annotation.SuppressLint
 import android.companion.AssociationRequest
 import android.companion.BluetoothDeviceFilter
 import android.companion.CompanionDeviceManager
@@ -8,6 +9,7 @@ import android.content.Context
 import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.annotation.RequiresApi
 import com.macedonga.visor.log.EventLog
 
 /**
@@ -70,5 +72,26 @@ fun observeCompanions(context: Context, log: EventLog) {
         }
     }.onFailure { log.add("Companion presence not observed: ${it.message}") }
 }
+
+/** Visor's association with the device at [address], by its id, or null. */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+fun companionId(context: Context, address: String): Int? = runCatching {
+    context.getSystemService(CompanionDeviceManager::class.java)?.myAssociations
+        ?.firstOrNull { it.deviceMacAddress?.toString().equals(address, ignoreCase = true) }?.id
+}.getOrNull()
+
+/** Has Android remove the phone's bond with the device of association [id]; the device's own removeBond is a system API. */
+@RequiresApi(Build.VERSION_CODES.BAKLAVA)
+@SuppressLint("MissingPermission")
+fun removeCompanionBond(context: Context, id: Int, failed: (Throwable) -> Unit = {}): Boolean = runCatching {
+    context.getSystemService(CompanionDeviceManager::class.java)?.removeBond(id) == true
+}.onFailure(failed).getOrDefault(false)
+
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+fun disassociateCompanion(context: Context, id: Int): Boolean = runCatching {
+    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return false
+    cdm.disassociate(id)
+    true
+}.getOrDefault(false)
 
 private const val ASKED = "asked"

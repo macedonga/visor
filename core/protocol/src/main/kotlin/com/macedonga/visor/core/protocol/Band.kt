@@ -57,20 +57,25 @@ object Band {
     fun gestureAck(seq: Int, gesture: Int): ByteArray =
         request(seq, 11, Wire.fieldVarint(1, gesture.toLong()) + Wire.fieldVarint(2, SOURCE_MWA_ANDROID) + Wire.fieldVarint(3, TOPOLOGY_DIRECT))
 
-    /** RpcRequest {1: seq, 17: HapticsReq {1: VibrateReq {1 duration, 2 frequency, 3 amplitude}}}; the units are not known. */
-    fun vibrate(seq: Int, duration: Long, frequency: Float, amplitude: Int): ByteArray =
-        request(seq, 17, Wire.fieldBytes(1, Wire.fieldVarint(1, duration) + Wire.fieldFloat(2, frequency) + Wire.fieldVarint(3, amplitude.toLong())))
+    /** RpcRequest {1: seq, 17: HapticsReq {1: VibrateReq {1 duration in ms, 3 amplitude 0-255}}}, as the Display sends it: no frequency (2). */
+    fun vibrate(seq: Int, millis: Long, amplitude: Int): ByteArray =
+        request(seq, 17, Wire.fieldBytes(1, Wire.fieldVarint(1, millis) + Wire.fieldVarint(3, amplitude.toLong())))
 
     /** RpcRequest {1: seq, 17: HapticsReq {3: StopReq {}}}. */
     fun stopHaptics(seq: Int): ByteArray = request(seq, 17, Wire.fieldBytes(3, ByteArray(0)))
 
     // The firmware update: Ota on RpcRequest 7 (answers in RpcResponse 8), the bulk file transfer on 9 (answers in 10).
     const val OTA_ITEM_FIRMWARE = 0
+    // The build the band has received and holds ready, not yet running.
+    const val OTA_ITEM_LATEST_FIRMWARE = 1
     const val OTA_ITEM_ML_MODEL = 2
     const val OTA_UNAVAILABLE = 0
-    // otaUnavailableReason when nothing stands in the way.
-    const val OTA_NO_REASON = 0
     const val OTA_IN_PROGRESS = 2
+    const val OTA_UPDATE_READY = 3
+    // otaUnavailableReason: the battery is too low.
+    const val OTA_POWER_LIMITATION = 3
+    // deviceState: the band runs its recovery firmware.
+    const val OTA_DEVICE_RECOVERY = 2
     const val OTA_RESULT_OK = 0
     const val TRANSFER_OTA = 1
     const val TRANSFER_NEW = 1
@@ -78,8 +83,11 @@ object Band {
     const val TRANSFER_FULL = 3
     const val CHUNK_BYTES = 950
 
-    /** The band's OTA device info: the firmware and ML versions by item, the KEK id, the OTA state and why it is unavailable. */
-    class OtaInfo(val firmware: Long, val ml: Long, val kek: Long, val state: Int, val unavailable: Int)
+    /**
+     * The band's OTA device info: the running, received and ML versions by item, the KEK id, the device state, the OTA
+     * state and why it is unavailable.
+     */
+    class OtaInfo(val firmware: Long, val latest: Long, val ml: Long, val kek: Long, val device: Int, val state: Int, val unavailable: Int)
 
     /** BulkDataTransferResp: the info answer, a chunk's ack or a nack. */
     sealed interface Bulk {
@@ -91,9 +99,13 @@ object Band {
     /** RpcRequest {1: seq, 7: OtaReq {1: DeviceInfoRequest {}}}. */
     fun otaDeviceInfo(seq: Int): ByteArray = ota(seq, 1, ByteArray(0))
 
-    /** OtaReq {2: StartItemUpdateRequest {1: ItemInfo, 2: size, 4: kekVersion}}; the version check (3) is left as the band has it. */
-    fun otaStartItem(seq: Int, itemType: Int, version: Long, size: Long): ByteArray =
-        ota(seq, 2, Wire.fieldBytes(1, itemInfo(itemType, version)) + Wire.fieldVarint(2, size) + Wire.fieldVarint(4, 0))
+    /** OtaReq {2: StartItemUpdateRequest {1: ItemInfo, 2: size, 3: skipVersionCheck, 4: kekVersion}}. */
+    fun otaStartItem(seq: Int, itemType: Int, version: Long, size: Long, skipVersionCheck: Boolean = false): ByteArray =
+        ota(
+            seq, 2,
+            Wire.fieldBytes(1, itemInfo(itemType, version)) + Wire.fieldVarint(2, size) +
+                (if (skipVersionCheck) Wire.fieldVarint(3, 1) else ByteArray(0)) + Wire.fieldVarint(4, 0),
+        )
 
     /** OtaReq {3: VerifyItemUpdateRequest {1: ItemInfo}}. */
     fun otaVerifyItem(seq: Int, itemType: Int, version: Long): ByteArray = ota(seq, 3, Wire.fieldBytes(1, itemInfo(itemType, version)))
@@ -130,8 +142,10 @@ object Band {
         val items = info.repeatedBytes(5).map { Wire.parse(it) }.associate { it.varint(1).toInt() to it.varint(2) }
         return OtaInfo(
             firmware = items[OTA_ITEM_FIRMWARE] ?: 0,
+            latest = items[OTA_ITEM_LATEST_FIRMWARE] ?: 0,
             ml = items[OTA_ITEM_ML_MODEL] ?: 0,
             kek = info.varint(6),
+            device = info.varint(3).toInt(),
             state = info.varint(4).toInt(),
             unavailable = info.varint(7).toInt(),
         )

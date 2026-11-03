@@ -36,8 +36,20 @@ object Dir {
     const val ARRIVE_RIGHT = 14
 }
 
-/** One maneuver. [metres] and [seconds] are the leg that leads into it; [along] is where it starts, in metres. */
-class Step(val direction: Int, val street: String, val metres: Int, val seconds: Int, val along: Double, val text: String)
+/**
+ * One maneuver. [metres] and [seconds] are the leg that leads into it; [along] is where it starts, in metres, and
+ * [index] the point of the line it starts at. [action] is [text] without the street.
+ */
+class Step(
+    val direction: Int,
+    val street: String,
+    val metres: Int,
+    val seconds: Int,
+    val along: Double,
+    val text: String,
+    val action: String,
+    val index: Int,
+)
 
 /** A snapped point on the line: where it is, the index of its segment, and metres from the start. */
 class Snap(val at: LatLng, val index: Int, val along: Double, val off: Double)
@@ -112,22 +124,43 @@ class OsrmRouter @Inject constructor() {
         if (json.optString("code") != "Ok") throw IOException(json.optString("code", "no route"))
         val r = json.getJSONArray("routes").getJSONObject(0)
         val steps = r.getJSONArray("legs").getJSONObject(0).getJSONArray("steps")
+        val encoded = r.getString("geometry")
+        val line = decodePolyline(encoded)
         val out = ArrayList<Step>()
         var along = 0.0
         var legMetres = 0.0
         var legSeconds = 0.0
+        var index = 0
         for (i in 0 until steps.length()) {
             val s = steps.getJSONObject(i)
             val m = s.getJSONObject("maneuver")
             val name = s.optString("name")
             val dir = direction(m.optString("type"), m.optString("modifier"))
-            out += Step(dir, name, legMetres.roundToInt(), legSeconds.roundToInt(), along, words(dir, name))
+            val at = m.optJSONArray("location")
+            if (at != null) index = nearest(line, LatLng(at.getDouble(1), at.getDouble(0)), index, legMetres)
+            out += Step(dir, name, legMetres.roundToInt(), legSeconds.roundToInt(), along, words(dir, name), words(dir, ""), index)
             legMetres = s.getDouble("distance")
             legSeconds = s.getDouble("duration")
             along += legMetres
         }
-        val encoded = r.getString("geometry")
-        return Route(encoded, decodePolyline(encoded), out, r.getDouble("distance"), r.getDouble("duration"))
+        return Route(encoded, line, out, r.getDouble("distance"), r.getDouble("duration"))
+    }
+
+    // The point of [line] nearest [p], from [from] over about [metres] of line, so a route that comes back is not matched early.
+    private fun nearest(line: List<LatLng>, p: LatLng, from: Int, metres: Double): Int {
+        var best = from
+        var bestOff = Double.MAX_VALUE
+        var walked = 0.0
+        for (j in from until line.size) {
+            if (j > from) walked += haversine(line[j - 1], line[j])
+            if (walked > metres * 1.1 + 50) break
+            val off = haversine(line[j], p)
+            if (off < bestOff) {
+                bestOff = off
+                best = j
+            }
+        }
+        return best
     }
 
     private fun direction(type: String, modifier: String): Int {
@@ -214,6 +247,30 @@ fun decodePolyline(s: String): List<LatLng> {
         out += LatLng(lat / 1e5, lng / 1e5)
     }
     return out
+}
+
+/** Google's encoded polyline at [precision], 1e5 or 1e6. */
+fun encodePolyline(points: List<LatLng>, precision: Double): String {
+    val out = StringBuilder()
+    var lastLat = 0L
+    var lastLng = 0L
+    fun put(delta: Long) {
+        var v = if (delta < 0) (delta shl 1).inv() else delta shl 1
+        while (v >= 0x20) {
+            out.append(((0x20 or (v and 0x1f).toInt()) + 63).toChar())
+            v = v ushr 5
+        }
+        out.append((v.toInt() + 63).toChar())
+    }
+    for (p in points) {
+        val lat = Math.round(p.lat * precision)
+        val lng = Math.round(p.lng * precision)
+        put(lat - lastLat)
+        put(lng - lastLng)
+        lastLat = lat
+        lastLng = lng
+    }
+    return out.toString()
 }
 
 fun haversine(a: LatLng, b: LatLng): Double {

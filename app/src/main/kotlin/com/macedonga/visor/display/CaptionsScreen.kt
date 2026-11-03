@@ -104,6 +104,7 @@ class CaptionsModel @Inject constructor(
     val captions: Captions,
     val connection: GlassesConnection,
     val packs: CaptionPacks,
+    val transcripts: CaptionTranscripts,
 ) : ViewModel() {
     /** Keep [choice]; while the glasses caption, they stop and start again with it. */
     fun choose(choice: CaptionsChoice) {
@@ -133,7 +134,9 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
     val haptics = rememberHaptics()
     val context = LocalContext.current
     val list = rememberLazyListState()
-    val transcript = state.earlier + state.lines
+    val saved by model.transcripts.saved.collectAsStateWithLifecycle()
+    // This session and the one before, which after a restart comes from the phone's files.
+    val transcript = (saved.lastOrNull { it.session != state.session }?.lines ?: state.earlier) + state.lines
     val last = state.lines.lastOrNull()
     // Follow the newest turn, unless the transcript was scrolled back to read.
     LaunchedEffect(state.lines.size, last?.text) {

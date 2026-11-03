@@ -3,6 +3,7 @@ package com.macedonga.visor.core.session
 import com.macedonga.visor.core.protocol.Header
 import com.macedonga.visor.core.protocol.MessageInfo
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -16,8 +17,11 @@ interface PlaintextLink {
     suspend fun receive(): ByteArray
 }
 
-/** One decoded DataX message: its header and its application payload. */
-class DataXMessage(val info: MessageInfo, val payload: ByteArray)
+/** One decoded DataX message: its header and its application payload. On a close, [closedService] is the channel's service. */
+class DataXMessage(val info: MessageInfo, val payload: ByteArray, val closedService: Int = 0)
+
+/** A send on a channel this connection has not opened, or under another service's tag. Nothing went out. */
+class ChannelRefused(message: String) : IllegalStateException(message)
 
 /** The channel mux riding on one [PlaintextLink]. */
 class DataXConnection(
@@ -42,6 +46,9 @@ class DataXConnection(
 
     @Volatile
     private var reader: Job? = null
+
+    // Completed when the reader stops: the link under this connection has gone.
+    private val gone = CompletableDeferred<Unit>()
 
     // RX messageType delta-decode cache.
     private val rxLastType = HashMap<Int, Int>()
@@ -71,11 +78,16 @@ class DataXConnection(
                 throw cancellation
             } catch (error: Throwable) {
                 fromReader.close(error)
+            } finally {
+                gone.complete(Unit)
             }
         }
         reader = job
         return job
     }
+
+    /** Returns once the link under this connection has gone. Sends fail from then on. */
+    suspend fun awaitGone() = gone.await()
 
     /** Allocate a local channel id for [serviceId] and bind it in the registry. */
     fun openChannel(serviceId: Int): Int {
@@ -84,30 +96,54 @@ class DataXConnection(
         return channelId
     }
 
-    /** Send one DataX message on [channelId]. */
+    /** The service of [channelId], a channel this connection opened, or 0 when it is not open. */
+    fun localService(channelId: Int): Int = registry.localService(channelId)
+
+    /** Send one DataX message on [channelId]. One with the originator bit must be open here, for [serviceId] if given, or [ChannelRefused]. */
     suspend fun send(
         channelId: Int,
         payload: ByteArray,
         messageType: Int? = null,
         serviceId: Int? = null,
     ) {
+        val opened = (channelId and 0x8000) != 0
+        val bound = if (opened) registry.localService(channelId) else 0
+        if (opened && (bound == 0 || (serviceId != null && serviceId != bound))) {
+            val why = "refused a send on channel 0x%04x: tag %s, open for %d".format(channelId, serviceId ?: "none", bound)
+            trace?.invoke("TX %08x %s".format(System.identityHashCode(this), why))
+            throw ChannelRefused(why)
+        }
         val header = Header.build(
             channelId = channelId,
             dataLen = payload.size,
             serviceId = serviceId,
             messageType = messageType,
         )
-        link.send(header + payload)
+        write(header + payload)
+        val t = trace ?: return
+        val service = serviceId ?: if (opened) bound else registry.serviceForInbound(channelId or 0x8000)
+        if (service in TRACED_SENDS) t(sentLine(channelId, service, messageType, serviceId, payload))
+    }
+
+    private fun sentLine(channelId: Int, service: Int, messageType: Int?, tag: Int?, payload: ByteArray): String =
+        "TX %08x ch=0x%04x svc=%d tag=%s mt=%s payload=%d".format(
+            System.identityHashCode(this), channelId, service, tag ?: "-", messageType?.let { "0x%04x".format(it) } ?: "-", payload.size,
+        ) + (if (payload.size <= TRACE_PAYLOAD) " data=" + payload.joinToString("") { "%02x".format(it) } else "")
+
+    // The transport under a gone link may already be open again for the next one, under other keys.
+    private suspend fun write(plaintext: ByteArray) {
+        check(!gone.isCompleted) { "the link under this connection has gone" }
+        link.send(plaintext)
     }
 
     // This connection's one channel per service. The glasses answer on every open channel of a
     // service, so a channel per request multiplied every reply.
     private val serviceChannels = HashMap<Int, Int>()
 
-    /** Send on this connection's one channel for [serviceId], opening it the first time. */
+    /** Send on this connection's one channel for [serviceId], opening it the first time and again after the glasses close it. */
     suspend fun sendOnService(serviceId: Int, messageType: Int, payload: ByteArray) {
         val known = synchronized(serviceChannels) { serviceChannels[serviceId] }
-        if (known != null) {
+        if (known != null && registry.localService(known) == serviceId) {
             send(known, payload, messageType = messageType)
             return
         }
@@ -118,7 +154,7 @@ class DataXConnection(
 
     /** Send a bare DataX status frame: an error id tag, zero payload, on [channelId]. */
     suspend fun sendStatus(channelId: Int, errorId: Int) {
-        link.send(Header.build(channelId, 0, errorId = errorId))
+        write(Header.build(channelId, 0, errorId = errorId))
     }
 
     /** The next DataX message, decrypting more link frames as needed. */
@@ -134,10 +170,8 @@ class DataXConnection(
     }
 
     private fun deliver(message: DataXMessage): DataXMessage {
-        if (message.info.flags.isClosed) {
-            registry.closeInbound(message.info.channelId)
-        }
-        return message
+        if (!message.info.flags.isClosed) return message
+        return DataXMessage(message.info, message.payload, registry.closeInbound(message.info.channelId))
     }
 
     /** Return messages to the front of the inbox, in their original order. */
@@ -180,7 +214,8 @@ class DataXConnection(
     /** Update or apply the per-channel messageType cache. */
     private fun applyTypeCache(info: MessageInfo): MessageInfo {
         val channel = info.channelId
-        if (info.messageType != 0) {
+        // A type tag names the new type, 0 included; only a frame without one takes the last.
+        if (info.flags.setType || info.messageType != 0) {
             rxLastType[channel] = info.messageType
             return info
         }
@@ -219,6 +254,9 @@ class DataXConnection(
         var trace: ((String) -> Unit)? = null
 
         private const val TRACE_PAYLOAD = 512
+
+        // What [trace] logs of what Visor sends: svc28, where a type the Display does not know kills its system process.
+        private val TRACED_SENDS = setOf(28)
 
         /** The ack channel for a peer-originated channel: clear the secure bit, 0x8000. */
         fun mirror(channelId: Int): Int = channelId and 0x7FFF

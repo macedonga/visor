@@ -18,10 +18,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * svc41111, internet_proxy_remote, HTTP relay: the Display sends an HttpRequest (type 8) on a channel of its own, and the
- * phone answers on that channel with an HttpResponse (type 11), the body in chunks (12), then an empty end (13). The reply
- * types follow the Display's reader of HttpResponse (GreatwhiteSystemUIRelease, X/C0OQ.java). The request type 8 and a
- * streamed request body (chunks until 13) are not in the research; they are guessed from that reader.
+ * svc41111, internet_proxy_remote, HTTP relay: the Display sends an HttpRequest (type 8) on a channel of its own, then a
+ * streamed request's body in pieces (9) and its end (10). The phone answers on that channel with an HttpResponse
+ * {1 status, 2 message, 3 headers} (11), the body in pieces (12), then the end, HttpResponse {4 error} (13): 4096 when the
+ * response came whole, 4097 when it failed. A request that fails before its response gets only the end.
  */
 @Singleton
 class PhoneHttpRelay @Inject constructor(
@@ -37,14 +37,19 @@ class PhoneHttpRelay @Inject constructor(
         when (message.info.messageType) {
             MT_REQUEST -> {
                 val request = runCatching { Request.decode(message.payload) }.getOrElse {
-                    scope.launch { answer(channel, connection, error = true) }
+                    scope.launch { failed(channel, connection) }
                     return
                 }
+                // Only a streamed request has a body; any other is served at once, as the Meta app does.
                 if (request.streamed) streaming[channel] = Streamed(request, connection, ByteArrayOutputStream())
                 else scope.launch { serve(channel, request, null, connection) }
             }
-            MT_BODY -> streaming[channel]?.body?.write(message.payload)
-            MT_END -> streaming.remove(channel)?.let { scope.launch { serve(channel, it.request, it.body.toByteArray(), it.mux) } }
+            MT_REQUEST_BODY -> streaming[channel]?.body?.write(message.payload)
+            // The end may carry the body's last bytes.
+            MT_REQUEST_END -> streaming.remove(channel)?.let {
+                it.body.write(message.payload)
+                scope.launch { serve(channel, it.request, it.body.toByteArray(), it.mux) }
+            }
         }
     }
 
@@ -54,7 +59,7 @@ class PhoneHttpRelay @Inject constructor(
 
     private suspend fun serve(channel: Int, request: Request, body: ByteArray?, mux: DataXConnection) {
         val id = requests.start(request.url, SOURCE_TUNNEL, request.method)
-        var answered = false
+        val reply = DataXConnection.mirror(channel)
         try {
             val url = URL(request.url)
             require(url.protocol == "http" || url.protocol == "https") { "not an http link" }
@@ -70,33 +75,28 @@ class PhoneHttpRelay @Inject constructor(
                 }
             }
             val code = conn.responseCode
-            mux.send(DataXConnection.mirror(channel), response(code, conn.responseMessage.orEmpty(), conn), messageType = MT_RESPONSE)
-            answered = true
+            mux.send(reply, response(code, conn.responseMessage.orEmpty(), conn), messageType = MT_RESPONSE)
             var sent = 0L
             (if (code >= 400) conn.errorStream else conn.inputStream)?.use { input ->
                 val buffer = ByteArray(CHUNK)
                 while (true) {
                     val n = input.read(buffer)
                     if (n < 0) break
-                    mux.send(DataXConnection.mirror(channel), buffer.copyOf(n), messageType = MT_BODY)
+                    mux.send(reply, buffer.copyOf(n), messageType = MT_BODY)
                     sent += n
                 }
             }
-            mux.send(DataXConnection.mirror(channel), ByteArray(0), messageType = MT_END)
+            mux.send(reply, Wire.fieldVarint(4, END_OK), messageType = MT_END)
             requests.finish(id, "HTTP $code", failed = code >= 400, bytes = sent)
         } catch (e: Exception) {
             requests.finish(id, "failed: ${e.message}", failed = true)
-            answer(channel, mux, error = !answered)
+            failed(channel, mux)
         }
     }
 
-    /** The reply that ends a request the phone could not serve: an error and the end, so the Display stops waiting. */
-    private suspend fun answer(channel: Int, mux: DataXConnection, error: Boolean) {
-        val reply = DataXConnection.mirror(channel)
-        runCatching {
-            if (error) mux.send(reply, Wire.fieldVarint(4, ERROR_FAILED), messageType = MT_RESPONSE)
-            mux.send(reply, ByteArray(0), messageType = MT_END)
-        }
+    /** The end of a request the phone could not serve, so the Display stops waiting. */
+    private suspend fun failed(channel: Int, mux: DataXConnection) {
+        runCatching { mux.send(DataXConnection.mirror(channel), Wire.fieldVarint(4, END_FAILED), messageType = MT_END) }
     }
 
     private fun response(code: Int, message: String, conn: HttpURLConnection): ByteArray {
@@ -134,11 +134,14 @@ class PhoneHttpRelay @Inject constructor(
 
     companion object {
         private const val MT_REQUEST = 8
+        private const val MT_REQUEST_BODY = 9
+        private const val MT_REQUEST_END = 10
         private const val MT_RESPONSE = 11
         private const val MT_BODY = 12
         private const val MT_END = 13
-        // HttpResponse.error for a request the phone could not make. The Display's error codes are not in the research.
-        private const val ERROR_FAILED = 1L
+        // HttpResponse.error in the end: the response came whole, or the request failed.
+        private const val END_OK = 4096L
+        private const val END_FAILED = 4097L
         // The chunk size the data fetcher uses by default, which the Display already reads.
         private const val CHUNK = 1024
         private const val CONNECT_MS = 10_000

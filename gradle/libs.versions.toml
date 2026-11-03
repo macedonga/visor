@@ -41,6 +41,9 @@ androidxMedia = "1.7.0"
 # :app only: the glasses on the home screen. 1.77.1 because 1.77.2 and .3 are under two weeks old.
 filament = "1.77.1"
 
+# :app only: the Display's Maps channel (svc11004) is a zstd stream each way. 1.5.7-24 because -25 is under two weeks old.
+zstdJni = "1.5.7-24"
+
 # The build only: patched versions of libraries the Android Gradle plugin and lint bring onto the build's own
 # classpaths. Both settings.gradle.kts files hold every configuration to the pin-* libraries below.
 jose4j = "0.9.6"
@@ -91,6 +94,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 flatbuffers-java = { module = "com.google.flatbuffers:flatbuffers-java", version.ref = "flatbuffers" }
 filament-android = { module = "com.google.android.filament:filament-android", version.ref = "filament" }
 gltfio-android = { module = "com.google.android.filament:gltfio-android", version.ref = "filament" }
+zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstdJni" }
 
 bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }

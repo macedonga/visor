@@ -106,6 +106,8 @@ val DISPLAY_GROUPS = setOf("Display", "Neural band gestures")
 /** Whether the connected glasses have a display: the build fingerprint names the device, "Meta/greatwhite/greatwhite:14/...". */
 fun hasDisplay(build: String?): Boolean = productId(build) in DISPLAY_PRODUCTS
 
+fun isDisplayProduct(product: Int?): Boolean = product in DISPLAY_PRODUCTS
+
 // Meta Ray-Ban Display.
 private val DISPLAY_PRODUCTS = setOf(259, 270, 271)
 

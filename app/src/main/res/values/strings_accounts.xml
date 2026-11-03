@@ -2,13 +2,10 @@
 <resources>
     <string name="accounts_title">Accounts</string>
     <string name="accounts_meta">Meta account</string>
-    <string name="accounts_whatsapp">WhatsApp</string>
-    <string name="accounts_facebook">Facebook</string>
     <string name="accounts_instagram">Instagram</string>
     <string name="accounts_link">Link</string>
     <string name="accounts_linked">Linked</string>
     <string name="accounts_not_linked">Not linked</string>
-    <string name="accounts_scan">Scan the code on the glasses from WhatsApp, Linked devices.</string>
     <string name="accounts_done">Done</string>
     <string name="accounts_logged_out">Log in to Meta first</string>
     <string name="accounts_unreachable">Meta could not be reached</string>

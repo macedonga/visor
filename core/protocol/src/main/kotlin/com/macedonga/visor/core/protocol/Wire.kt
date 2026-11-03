@@ -132,6 +132,9 @@ object Wire {
         fun repeatedBytes(fn: Int): List<ByteArray> =
             byField[fn].orEmpty().filter { it.first == 2 }.map { it.second as ByteArray }
 
+        fun repeatedVarints(fn: Int): List<Long> =
+            byField[fn].orEmpty().filter { it.first == 0 }.map { it.second as Long }
+
         fun has(fn: Int): Boolean = byField.containsKey(fn)
 
         /** Sorted, which is what the reference returns, not wire order. */

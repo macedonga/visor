@@ -6,7 +6,10 @@ import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.SessionProbe
 import com.macedonga.visor.core.identity.diagnose
 import com.macedonga.visor.core.identity.verifyBundle
+import com.macedonga.visor.core.session.ChannelRefused
 import com.macedonga.visor.core.session.ConnectFailed
+import com.macedonga.visor.core.session.DataXConnection
+import com.macedonga.visor.core.session.DataXError
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.LinkStateChanged
 import com.macedonga.visor.core.session.ProtocolError
@@ -27,6 +30,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** The one object that decides which glasses, holds one session, and publishes one state. */
@@ -64,7 +69,18 @@ class GlassesConnection(
      */
     val warnings: SharedFlow<String> = _warnings.asSharedFlow()
 
+    private val _errors = MutableSharedFlow<DataXError>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Every DataX error frame the glasses send, by service and error id; [warnings] words them too. */
+    val errors: SharedFlow<DataXError> = _errors.asSharedFlow()
+
     private var job: Job? = null
+
+    // Two stop-then-open runs that interleave leave a session nothing can stop, and two sessions take the glasses in turns.
+    private val lifecycle = Mutex()
 
     private val _pair = MutableStateFlow(runCatching { store.currentSerial() }.getOrNull())
 
@@ -128,13 +144,21 @@ class GlassesConnection(
         reopen(target)
     }
 
-    private suspend fun reopen(target: GlassesTarget) {
-        val scope = lastScope ?: return
-        if (!_running.value) return
+    private suspend fun reopen(target: GlassesTarget) = lifecycle.withLock {
+        val scope = lastScope ?: return@withLock
+        if (!_running.value) return@withLock
         host?.stop()
         host = null
         job?.cancelAndJoin()
         job = null
+        open(scope, target)
+    }
+
+    /** [stop], then [start] on [target], as one step; nothing happens when [skip] holds for the state at that time. */
+    suspend fun restart(scope: CoroutineScope, target: GlassesTarget?, skip: (GlassesState) -> Boolean = { false }) = lifecycle.withLock {
+        if (skip(_state.value)) return@withLock
+        halt()
+        bluetooth = null
         open(scope, target)
     }
 
@@ -169,11 +193,12 @@ class GlassesConnection(
     }
 
     /** Let go of the link without ending the connection, so another session can have the glasses. */
-    suspend fun pause(why: String) {
+    suspend fun pause(why: String) = lifecycle.withLock {
         // The session that takes over runs on Wi-Fi of its own; this one comes back on Bluetooth.
         bluetooth?.let { lastOverride = it }
         bluetooth = null
         paused = true
+        statusChannel = null
         host?.stop()
         host = null
         job?.cancelAndJoin()
@@ -181,33 +206,52 @@ class GlassesConnection(
         _state.value = _state.value.copy(link = LinkState.DISCONNECTED, reason = why)
     }
 
-    /** Reconnect after [pause], unless [stop] ran in between. */
+    /** Reconnect after [pause], unless [stop] ran in between. A stop or restart under way decides instead. */
     fun resume() {
         val scope = lastScope ?: return
-        if (_running.value && job == null) open(scope, lastOverride)
+        if (!lifecycle.tryLock()) return
+        try {
+            if (_running.value && job == null) open(scope, lastOverride)
+        } finally {
+            lifecycle.unlock()
+        }
     }
 
     /** Ask svc28 again on the session's own status channel: the glasses answer with a fresh full snapshot. */
     fun refreshDeviceState() {
-        val channel = statusChannel ?: return
-        submit { subscribeOn(it, channel) }
+        if (statusChannel == null) return
+        submit { mux ->
+            // Only on the connection that opened it: on the next one that id belongs to another service.
+            val (owner, channel) = statusChannel ?: return@submit
+            if (owner === mux) statusChannel = mux to subscribeOn(mux, channel)
+        }
     }
 
-    // The session's svc28 channel; a new one per refresh would multiply every push.
+    // The session's svc28 channel and its connection; a new one per refresh would multiply every push.
     @Volatile
-    private var statusChannel: Int? = null
+    private var statusChannel: Pair<DataXConnection, Int>? = null
 
     /** Run [work] on the live session with its mux. Dropped when nothing is connected. */
     fun submit(work: suspend (com.macedonga.visor.core.session.DataXConnection) -> Unit) {
-        host?.submit(work)
+        // A refused send is a warning: thrown out of a command, it would end the session.
+        host?.submit { mux ->
+            try {
+                work(mux)
+            } catch (refused: ChannelRefused) {
+                _warnings.tryEmit(refused.message.orEmpty())
+            }
+        }
     }
 
     /**
      * Finish, and do not return until the session has let go of the socket AND the event collector
      * has stopped.
      */
-    suspend fun stop() {
+    suspend fun stop() = lifecycle.withLock { halt() }
+
+    private suspend fun halt() {
         bluetooth = null
+        statusChannel = null
         host?.stop()
         host = null
         job?.cancelAndJoin()
@@ -273,6 +317,8 @@ class GlassesConnection(
 
             is ProtocolError -> _warnings.tryEmit(event.detail)
 
+            is DataXError -> _errors.tryEmit(event)
+
             else -> Unit
         }
     }
@@ -292,6 +338,7 @@ class GlassesConnection(
     }
 
     private fun newAttempt() {
+        statusChannel = null
         heldStatus.clear()
         holdingStatus = true
         statusTimer?.cancel()
@@ -314,7 +361,7 @@ class GlassesConnection(
         // run_status submits the first two at READY as well; none needs identity auth.
         host.submit { connection ->
             announcePeerAppInfo(connection)
-            statusChannel = subscribeOn(connection, null)
+            statusChannel = connection to subscribeOn(connection, null)
             syncClock(connection)
         }
         statusTimer = scope.launch {

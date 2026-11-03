@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.AccountLinking
 import com.macedonga.visor.connection.LinkOutcome
+import com.macedonga.visor.connection.LinkPrompt
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.token.LinkedAccountRef
 import com.macedonga.visor.core.identity.token.LinkedAccountType
@@ -25,14 +26,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class AccountRow { META, WHATSAPP, FACEBOOK, INSTAGRAM }
+enum class AccountRow { META, FACEBOOK, INSTAGRAM, THREADS }
 
 @HiltViewModel
 class AccountsModel @Inject constructor(
     val connection: GlassesConnection,
     private val linking: AccountLinking,
+    private val prompt: LinkPrompt,
     private val log: com.macedonga.visor.log.EventLog,
 ) : ViewModel() {
+
+    /** The account the glasses asked for from one of their apps; its row leads. */
+    val asked: StateFlow<LinkedAccountType?> = prompt.asked
 
     // Null until the glasses answer.
     private val _meta = MutableStateFlow<Boolean?>(null)
@@ -43,9 +48,6 @@ class AccountsModel @Inject constructor(
 
     private val _metaResult = MutableStateFlow<LinkOutcome?>(null)
     val metaResult: StateFlow<LinkOutcome?> = _metaResult.asStateFlow()
-
-    private val _whatsappResult = MutableStateFlow<LinkOutcome?>(null)
-    val whatsappResult: StateFlow<LinkOutcome?> = _whatsappResult.asStateFlow()
 
     private val _linkedResults = MutableStateFlow<Map<LinkedAccountType, LinkOutcome>>(emptyMap())
     val linkedResults: StateFlow<Map<LinkedAccountType, LinkOutcome>> = _linkedResults.asStateFlow()
@@ -64,12 +66,10 @@ class AccountsModel @Inject constructor(
         if (_metaResult.value == LinkOutcome.LINKED) _meta.value = true
     }
 
-    fun linkWhatsApp() = task(AccountRow.WHATSAPP) {
-        _whatsappResult.value = linking.linkWhatsApp()
-    }
-
     fun linkProvider(row: AccountRow, type: LinkedAccountType) = task(row) {
-        _linkedResults.value = _linkedResults.value + (type to linking.syncLinked(type))
+        val outcome = linking.syncLinked(type)
+        _linkedResults.value = _linkedResults.value + (type to outcome)
+        if (outcome == LinkOutcome.LINKED && prompt.asked.value == type) prompt.answered()
     }
 
     private fun task(row: AccountRow, work: suspend () -> Unit) {
@@ -90,7 +90,7 @@ class AccountsModel @Inject constructor(
     }
 }
 
-/** The accounts the Display's apps log in with: the Meta account, and WhatsApp's link. */
+/** The accounts the Display's apps log in with: the Meta account and its linked Facebook (with Messenger), Instagram and Threads. */
 @Composable
 fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
@@ -98,10 +98,15 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
     val meta by model.meta.collectAsStateWithLifecycle()
     val busy by model.busy.collectAsStateWithLifecycle()
     val metaResult by model.metaResult.collectAsStateWithLifecycle()
-    val whatsappResult by model.whatsappResult.collectAsStateWithLifecycle()
     val linked by model.linkedResults.collectAsStateWithLifecycle()
     val accounts by model.accounts.collectAsStateWithLifecycle()
+    val asked by model.asked.collectAsStateWithLifecycle()
     LaunchedEffect(ready) { if (ready) model.refresh() }
+    val providers = listOf(
+        Triple(AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.finish_accounts_facebook_messenger),
+        Triple(AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram),
+        Triple(AccountRow.THREADS, LinkedAccountType.THREADS, R.string.finish_accounts_threads),
+    ).sortedByDescending { it.second == asked }
 
     SettingsPage(stringResource(R.string.accounts_title), light = 0f) {
         item(key = "accounts") {
@@ -126,25 +131,9 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
                         }
                     }
                 },
-                {
-                    RowFrame(
-                        stringResource(R.string.accounts_whatsapp),
-                        onClick = null,
-                        sub = when {
-                            busy == AccountRow.WHATSAPP -> stringResource(R.string.accounts_scan)
-                            else -> whatsappResult?.let { outcomeWords(it) }
-                        },
-                        locked = !ready,
-                        busy = busy == AccountRow.WHATSAPP,
-                    ) {
-                        ActionPill(
-                            stringResource(R.string.accounts_link), { model.linkWhatsApp() },
-                            quiet = true, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
-                        )
-                    }
-                },
-                { LinkedRow(model, AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.accounts_facebook, ready, busy, linked, accounts) },
-                { LinkedRow(model, AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram, ready, busy, linked, accounts) },
+                *providers.map { (row, type, label) ->
+                    @Composable { LinkedRow(model, row, type, label, ready, busy, linked, accounts, lead = type == asked) }
+                }.toTypedArray(),
             )
         }
     }
@@ -160,6 +149,7 @@ private fun LinkedRow(
     busy: AccountRow?,
     results: Map<LinkedAccountType, LinkOutcome>,
     accounts: Map<LinkedAccountType, LinkedAccountRef>?,
+    lead: Boolean,
 ) {
     val account = accounts?.get(type)
     RowFrame(
@@ -176,7 +166,7 @@ private fun LinkedRow(
     ) {
         ActionPill(
             stringResource(R.string.accounts_link), { model.linkProvider(row, type) },
-            quiet = true, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
+            quiet = !lead, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
         )
     }
 }
@@ -190,5 +180,6 @@ private fun outcomeWords(outcome: LinkOutcome): String = stringResource(
         LinkOutcome.NO_ANSWER -> R.string.accounts_no_answer
         LinkOutcome.REFUSED -> R.string.accounts_refused
         LinkOutcome.NOT_LINKED -> R.string.accounts_not_linked
+        LinkOutcome.NEEDS_INTERNET -> R.string.finish_accounts_needs_internet
     },
 )

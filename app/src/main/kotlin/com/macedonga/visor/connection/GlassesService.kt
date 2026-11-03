@@ -100,6 +100,10 @@ class GlassesService : Service() {
     @Inject
     lateinit var band: com.macedonga.visor.band.BandLink
 
+    // Injected so captions started from the glasses are kept while no screen is open.
+    @Inject
+    lateinit var captionTranscripts: com.macedonga.visor.display.CaptionTranscripts
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private var started = false
@@ -177,10 +181,8 @@ class GlassesService : Service() {
     private fun switchTo(target: GlassesTarget) {
         if (target.serial == connection.state.value.target?.serial) return
         if (live.running.value || media.importing.value) return
-        scope.launch {
-            connection.stop()
-            connection.start(scope, target)
-        }
+        // Asked twice in a row, the second finds this pair already chosen.
+        scope.launch { connection.restart(scope, target) { it.target?.serial == target.serial } }
     }
 
     /**
@@ -192,9 +194,10 @@ class GlassesService : Service() {
         if (state.link != LinkState.DISCONNECTED && state.link != LinkState.LOST) return
         if (live.running.value || media.importing.value) return
         scope.launch {
-            connection.stop()
             // Tried again on Bluetooth: a Wi-Fi link that dropped is not one to wait for.
-            connection.start(scope, state.target?.takeIf { it.link is GlassesLink.Bluetooth })
+            connection.restart(scope, state.target?.takeIf { it.link is GlassesLink.Bluetooth }) {
+                it.link != LinkState.DISCONNECTED && it.link != LinkState.LOST
+            }
         }
     }
 
@@ -230,9 +233,7 @@ class GlassesService : Service() {
                     val now = System.currentTimeMillis()
                     if (!move || now - last < MOVE_EVERY_MS) return@collect
                     last = now
-                    val target = connection.state.value.target
-                    connection.stop()
-                    connection.start(scope, target)
+                    connection.restart(scope, connection.state.value.target)
                 }
         }
     }

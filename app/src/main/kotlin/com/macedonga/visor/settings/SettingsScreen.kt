@@ -90,7 +90,10 @@ import com.macedonga.visor.BackupKey
 import com.macedonga.visor.DeviceKey
 import com.macedonga.visor.EventLogKey
 import com.macedonga.visor.FlagsKey
+import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.GlassesKey
+import com.macedonga.visor.WebAppsKey
+import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.LanguageKey
 import com.macedonga.visor.LiveSettingsKey
 import com.macedonga.visor.OnboardingKey
@@ -177,6 +180,9 @@ class SettingsViewModel @Inject constructor(
     val band: com.macedonga.visor.band.BandLink,
     val bands: com.macedonga.visor.band.Bands,
     val bandPeers: com.macedonga.visor.band.BandPeers,
+    val bandPair: com.macedonga.visor.band.BandPair,
+    val bandSetup: com.macedonga.visor.band.BandSetup,
+    val bandUpdate: com.macedonga.visor.band.BandUpdate,
     val developer: com.macedonga.visor.outside.DeveloperMode,
 ) : ViewModel()
 
@@ -191,6 +197,9 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
     val context = LocalContext.current
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
+    // The selected pair's model: as read now, else as it last said, so its pages stay while it is away.
+    val seenProduct by model.lastSeen.product.collectAsStateWithLifecycle()
+    val product = state.product ?: seenProduct
     var query by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
     val focus = LocalFocusManager.current
@@ -245,10 +254,18 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
             }
             if (query.isBlank()) {
                 item(key = "tiles") { Tiles(model, open) }
+                // The Display's own pages, up front rather than inside the Glasses page.
+                if (isDisplayProduct(product)) item(key = "display") {
+                    Column(Modifier.padding(top = 18.dp)) {
+                        NavRow(VisorIcons.Wifi, stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) })
+                        NavRow(VisorIcons.Globe, stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) })
+                        NavRow(VisorIcons.People, stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) })
+                    }
+                }
                 for ((i, card) in Topic.CARDS.withIndex()) {
                     item(key = "card-$i") {
-                        Column(Modifier.padding(top = if (i == 0) 18.dp else 14.dp)) {
-                            for (topic in card.filter { it.shownOn(state.product) }) {
+                        Column(Modifier.padding(top = if (i == 0 && !isDisplayProduct(product)) 18.dp else 14.dp)) {
+                            for (topic in card.filter { it.shownOn(product) }) {
                                 NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
                             }
                         }
@@ -275,7 +292,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     }
                 }
             } else {
-                searchResults(query, model, state, glasses) { key ->
+                searchResults(query, model, state, glasses, product) { key ->
                     focus.clearFocus()
                     open(key)
                 }
@@ -646,11 +663,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
     model: SettingsViewModel,
     state: SettingsState,
     glasses: GlassesState,
+    product: Int?,
     open: (NavKey) -> Unit,
 ) {
     val needle = query.trim().lowercase()
     item(key = "results") {
-        val pages = pageHits().filter { (title, words, _) -> needle in stringResource(title).lowercase() || words.any { needle in it } }
+        val pages = pageHits(product).filter { (title, words, _) -> needle in stringResource(title).lowercase() || words.any { needle in it } }
         val toggles = model.toggles.all.filter { t -> needle in stringResource(t.label).lowercase() || (t.note?.let { needle in stringResource(it).lowercase() } ?: false) }
         val display = hasDisplay(glasses.info?.build)
         val keys = remember(needle, state.stored.keys) {
@@ -688,8 +706,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
     }
 }
 
+private fun displayPages(product: Int?): List<Triple<Int, List<String>, NavKey>> = if (!isDisplayProduct(product)) emptyList() else listOf(
+    Triple(R.string.wifi_networks, listOf("wifi", "wi-fi", "network", "rete", "reti"), WifiNetworksKey),
+    Triple(R.string.webapps_row, listOf("web", "app", "browser"), WebAppsKey),
+    Triple(R.string.accounts_title, listOf("account", "facebook", "instagram", "messenger", "threads", "link", "collega"), AccountsKey),
+)
+
 /** The pages search can find by name or by what they hold. */
-private fun pageHits(): List<Triple<Int, List<String>, NavKey>> = Topic.entries.map { Triple(it.title, emptyList<String>(), placeOf(it)) } + listOf(
+private fun pageHits(product: Int?): List<Triple<Int, List<String>, NavKey>> =
+    Topic.entries.filter { it.shownOn(product) }.map { Triple(it.title, emptyList<String>(), placeOf(it)) } + displayPages(product) + listOf(
     Triple(R.string.glasses_title, listOf("battery", "batteria", "firmware", "serial", "seriale", "account", "owner", "proprietario", "case", "custodia", "rename", "nome"), GlassesKey),
     Triple(R.string.advanced_title, listOf("all", "tutte", "engineering"), AdvancedKey),
     Triple(R.string.backup_title, listOf("export", "esporta", "import", "restore", "ripristina"), BackupKey),

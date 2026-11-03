@@ -8,7 +8,9 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
+import androidx.annotation.RequiresApi
 import com.macedonga.visor.R
 import com.macedonga.visor.core.transport.META_LE_SERVICE
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -133,6 +135,49 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
             if (bonding && state == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
         }
         throw BondFailed(BondFailed.Why.NO_ANSWER)
+    }
+
+    /**
+     * Bonds [address] over BR/EDR only, a call public from Android 17, polling as [bond] does until [until]
+     * (elapsedRealtime). Returns the device type the bond ends with: 1 classic, 3 dual.
+     */
+    @RequiresApi(37)
+    @SuppressLint("MissingPermission")
+    suspend fun bondClassic(address: String, until: Long): Int {
+        val adapter = adapter?.takeIf { it.isEnabled } ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
+        val device = adapter.getRemoteDevice(address)
+        if (device.bondState == BluetoothDevice.BOND_BONDED) return device.type
+        if (!device.createBond(BluetoothDevice.TRANSPORT_BREDR)) throw BondFailed(BondFailed.Why.REFUSED)
+        var bonding = false
+        while (SystemClock.elapsedRealtime() < until) {
+            delay(POLL_MS)
+            when (device.bondState) {
+                BluetoothDevice.BOND_BONDED -> return device.type
+                BluetoothDevice.BOND_BONDING -> bonding = true
+                else -> if (bonding) throw BondFailed(BondFailed.Why.REFUSED)
+            }
+        }
+        throw BondFailed(BondFailed.Why.NO_ANSWER)
+    }
+
+    /** Stops a bond still under way with [address]. */
+    @SuppressLint("MissingPermission")
+    fun cancelBond(address: String): Boolean = runCatching { adapter?.getRemoteDevice(address)?.cancelBondProcess() == true }.getOrDefault(false)
+
+    /** Every bonded device as address and type (1 classic, 2 LE, 3 dual). */
+    @SuppressLint("MissingPermission")
+    fun bondedTypes(): List<Pair<String, Int>> = runCatching { adapter?.bondedDevices.orEmpty().map { it.address to it.type } }.getOrDefault(emptyList())
+
+    /** How the phone holds [address], for the log: bond state, type and, from Android 17, the bond on each transport. */
+    @SuppressLint("MissingPermission", "NewApi")
+    fun describe(address: String): String {
+        val device = runCatching { adapter?.getRemoteDevice(address) }.getOrNull() ?: return "$address unknown"
+        val base = runCatching { "$address bond ${device.bondState} type ${device.type}" }.getOrElse { "$address unreadable: ${it.message}" }
+        if (Build.VERSION.SDK_INT < 37) return base
+        val transports = runCatching {
+            " le ${device.getBondStatus(BluetoothDevice.TRANSPORT_LE)} bredr ${device.getBondStatus(BluetoothDevice.TRANSPORT_BREDR)}"
+        }.getOrElse { " transports unreadable: ${it.message}" }
+        return base + transports
     }
 
     /**
