@@ -35,6 +35,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+import java.text.Normalizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
@@ -361,13 +362,14 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
     }
 }
 
-internal fun chooseMediaSearchMatch(query: String, items: List<MediaBrowserCompat.MediaItem>): MediaBrowserCompat.MediaItem? {
-    val normalizedQuery = normalizeSearchText(query)
-    if (normalizedQuery.isEmpty()) return items.firstOrNull { it.isPlayable }
-
+/** The playable result that best matches [query]; when none shares a word with it, the first playable one, as before. */
+private fun chooseMediaSearchMatch(query: String, items: List<MediaBrowserCompat.MediaItem>): MediaBrowserCompat.MediaItem? {
     val playable = items.filter { it.isPlayable }
-    return playable.maxByOrNull { scoreMediaSearchMatch(normalizedQuery, it) }
-        ?.takeIf { scoreMediaSearchMatch(normalizedQuery, it) > 0 }
+    val normalizedQuery = normalizeSearchText(query)
+    if (normalizedQuery.isEmpty()) return playable.firstOrNull()
+    // On a tie the service's own order wins: maxByOrNull keeps the first.
+    val best = playable.map { it to scoreMediaSearchMatch(normalizedQuery, it) }.maxByOrNull { it.second }
+    return best?.takeIf { it.second > 0 }?.first ?: playable.firstOrNull()
 }
 
 private fun scoreMediaSearchMatch(query: String, item: MediaBrowserCompat.MediaItem): Int {
@@ -401,5 +403,9 @@ private fun scoreMediaSearchMatch(query: String, item: MediaBrowserCompat.MediaI
     return best
 }
 
+// Accents go and every script stays, so "Perché" matches "Perche" and a title in Cyrillic or Japanese still compares.
 private fun normalizeSearchText(value: String): String =
-    value.lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+    Normalizer.normalize(value.lowercase(), Normalizer.Form.NFD).replace(MARKS, "").replace(NON_WORD, " ").trim()
+
+private val MARKS = Regex("\\p{Mn}+")
+private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
