@@ -85,6 +85,7 @@ import com.macedonga.visor.settings.openAppPage
 import com.macedonga.visor.stage.LocalStage
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.temperatureWords
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -585,7 +586,7 @@ fun Facts(facts: GlassesFacts, live: Boolean, lastCapture: Long?, modifier: Modi
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Fact(stringResource(R.string.fact_last_capture), lastCapture?.let { shortAgo(it) } ?: dash, dim = !live, Modifier.weight(1f))
-            Fact(stringResource(R.string.fact_temperature), facts.temperatureC?.let { "%.0f\u00B0C".format(it) } ?: dash, dim = !live, Modifier.weight(1f))
+            Fact(stringResource(R.string.fact_temperature), facts.temperatureC?.let { temperatureWords(it) } ?: dash, dim = !live, Modifier.weight(1f))
         }
     }
 }

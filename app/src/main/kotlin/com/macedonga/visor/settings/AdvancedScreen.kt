@@ -1,11 +1,16 @@
 package com.macedonga.visor.settings
 
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.os.PersistableBundle
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -17,6 +22,7 @@ import com.macedonga.visor.FlagsKey
 import com.macedonga.visor.R
 import com.macedonga.visor.SettingsGroupKey
 import com.macedonga.visor.gallery.RoundIcon
+import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.ui.VisorIcons
 
 /**
@@ -28,6 +34,7 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
     val developer by model.developer.on.collectAsStateWithLifecycle()
+    val tokenRequired by model.developer.tokenRequired.collectAsStateWithLifecycle()
     val display = hasDisplay(glasses.info?.build)
     val all = allKeys(model.settings, state)
     val changed = all.count { state.changed(it, model.settings.catalogue[it]) }
@@ -63,9 +70,32 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     { NavRow(VisorIcons.Pulse, stringResource(R.string.settings_diagnostics), stringResource(R.string.settings_diagnostics_sub), onClick = { open(DeviceKey) }, onCard = true) },
                     { NavRow(VisorIcons.Lines, stringResource(R.string.settings_event_log), stringResource(R.string.settings_event_log_sub), onClick = { open(EventLogKey) }, onCard = true) },
                     { ToggleRow(stringResource(R.string.settings_developer), developer, { model.developer.set(it) }, sub = stringResource(R.string.settings_developer_sub)) },
+                    if (developer) ({ TokenRow(model.developer) }) else null,
+                    if (developer) ({ ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) }) else null,
                 )
             }
         }
+    }
+}
+
+/** Developer mode's token: a tap copies it, the arrow makes a new one. */
+@Composable
+private fun TokenRow(developer: DeveloperMode) {
+    val token by developer.token.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val host = LocalHost.current
+    val copied = stringResource(R.string.mcp_copied)
+    RowFrame(
+        stringResource(R.string.settings_developer_token),
+        onClick = {
+            val clip = ClipData.newPlainText("token", token)
+            clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+            host.notice.show(copied)
+        },
+        keyLine = token,
+    ) {
+        RoundIcon(VisorIcons.Refresh, stringResource(R.string.settings_developer_token_new), { developer.renewToken() }, size = 40.dp)
     }
 }
 

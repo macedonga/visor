@@ -359,6 +359,9 @@
     <string name="settings_flags_sub">Meta\'s switches for features it has not turned on</string>
     <string name="settings_developer">Developer mode</string>
     <string name="settings_developer_sub">Camera intents and capture events for other apps</string>
+    <string name="settings_developer_token">Token</string>
+    <string name="settings_developer_token_new">New token</string>
+    <string name="settings_developer_token_required">Actions need the token</string>
     <string name="settings_diagnostics_sub">The link, the key and what the glasses report</string>
     <string name="settings_event_log_sub">Everything the link did, newest last</string>
     <string name="tiles_hint">Hold any setting to pin it here</string>

@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
  *
  * In, as a broadcast to [DeveloperReceiver] or an activity start of [DeveloperActivity]: TAKE_PHOTO; START_VIDEO and
  * TOGGLE_VIDEO, both with an optional capture_type video|hyperlapse; STOP_VIDEO; IMPORT_MEDIA with the id a
- * MEDIA_AVAILABLE gave.
+ * MEDIA_AVAILABLE gave. With the token required, each carries token.
  *
  *     adb shell am broadcast -p com.macedonga.visor -a com.macedonga.visor.action.TAKE_PHOTO
  *     adb shell am broadcast -p com.macedonga.visor -a com.macedonga.visor.action.IMPORT_MEDIA --es id <id>
@@ -29,6 +29,9 @@ import kotlinx.coroutines.launch
  * - VIDEO_STARTED and VIDEO_STOPPED (time).
  *
  * type is photo, live or video; time is in milliseconds since the epoch, when the capture was taken.
+ *
+ * Live frames: bind [FrameService] with LIVE_FRAMES and send FRAMES_SUBSCRIBE (token, interval_ms) with a replyTo;
+ * FRAMES_FRAME (jpeg, time) comes back while a Live runs, or FRAMES_REFUSED (reason OFF or TOKEN).
  */
 object DeveloperIntents {
     const val TAKE_PHOTO = "com.macedonga.visor.action.TAKE_PHOTO"
@@ -45,6 +48,15 @@ object DeveloperIntents {
     const val VIDEO_STARTED = "com.macedonga.visor.event.VIDEO_STARTED"
     const val VIDEO_STOPPED = "com.macedonga.visor.event.VIDEO_STOPPED"
 
+    const val LIVE_FRAMES = "com.macedonga.visor.action.LIVE_FRAMES"
+    const val FRAMES_SUBSCRIBE = 1
+    const val FRAMES_UNSUBSCRIBE = 2
+    const val FRAMES_FRAME = 3
+    const val FRAMES_REFUSED = 4
+
+    const val EXTRA_TOKEN = "token"
+    const val EXTRA_INTERVAL_MS = "interval_ms"
+    const val EXTRA_JPEG = "jpeg"
     const val EXTRA_CAPTURE_TYPE = "capture_type"
     const val EXTRA_ID = "id"
     const val EXTRA_TYPE = "type"

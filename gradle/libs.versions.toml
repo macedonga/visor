@@ -47,6 +47,8 @@ jose4j = "0.9.6"
 jdom2 = "2.0.6.1"
 commonsLang3 = "3.21.0"
 httpcomponents = "4.5.14"
+# Guava, pinned the same way: media3 brings an old one into the app too. The -jre version carries the Android jar.
+guava = "33.7.2-jre"
 
 
 # compileSdk and targetSdk track the current platform. minSdk is 29 and comes from the
@@ -111,6 +113,7 @@ pin-jdom2 = { module = "org.jdom:jdom2", version.ref = "jdom2" }
 pin-commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "commonsLang3" }
 pin-httpclient = { module = "org.apache.httpcomponents:httpclient", version.ref = "httpcomponents" }
 pin-httpmime = { module = "org.apache.httpcomponents:httpmime", version.ref = "httpcomponents" }
+pin-guava = { module = "com.google.guava:guava", version.ref = "guava" }
 pin-kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 
 [plugins]

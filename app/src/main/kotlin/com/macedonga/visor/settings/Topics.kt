@@ -29,7 +29,7 @@ enum class Topic(val title: Int, val icon: ImageVector, val keys: List<String> =
     CONTROLS(
         R.string.topic_controls, VisorIcons.Touch,
         listOf(
-            "capture_mode", "assignable_action_button_short_press_mapping", "assignable_action_button_long_press_mapping",
+            "capture_button_short_long_press", "capture_mode", "assignable_action_button_short_press_mapping", "assignable_action_button_long_press_mapping",
             "action_button_assistant_custom_prompt", "tap_and_hold_mapping", "quick_actions", "captouch_enabled",
             "sg_captouch_invert_swipe_direction_horizontal", "sg_captouch_invert_swipe_direction_vertical", "wake_handedness",
             "spotify_tap_enabled",
