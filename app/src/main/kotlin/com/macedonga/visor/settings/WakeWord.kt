@@ -45,11 +45,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.Assistant
+import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.asBool
 import com.macedonga.visor.features.ChoicePill
 import com.macedonga.visor.features.StoryWords
+import com.macedonga.visor.pairs.pairPrefs
 import com.macedonga.visor.setup.BigPill
 import com.macedonga.visor.stage.LightLook
 import com.macedonga.visor.stage.LocalStage
@@ -91,9 +93,11 @@ sealed interface WakeStep {
 class WakeWordModel @Inject constructor(
     private val assistant: Assistant,
     val settings: GlassesSettings,
+    connection: GlassesConnection,
     @ApplicationContext context: Context,
 ) : ViewModel() {
-    private val prefs = context.getSharedPreferences("wake_word", Context.MODE_PRIVATE)
+    // Enrolled on the glasses: each pair has its own phrase.
+    private val prefs = pairPrefs(context, "wake_word", connection.pair.value)
 
     private val _enrolled = MutableStateFlow(prefs.getString(ENROLLED, null))
 

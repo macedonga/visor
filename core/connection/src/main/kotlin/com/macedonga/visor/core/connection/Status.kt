@@ -12,6 +12,12 @@ const val MT_DEVICE_STATE: Int = 2005
 
 const val SUBSCRIPTION_DEVICE_STATE: Long = 1
 
+/** Every svc28 type the Display knows. Any other non-zero type kills its system process (an NPE in the svc28 parser). */
+val DISPLAY_STATUS_TYPES: Set<Int> = (
+    listOf(0, 1000, 1001, 2100, 2101, 2300, 2301, 2600, 2601, 2603, 2700, 2800, 2801) +
+        (2000..2045) + (2050..2052) + (2200..2207) + (2400..2402) + (2500..2503) + (2900..2903) + (3000..3002)
+    ).toSet()
+
 /** Every svc28 type that carries a DeviceState. 2005 is the snapshot; the rest name one field. */
 val DEVICE_STATE_TYPES: Map<Int, String> = mapOf(
     2005 to "device_state", 2006 to "device_state_update", 2007 to "battery",
@@ -152,7 +158,7 @@ data class Led(
     val privacyLedActive: Boolean,
 )
 
-data class Tampering(val tampered: Boolean, val lux: Long, val indoor: Boolean)
+data class Tampering(val tampered: Boolean, val lux: Float, val indoor: Boolean)
 
 data class Thermal(
     val health: String,
@@ -206,6 +212,11 @@ data class DeviceState(
     val odc: String? = null,
     val overhead: Boolean? = null,
     val interactionKey: String? = null,
+    // The Display's Neural Band, as the Display reports it: battery (23), how tight it sits (30), which way round (34).
+    val bandBattery: Int? = null,
+    val bandCharging: Boolean? = null,
+    val bandFit: String? = null,
+    val bandOrientation: String? = null,
 ) {
     val worn: Boolean? get() = mount?.let { it == "DON" }
 }
@@ -264,6 +275,10 @@ fun mergeDeviceState(base: DeviceState, update: DeviceState): DeviceState = Devi
     odc = update.odc ?: base.odc,
     overhead = update.overhead ?: base.overhead,
     interactionKey = update.interactionKey ?: base.interactionKey,
+    bandBattery = update.bandBattery ?: base.bandBattery,
+    bandCharging = update.bandCharging ?: base.bandCharging,
+    bandFit = update.bandFit ?: base.bandFit,
+    bandOrientation = update.bandOrientation ?: base.bandOrientation,
 )
 
 fun isDeviceStateType(messageType: Int): Boolean = messageType in DEVICE_STATE_TYPES
@@ -288,9 +303,20 @@ fun decodeDeviceState(payload: ByteArray): DeviceStatus {
     )
 }
 
-/** Decode any svc28 DeviceState message, full or partial, keeping only what it carries. */
-fun decodeDeviceStateUpdate(messageType: Int, payload: ByteArray): DeviceStateUpdate =
-    DeviceStateUpdate(messageType, DEVICE_STATE_TYPES.getValue(messageType), decodeDeviceStateFull(payload))
+/**
+ * Decode any svc28 DeviceState message, full or partial, keeping only what it carries. The Display sends it wrapped,
+ * HNDeviceState {1: stateCommon, 2: deviceLockState}, and Meta's app unwraps it by device type: [display].
+ */
+fun decodeDeviceStateUpdate(messageType: Int, payload: ByteArray, display: Boolean = false): DeviceStateUpdate =
+    DeviceStateUpdate(messageType, DEVICE_STATE_TYPES.getValue(messageType), decodeDeviceStateFull(if (display) Wire.parse(payload).bytes(1) else payload))
+
+/** Whether a build fingerprint, "Meta/greatwhite/greatwhite:14/...", is a Meta Ray-Ban Display's. */
+fun isDisplayBuild(build: String?): Boolean = build?.split('/')?.getOrNull(2)?.substringBefore(':')?.lowercase() in DISPLAY_DEVICES
+
+private val DISPLAY_DEVICES = setOf("greatwhite")
+
+private val BAND_FIT = mapOf(0L to "OFF", 1L to "LOOSE", 2L to "TIGHT", 3L to "UNKNOWN")
+private val BAND_ORIENTATION = mapOf(0L to "UNKNOWN", 1L to "INCONCLUSIVE", 2L to "CORRECT", 3L to "INCORRECT")
 
 private fun text(fields: Wire.Fields, number: Int): String =
     String(fields.bytes(number), Charsets.UTF_8)
@@ -361,7 +387,7 @@ fun decodeDeviceStateFull(payload: ByteArray): DeviceState {
     if (top.has(12)) {
         val t = Wire.parse(top.bytes(12))
         state = state.copy(tampering = Tampering(
-            tampered = bool(t.varint(1)), lux = t.varint(2), indoor = bool(t.varint(3)),
+            tampered = bool(t.varint(1)), lux = t.float(2), indoor = bool(t.varint(3)),
         ))
     }
     if (top.has(13)) {
@@ -400,6 +426,13 @@ fun decodeDeviceStateFull(payload: ByteArray): DeviceState {
     if (top.has(22)) {
         state = state.copy(registeredApps = top.repeatedBytes(22).map { Wire.parse(it).varint(1) })
     }
+    if (top.has(23)) {
+        // EmgBatteryState {1 level, 2 charge: CHARGING 1, NOT_CHARGING 2}.
+        val b = Wire.parse(top.bytes(23))
+        state = state.copy(bandBattery = b.varint(1).toInt(), bandCharging = b.varint(2) == 1L)
+    }
+    if (top.has(30)) state = state.copy(bandFit = name(BAND_FIT, Wire.parse(top.bytes(30)).varint(1)))
+    if (top.has(34)) state = state.copy(bandOrientation = name(BAND_ORIENTATION, Wire.parse(top.bytes(34)).varint(1)))
     if (top.has(25)) {
         val v = Wire.parse(top.bytes(25))
         state = state.copy(volume = Volume(
@@ -447,12 +480,17 @@ suspend fun subscribeToDeviceStatus(connection: DataXConnection) {
 }
 
 /**
- * Subscribe on [channel], or on a new one when null, and return it. Every new channel is a subscription of its
- * own and gets every push again; asking again on the same one only brings a fresh snapshot.
+ * Subscribe on [channel], or on a new one when null or no longer open for svc28, and return it. Every new channel is a
+ * subscription of its own and gets every push again; asking again on the same one only brings a fresh snapshot.
  */
 suspend fun subscribeOn(connection: DataXConnection, channel: Int?): Int {
     val (payload, _) = buildSubscribe()
-    val on = channel ?: connection.openChannel(SVC_STATUS)
+    // Only a channel's first frame carries the service tag.
+    if (channel != null && connection.localService(channel) == SVC_STATUS) {
+        connection.send(channel, payload, messageType = MT_INIT)
+        return channel
+    }
+    val on = connection.openChannel(SVC_STATUS)
     connection.send(on, payload, messageType = MT_INIT, serviceId = SVC_STATUS)
     return on
 }

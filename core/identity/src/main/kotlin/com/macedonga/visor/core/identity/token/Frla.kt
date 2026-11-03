@@ -32,7 +32,7 @@ private fun post(url: String, fields: Map<String, String>, http: HttpPost): Json
     } catch (error: Exception) {
         // The interesting answers arrive as 4xx/5xx with a JSON body and are read, not thrown;
         // only failing to reach the server at all lands here.
-        throw TokenError("$url: ${error.javaClass.simpleName}: ${error.message}")
+        throw TokenError("$url: ${error.javaClass.simpleName}: ${error.message}", unreachable = true)
     }
     return try {
         Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject

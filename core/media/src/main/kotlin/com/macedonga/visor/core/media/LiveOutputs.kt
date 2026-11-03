@@ -70,7 +70,7 @@ class LiveOutputs(private val context: Context) {
         }
 
     fun onVideo(input: VideoFrame) {
-        val frame = VideoFrame(input.seq, rebase(input.ptsUs), input.data, input.arrivedNs)
+        val frame = VideoFrame(input.seq, rebase(input.ptsUs), input.data, input.arrivedNs, input.codec)
         replay.add(frame)
         mp4?.let { r -> runCatching { synchronized(r) { r.video(frame) } } }
         broadcast.video(frame)

@@ -2,6 +2,7 @@ package com.macedonga.visor.core.assistant
 
 import com.macedonga.visor.core.protocol.Thrift
 import com.macedonga.visor.core.protocol.ThriftWriter
+import com.macedonga.visor.core.protocol.Wire
 import java.util.zip.Inflater
 
 /** svc15, Oxide: the assistant. From lensbreak/services/assistant.py and docs/protocol/assistant.md. */
@@ -16,6 +17,8 @@ internal const val MT_SEGMENTED_BUFFER = 1003
 internal const val MT_NET_EVENT = 1010
 internal const val MT_DEVICE_ACTIVE = 1016
 internal const val MT_RUNNING_LOCALE = 1026
+// The glasses' notice that a notification reached their assistant, once per session: {1 its hashCode as text}.
+internal const val MT_INCOMING_NOTIFICATION_RESPONSE = 1027
 internal const val MT_NUM_OF_DEVICES_PAIRED = 1029
 internal const val MT_AIR_RESOURCES_UNAVAILABLE = 1031
 internal const val MT_AIR_RESOURCES_AVAILABLE = 1032
@@ -62,6 +65,16 @@ internal const val EV_ON_PHONE_UNDERSTANDING = 342
 internal const val EV_TTS_START_INFO = 388
 internal const val EV_TTS_END_INFO = 389
 internal const val EV_KEEP_AIR_SESSION_ALIVE = 392
+// ExternalTranscriptionRequest {1 interactionId, 2 transcription, 3 deviceContext, 4 handwriting}: words typed or written.
+internal const val EV_EXTERNAL_TRANSCRIPTION_REQUEST = 341
+// CarbonCrossSurfaceMessage: the glasses' tool registry sync, sent at connect while their developer mode is on.
+internal const val EV_CARBON_CROSS_SURFACE = 396
+// The glasses' own tools and intents, run for a Display turn (see GlassesTools.kt).
+internal const val EV_REMOTE_INTENT_REQUEST = 380
+internal const val EV_REMOTE_INTENT_RESPONSE = 381
+internal const val EV_MCP_REQUEST = 311
+internal const val EV_MCP_RESPONSE = 312
+internal const val EV_MCP_REQUEST_ACK = 387
 
 /** The glasses' name for a NetEvent id. */
 internal fun eventName(id: Int): String = EVENT_NAMES[id] ?: "event $id"
@@ -74,6 +87,17 @@ private val EVENT_NAMES: Map<Int, String> by lazy {
 }
 
 internal const val REPLY_INTENT = "IN:GET_WEATHER"
+
+/**
+ * svc28 SNIntent (2300) for the Display's typed-question receiver in SystemUI: {1 action, 2 {1 "text_query", 5 text}}.
+ * svc28 sends an action it does not name on as a broadcast, the data as its extras.
+ */
+internal fun textQueryIntent(text: String): ByteArray =
+    Wire.fieldBytes(1, TEXT_QUERY_ACTION.encodeToByteArray()) +
+        Wire.fieldBytes(2, Wire.fieldBytes(1, TEXT_QUERY_KEY.encodeToByteArray()) + Wire.fieldBytes(5, text.encodeToByteArray()))
+
+private const val TEXT_QUERY_ACTION = "com.meta.smartglass.app.systemui.assistant.ACTION_TEXT_QUERY_OVERLAY"
+private const val TEXT_QUERY_KEY = "text_query"
 
 /**
  * The svc15 carrier. Field 4 must be I64: written as I32 the glasses discard the whole event
@@ -129,7 +153,14 @@ private fun inflate(data: ByteArray): ByteArray {
  * request and interaction ids were replaced in the file with neutral ones of the same shape.
  * Splicing keeps every other byte; re-encoding it would change integer widths.
  */
-internal fun varm(interactionId: String, transcript: String, text: String, onGlasses: Boolean = false, voiceId: String? = null): ByteArray {
+internal fun varm(
+    interactionId: String,
+    transcript: String,
+    text: String,
+    onGlasses: Boolean = false,
+    voiceId: String? = null,
+    card: Boolean = false,
+): ByteArray {
     val raw = checkNotNull(Assistant::class.java.getResourceAsStream("varm_template.bin")) { "varm_template.bin is missing" }
         .use { it.readBytes() }
     val old = Thrift.loads(raw)
@@ -142,21 +173,40 @@ internal fun varm(interactionId: String, transcript: String, text: String, onGla
     // Field 13 is speakRequestVoiceId ("en_US.58" when captured).
     if (onGlasses && !voiceId.isNullOrEmpty()) old[13].asText().takeIf { it.isNotEmpty() }?.let { mapping[it] = voiceId.toByteArray() }
     val spliced = Thrift.replaceStrings(raw, mapping)
-    if (!onGlasses) return spliced
+    if (!onGlasses) return if (card) Thrift.setBool(spliced, 24, true) else spliced
     // No audio follows: streamingBackTts (6) and isUsingPartialResponseStreaming (14) go false; ev60 then carries the text.
-    return listOf(6, 14).fold(spliced) { b, field -> Thrift.setBool(b, field, false) }
+    val quiet = listOf(6, 14).fold(spliced) { b, field -> Thrift.setBool(b, field, false) }
+    // expectedUxTemplate (24) tells the glasses a card is coming in ev60.
+    return if (card) Thrift.setBool(quiet, 24, true) else quiet
+}
+
+/**
+ * A simple card for a Display, as ev60's onDeviceUxMessage carries it: base64 of a compact AssistantTemplate
+ * (type 0, a SimpleTemplate inside). The Display throws on a template without hideAfterMs.
+ */
+internal fun answerCard(text: String): String {
+    // The dialog card shows its title only, in a scrolling block: the answer. The Display shows the question itself.
+    val simple = ThriftWriter().str(1, text).done()
+    val hideAfterMs = (8_000L + 60L * text.length).coerceAtMost(30_000L)
+    val template = ThriftWriter().i32(1, 0).str(2, simple).str(9, text).i64(10, hideAfterMs).done()
+    return java.util.Base64.getEncoder().encodeToString(template)
 }
 
 /**
  * ev60 MwaVoiceInteractionComplete, which ends the turn: ttsMessage, fulfillment type 1 (server), requiresAnswer when
  * they should listen for a reply, shouldSmartFollowUp (11) when they may listen for another question. With [streamed]
  * false the glasses speak the text themselves; true marks it as already played from the stream (7 and 8).
- * Status 1000 is success.
+ * Status 1000 is success. A [card] goes in onDeviceUxMessage (field 27) for the Display to draw.
  */
 internal fun interactionComplete(
-    interactionId: String, text: String, expectsAnswer: Boolean = false, followUp: Boolean = false, streamed: Boolean = false,
+    interactionId: String, text: String, expectsAnswer: Boolean = false, followUp: Boolean = false, card: String? = null,
+    streamed: Boolean = false,
 ): ByteArray {
-    val result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, streamed).bool(8, streamed)
-        .bool(11, followUp).done()
-    return ThriftWriter().str(1, interactionId).i32(2, 1000).str(3, "").struct(4, result).done()
+    var result = ThriftWriter().str(1, text).i32(2, 1).bool(3, expectsAnswer).bool(4, false).bool(7, streamed).bool(8, streamed)
+        .bool(11, followUp)
+    if (card != null) {
+        val ux = ThriftWriter().listOfBinaries(1, listOf(card.toByteArray(Charsets.UTF_8))).str(2, interactionId).done()
+        result = result.struct(27, ux)
+    }
+    return ThriftWriter().str(1, interactionId).i32(2, 1000).str(3, "").struct(4, result.done()).done()
 }

@@ -59,7 +59,9 @@ class MetaAiModel @Inject constructor(
     val forgotten: StateFlow<Memory?> = _forgotten.asStateFlow()
     private var forgetting: Job? = null
 
-    fun ask(question: String, conversation: String?) = assistant.askFromPhone(question, conversation)
+    // A Display asks it as its own turn; other glasses, or none, leave it to the app.
+    fun ask(question: String, conversation: String?) =
+        assistant.askOnDisplay(question, conversation) ?: assistant.askFromPhone(question, conversation)
 
     fun askAgain(id: String) = assistant.askAgain(id)
 

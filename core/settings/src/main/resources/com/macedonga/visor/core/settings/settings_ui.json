@@ -1064,6 +1064,7 @@
 "label_it":"Ascolta mentre registri",
 "note_it":"La riproduzione dell'audio continuerà mentre registri video",
 "products":[
+259,
 262,
 263,
 264
@@ -4825,7 +4826,8 @@
 },
 "label_it":"Orientamento dei contenuti multimediali",
 "not_products":[
-258
+258,
+259
 ],
 "note_it":"Foto e video in verticale (3:4) o in orizzontale (4:3). Gli occhiali scattano sempre l'intera inquadratura verticale; Visor ritaglia quelli orizzontali a 4:3 quando li importa."
 },
@@ -5835,6 +5837,7 @@
 },
 "label_it":"Stabilizzazione video",
 "products":[
+259,
 262,
 263,
 264,
@@ -10798,7 +10801,8 @@
 "label_it":"Modalità orizzontale",
 "note_it":"Il vecchio interruttore orizzontale. Visor lo tiene allineato all'orientamento dei contenuti multimediali.",
 "not_products":[
-258
+258,
+259
 ]
 },
 {
@@ -13014,8 +13018,34 @@
 ],
 "Display":[
 {
+"n":1,
+"label":"Item",
+"type":"message",
+"ref":"Item"
+},
+{
 "n":2,
 "label":"Link",
+"type":"string"
+}
+],
+"Item":[
+{
+"n":1,
+"label":"Title",
+"type":"string"
+},
+{
+"n":2,
+"label":"Icon",
+"type":"message",
+"ref":"Image"
+}
+],
+"Image":[
+{
+"n":1,
+"label":"Uri",
 "type":"string"
 }
 ]
@@ -13328,10 +13358,7 @@
 ]
 },
 "label_it":"Risoluzione e frequenza dei fotogrammi",
-"note_it":"La modifica della risoluzione o della frequenza dei fotogrammi influisce su autonomia della batteria, spazio, durata di registrazione e orientamento.",
-"not_products":[
-259
-]
+"note_it":"La modifica della risoluzione o della frequenza dei fotogrammi influisce su autonomia della batteria, spazio, durata di registrazione e orientamento."
 },
 {
 "key":"sample_app_1_enabled",
@@ -14996,10 +15023,7 @@
 ]
 },
 "label_it":"Durata del video",
-"note_it":"Scegli una durata massima del video. Questi limiti aiutano a ottimizzare la condivisione e lo spazio.",
-"not_products":[
-259
-]
+"note_it":"Scegli una durata massima del video. Questi limiti aiutano a ottimizzare la condivisione e lo spazio."
 },
 {
 "key":"video_fps",

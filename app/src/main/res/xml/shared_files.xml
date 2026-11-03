@@ -3,4 +3,6 @@
 <paths>
     <files-path name="assistant" path="assistant/photos/" />
     <cache-path name="log" path="log/" />
+    <!-- A picture sent from the glasses as an MMS, read by the phone's MMS service. -->
+    <cache-path name="mms" path="mms/" />
 </paths>

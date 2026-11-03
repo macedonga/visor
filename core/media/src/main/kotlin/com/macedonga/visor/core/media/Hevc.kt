@@ -122,7 +122,7 @@ fun hvcC(config: ByteArray): ByteArray? {
 }
 
 /** Drops the emulation-prevention bytes (00 00 03) from a NAL unit's payload. */
-private fun unescape(unit: ByteArray): ByteArray {
+internal fun unescape(unit: ByteArray): ByteArray {
     val out = ByteArrayOutputStream(unit.size)
     var zeros = 0
     for (b in unit) {
@@ -136,7 +136,7 @@ private fun unescape(unit: ByteArray): ByteArray {
     return out.toByteArray()
 }
 
-private class BitReader(private val data: ByteArray, startByte: Int) {
+internal class BitReader(private val data: ByteArray, startByte: Int) {
     private var pos = startByte * 8
 
     fun bits(n: Int): Int {

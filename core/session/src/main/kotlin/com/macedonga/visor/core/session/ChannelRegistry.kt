@@ -23,6 +23,11 @@ class ChannelRegistry {
         Unit
     }
 
+    /** The service of [channelId], a channel this side opened, or 0 when it is not open. */
+    fun localService(channelId: Int): Int = synchronized(this) {
+        local[channelId and 0x7FFF] ?: 0
+    }
+
     /** Record the service named on an inbound frame, whichever side opened the channel. */
     fun bindInbound(channelId: Int, serviceId: Int) = synchronized(this) {
         mapForInbound(channelId)[channelId and 0x7FFF] = serviceId
@@ -34,9 +39,9 @@ class ChannelRegistry {
         mapForInbound(channelId)[channelId and 0x7FFF] ?: 0
     }
 
-    fun closeInbound(channelId: Int) = synchronized(this) {
-        mapForInbound(channelId).remove(channelId and 0x7FFF)
-        Unit
+    /** Forget [channelId], and return the service it had, or 0. */
+    fun closeInbound(channelId: Int): Int = synchronized(this) {
+        mapForInbound(channelId).remove(channelId and 0x7FFF) ?: 0
     }
 
     private fun mapForInbound(channelId: Int): HashMap<Int, Int> =

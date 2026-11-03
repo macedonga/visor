@@ -69,6 +69,9 @@ class ProtocolError(val detail: String, val frame: ByteArray = ByteArray(0)) : S
     override fun toString(): String = "ProtocolError($detail)"
 }
 
+/** A DataX error frame, published after the [ProtocolError] that words it: [errorId] from [serviceId] on [channelId]. */
+data class DataXError(val serviceId: Int, val channelId: Int, val errorId: Int) : SessionEvent
+
 /** One SDU, as it went over the wire. */
 class WireFrame(val outbound: Boolean, val data: ByteArray) : SessionEvent {
 

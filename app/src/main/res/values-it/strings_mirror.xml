@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mirror_title">Specchio</string>
+    <string name="mirror_start">Avvia</string>
+    <string name="mirror_stop">Ferma</string>
+    <string name="mirror_idle">Inattivo</string>
+    <string name="mirror_starting">Avvio…</string>
+    <string name="mirror_live">In diretta</string>
+    <string name="mirror_not_connected">Connettiti prima agli occhiali.</string>
+    <string name="mirror_not_read">Leggi prima la configurazione degli occhiali.</string>
+    <string name="mirror_no_flag">Questi occhiali non hanno l\'interruttore dello schermo.</string>
+    <string name="mirror_flag_not_sent">Gli occhiali non hanno accettato l\'interruttore: %1$s</string>
+    <string name="mirror_no_answer">Gli occhiali non hanno risposto.</string>
+    <string name="mirror_asleep">Lo schermo degli occhiali è spento.</string>
+    <string name="mirror_timeout">Gli occhiali sono andati in timeout.</string>
+    <string name="mirror_unknown">Gli occhiali hanno rifiutato lo schermo condiviso.</string>
+    <string name="mirror_needs_restart">Riavvia gli occhiali una volta per attivare la proiezione.</string>
+    <string name="mirror_no_wifi">Il Wi-Fi con gli occhiali non si è attivato: %1$s</string>
+</resources>

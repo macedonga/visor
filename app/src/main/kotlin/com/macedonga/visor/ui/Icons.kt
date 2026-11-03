@@ -45,6 +45,9 @@ object VisorIcons {
 
     val Case = icon("M6 8h12a4 4 0 0 1 0 8H6a4 4 0 0 1 0-8z", "M2.5 12h19")
 
+    /** The Neural Band: the strap seen edge on, the pod on top. */
+    val Band = icon("M5 12.5a7 4.5 0 1 0 14 0a7 4.5 0 1 0-14 0", "M9.8 6.3h4.4a1 1 0 0 1 1 1v1.2H8.8V7.3a1 1 0 0 1 1-1z")
+
     /** A turn back round the clock: what just happened. */
     val Replay = icon("M5.2 13.5A7 7 0 1 0 7 7.1", "M6.6 3.6l.4 3.5 3.5-.4")
 
@@ -147,6 +150,8 @@ object VisorIcons {
         "M12 4c2.4 2.2 3.5 5 3.5 8s-1.1 5.8-3.5 8c-2.4-2.2-3.5-5-3.5-8s1.1-5.8 3.5-8z",
     )
 
+    val Wifi = icon("M3.5 9.5a12 12 0 0 1 17 0", "M6.5 12.8a7.7 7.7 0 0 1 11 0", "M9.4 16a3.6 3.6 0 0 1 5.2 0", "M12 19.2h.01")
+
     /** A tap and its ripples. */
     val Touch = icon("M12 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0", "M7.8 16.2a6 6 0 1 1 8.4 0", "M5 19a10 10 0 1 1 14 0")
 
@@ -194,6 +199,8 @@ object VisorIcons {
         "M6 6.5h12a1.5 1.5 0 0 1 1.5 1.5v8a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 16V8A1.5 1.5 0 0 1 6 6.5z",
         "M7.5 11h4", "M13.5 11h3", "M7.5 14h7",
     )
+
+    val Mirror = icon("M4 5.5h16v11H4z", "M9.5 19.5h5", "M12 16.5v3")
 
     val People = icon(
         "M9 9m-2.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0", "M4 18.5a5 5 0 0 1 10 0",

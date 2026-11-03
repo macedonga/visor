@@ -147,7 +147,7 @@ fun GlassesRow(key: String, engineering: Boolean = false, overline: String? = nu
         is Control.Choice -> {
             val current = value.trim()
             // Options the Meta app keeps for other glasses show only in Advanced.
-            val shown = c.options.filter { engineering || it.offeredOn(state.product) || it.value == current }
+            val shown = c.options.filter { engineering || it.value == current || (!it.hidden && it.offeredOn(state.product)) }
             if (shown.size <= 4 && shown.all { it.label.length <= 16 && it.detail == null } && shown.any { it.value == current }) {
                 PillsRow(
                     spec.label, shown.map { it.value to it.label }, current, onPick = write,

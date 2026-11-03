@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="requests_title">Richieste</string>
+    <string name="requests_empty">Qui compare ciò che gli occhiali chiedono al telefono di scaricare.</string>
+    <string name="requests_copied">Link copiato</string>
+    <string name="requests_running">in corso</string>
+    <string name="requests_source">origine %1$d</string>
+    <string name="requests_tunnel">tunnel</string>
+    <string name="requests_meta">Meta</string>
+    <string name="requests_location">posizione</string>
+    <string name="requests_calls">chiamate</string>
+</resources>

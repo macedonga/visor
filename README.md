@@ -39,10 +39,13 @@ Visor works with Ray-Ban Meta, Oakley Meta and the other Meta glasses. It speaks
 | **Settings** | Every setting the glasses have, the way the Meta app shows them. Advanced holds the rest, assistant language packs and the firmware's feature flags. |
 | **Outside the app** | A home screen widget, a Quick Settings tile, launcher shortcuts, and a Live Update notification while the Live view runs. |
 | **Developer mode** | Other apps and automations can take photos and videos, import captures and hear about new ones. See [Developer mode](docs/developer-mode.md). |
+| **More than one pair** | Keep several pairs on one phone. Home swipes between them, each with its name, batteries and a Connect button, and ends with a page to set up another. |
+| **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. |
+| **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. |
 
 ## Requirements
 
-- **Glasses:** a pair of Meta glasses, such as Ray-Ban Meta or Oakley Meta. Support for the Meta Ray-Ban Display is limited and lives on the [`display`](https://github.com/macedonga/visor/tree/display) branch.
+- **Glasses:** a pair of Meta glasses, such as Ray-Ban Meta, Oakley Meta or the Meta Ray-Ban Display. Support for the Display and its Neural Band is newer and does not yet cover everything the Meta AI app does.
 - **Phone:** Android 10 or later.
 - **Meta account**, for setup. Log in with a password or an email code. Passkeys do not work.
 - **For the assistant:** an API key from Anthropic or from an OpenAI-compatible service.

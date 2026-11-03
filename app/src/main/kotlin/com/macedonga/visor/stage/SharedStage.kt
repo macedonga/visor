@@ -6,8 +6,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,13 +30,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.IntOffset
 import com.macedonga.visor.ui.animationsOff
@@ -126,20 +132,69 @@ fun StageLight(look: LightLook) {
     }
 }
 
-/** Dragging sideways turns the pair, and it springs back to rest. */
+/** The pairs a drag on the stage moves between: whether there is one [direction] (1 the next), and going there. */
+class StagePages(val can: (direction: Int) -> Boolean, val go: (direction: Int) -> Unit)
+
+/**
+ * Dragging sideways turns the pair, and it springs back to rest. With [pages] it does not turn: it follows the finger
+ * sideways, and a long drag or a fling takes it out of the light for the next one.
+ */
 @Composable
-fun Modifier.turnsThePair(onDetent: () -> Unit): Modifier {
+fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modifier {
     val stage = LocalStage.current
     val scope = rememberCoroutineScope()
     val detent = rememberUpdatedState(onDetent)
+    val paging = rememberUpdatedState(pages)
     return pointerInput(stage) {
         var lastDetent = 0
+        var travel = 0f
+        var past = false
+        val tracker = VelocityTracker()
         val back = spring<Float>(dampingRatio = 0.62f, stiffness = Spring.StiffnessLow)
+        fun settle() {
+            scope.launch { stage.yaw.animateTo(0f, back) }
+            scope.launch { stage.slide.animateTo(0f, back) }
+        }
         detectHorizontalDragGestures(
-            onDragEnd = { scope.launch { stage.yaw.animateTo(0f, back) } },
-            onDragCancel = { scope.launch { stage.yaw.animateTo(0f, back) } },
+            onDragStart = {
+                travel = 0f
+                past = false
+                tracker.resetTracking()
+            },
+            onDragEnd = {
+                val pages = paging.value
+                val fling = tracker.calculateVelocity().x
+                val direction = when {
+                    pages == null -> 0
+                    travel < -size.width * PAGE_AT || fling < -PAGE_FLING -> 1
+                    travel > size.width * PAGE_AT || fling > PAGE_FLING -> -1
+                    else -> 0
+                }
+                if (direction != 0 && pages!!.can(direction)) {
+                    if (!past) detent.value()
+                    scope.launch { stage.page(direction) { pages.go(direction) } }
+                } else {
+                    settle()
+                }
+            },
+            onDragCancel = { settle() },
         ) { change, dx ->
             change.consume()
+            tracker.addPosition(change.uptimeMillis, change.position)
+            travel += dx
+            val pages = paging.value
+            if (pages != null) {
+                // Towards a page it follows the finger; at the end of the row it barely moves. A tick says it will go.
+                val towards = if (travel < 0) 1 else -1
+                val can = pages.can(towards)
+                scope.launch { stage.slide.snapTo(travel / size.width * if (can) FOLLOW else FOLLOW_AT_END) }
+                val nowPast = can && abs(travel) > size.width * PAGE_AT
+                if (nowPast != past) {
+                    past = nowPast
+                    if (nowPast) detent.value()
+                }
+                return@detectHorizontalDragGestures
+            }
             // Free for the first half turn either way, then it resists like a rubber band.
             val yaw = stage.yaw.value
             val next = (yaw + dx * DEGREES_PER_PX * (1f - (abs(yaw) / MAX_YAW).coerceIn(0f, 0.9f))).coerceIn(-MAX_YAW, MAX_YAW)
@@ -181,6 +236,11 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
         }
     }
     LaunchedEffect(stage) { snapshotFlow { stage.yaw.value }.collect { stage.pose.yawDegrees = it; stage.renderer.invalidate() } }
+    LaunchedEffect(stage) { snapshotFlow { stage.slide.value }.collect { stage.pose.slide = it; stage.renderer.invalidate() } }
+    // At once, not faded: a page changes while the pair is out of sight, and a fade would show both as it slides in.
+    val picture = stage.picture.takeIf { !stage.vacant }
+    val pictured = if (picture != null) 1f else 0f
+    val vacant = if (stage.vacant) 1f else 0f
     val curtain by animateFloatAsState(if (shown && newest != null) 1f else 0f, if (shown) snap() else tween(CURTAIN_MS), label = "stage")
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -214,9 +274,30 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
                     },
             ) {
                 LightPool(stage.light, Offset(0.5f, POOL_Y), Size(0.21f, 0.058f), Size(0.17f, 0.02f), Modifier.fillMaxSize())
-                GlassesStage(liveliness = newest?.liveliness ?: 0.25f, active = curtain > 0f, modifier = Modifier.fillMaxSize())
+                GlassesStage(
+                    liveliness = newest?.liveliness ?: 0.25f, active = curtain > 0f,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 1f - maxOf(pictured, vacant) },
+                )
+                picture?.let { PairPicture(it, stage, Modifier.fillMaxSize()) }
             }
         }
+    }
+}
+
+/** Meta's picture of the pair, front on where the model would stand, sliding with it. */
+@Composable
+private fun PairPicture(picture: ImageBitmap, stage: StageHolder, modifier: Modifier) {
+    BoxWithConstraints(modifier) {
+        Image(
+            picture, null,
+            Modifier
+                .align(BiasAlignment(0f, PICTURE_Y))
+                .fillMaxWidth(PICTURE_WIDTH)
+                // Its own shape, so it fills the width rather than drawing at its pixel size.
+                .aspectRatio(picture.width.toFloat() / picture.height)
+                .graphicsLayer { translationX = stage.slide.value * size.width / PICTURE_WIDTH },
+            contentScale = ContentScale.Fit,
+        )
     }
 }
 
@@ -224,6 +305,14 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
 internal val HANDOVER_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 internal const val HANDOVER_NS = 640_000_000L
 private const val CURTAIN_MS = 180
+// As wide as the model looks on the home, and low enough that it ends in the light where the model's temples do.
+private const val PICTURE_WIDTH = 0.56f
+private const val PICTURE_Y = 0.1f
 private const val DEGREES_PER_PX = 0.32f
 private const val MAX_YAW = 160f
 private const val DETENT_DEGREES = 30f
+// A third of the width, or a flick, goes to the next pair.
+private const val PAGE_AT = 0.33f
+private const val PAGE_FLING = 1_400f
+private const val FOLLOW = 0.9f
+private const val FOLLOW_AT_END = 0.12f

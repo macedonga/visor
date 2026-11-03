@@ -24,6 +24,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -66,7 +68,12 @@ class GlassesConfig(
     private val airship: AirshipReceiver,
     private val media: MediaImport,
 ) {
-    private val dir = File(context.filesDir, "mobileconfig").apply { mkdirs() }
+    private val root = File(context.filesDir, "mobileconfig").apply { mkdirs() }
+
+    // Each pair's own folder: their parameter maps differ with their firmware, and a table built on one pair's values
+    // must never reach another.
+    @Volatile
+    private var dir = File(root, connection.pair.value ?: NO_PAIR)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(ConfigState())
     val state: StateFlow<ConfigState> = _state.asStateFlow()
@@ -81,7 +88,29 @@ class GlassesConfig(
 
     init {
         media.bugReportReader = { take(it) }
-        scope.launch { runCatching { load() } }
+        scope.launch {
+            connection.pair.filterNotNull().distinctUntilChanged().collect { serial ->
+                writes.withLock { runCatching { switchTo(serial) } }
+            }
+        }
+    }
+
+    /** The pair's own values, or none yet; what the last pair had stays in its folder. */
+    private fun switchTo(serial: String) {
+        dir = File(root, serial)
+        // Before Visor kept pairs apart, the one pair's files sat in the root.
+        val loose = root.listFiles { f -> f.isFile }.orEmpty()
+        if (loose.isNotEmpty() && !dir.exists()) {
+            dir.mkdirs()
+            loose.forEach { it.renameTo(File(dir, it.name)) }
+        }
+        dir.mkdirs()
+        schemaHash = ""
+        counts = IntArray(4)
+        sessionId = ""
+        boot = null
+        _state.value = ConfigState()
+        load()
     }
 
     /** Ask the glasses for a bug report and read their configuration out of it. */
@@ -304,6 +333,7 @@ class GlassesConfig(
         const val SENT = "sent_at.txt"
         const val TIMESTAMP = "current_timestamp.txt"
         const val LAST_STAMP = "last_stamp.txt"
+        private const val NO_PAIR = "none"
         const val STAMP = "MMM-dd-yyyy-HH-mm-ss"
         const val STALE_MARGIN_MS = 15 * 60_000L
         const val READ_TIMEOUT_MS = 10 * 60_000L

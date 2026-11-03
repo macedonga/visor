@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="finish_hfp_title">Associazione classica per le chiamate</string>
+    <string name="finish_hfp_undo">Annulla l\'associazione classica</string>
+    <string name="finish_hfp_running">Nuova associazione…</string>
+    <string name="finish_hfp_present">Associazione classica presente</string>
+    <string name="finish_hfp_calls_on">Chiamate collegate</string>
+    <string name="finish_hfp_calls_off">Chiamate non collegate</string>
+    <string name="finish_hfp_unreachable">Modalità di associazione non raggiungibile</string>
+    <string name="finish_hfp_ready">Nuova associazione possibile</string>
+    <string name="finish_hfp_confirm_title">Associare di nuovo gli occhiali?</string>
+    <string name="finish_hfp_undo_title">Tornare all\'associazione LE?</string>
+    <string name="finish_hfp_confirm_text">Gli occhiali si dissociano da questo telefono e si associano di nuovo. Tienili aperti e vicini al telefono e accetta la richiesta di associazione. Se non riescono entrambe le associazioni, gli occhiali vanno ripristinati.</string>
+    <string name="finish_hfp_confirm">Associa di nuovo</string>
+    <string name="finish_hfp_fail_unsupported">Non disponibile</string>
+    <string name="finish_hfp_fail_connect">Prima collega gli occhiali</string>
+    <string name="finish_hfp_fail_off">Il Bluetooth è spento</string>
+    <string name="finish_hfp_fail_busy">Non durante una chiamata, una diretta o un\'importazione</string>
+    <string name="finish_hfp_fail_companion">Nessun dispositivo associato</string>
+    <string name="finish_hfp_fail_refused">Rifiutato (%1$s)</string>
+    <string name="finish_hfp_fail_unpair">Il telefono ha tenuto la vecchia associazione</string>
+    <string name="finish_hfp_fail_restored">Non associati, ripristinata l\'associazione precedente</string>
+    <string name="finish_hfp_fail_lost">Non associati. Potrebbe servire un ripristino degli occhiali</string>
+    <string name="finish_hfp_fail">Non riuscito: %1$s</string>
+</resources>

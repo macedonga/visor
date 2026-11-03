@@ -137,10 +137,12 @@ class SecureLink(
             ecdhSecret = secret,
         )
 
+        // What both ends support is what the link uses: the band offers 27, no Multikey.
+        val multikey = (OUR_PARAMETERS and request.supportedParameters and enable.parameters and Kdf.MULTIKEY) != 0
         // Keep exactly as measured: TX takes the peer's RequestEncryption challenge as nonce and
         // our seed.
-        val rxKeys = Kdf.deriveDirectionKeys(secret, myChallenge, enable.seed, enable.iv)
-        val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv)
+        val rxKeys = Kdf.deriveDirectionKeys(secret, myChallenge, enable.seed, enable.iv, multikey = multikey)
+        val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv, multikey = multikey)
         rxCrypto = FrameCrypto(rxKeys, initRxSeq = enable.base.toInt())
         txCrypto = FrameCrypto(txKeys, initTxSeq = mySeq.toInt())
 
@@ -206,13 +208,21 @@ class SecureLink(
         txMutex.withLock { transport.send(sdu) }
     }
 
-    /** Seal and send under one lock, and without a cancellation point between them. */
+    /**
+     * Seal and send under one lock, and without a cancellation point between them. A message longer than one frame
+     * runs on into the next frames, as the glasses send theirs; the lock keeps another message out of the middle.
+     */
     private suspend fun sealAndSend(plaintext: ByteArray) {
         txMutex.withLock {
             val crypto = checkNotNull(txCrypto) { "link not open" }
             withContext(NonCancellable) {
-                // Framing.pack adds the 0x40 type byte: [0x40][8B tag][1B blockCount][ct].
-                transport.send(Framing.pack(FrameType.DATA, 0, crypto.seal(plaintext)))
+                var at = 0
+                do {
+                    val end = minOf(plaintext.size, at + FRAME_PLAINTEXT)
+                    // Framing.pack adds the 0x40 type byte: [0x40][8B tag][1B blockCount][ct].
+                    transport.send(Framing.pack(FrameType.DATA, 0, crypto.seal(plaintext.copyOfRange(at, end))))
+                    at = end
+                } while (at < plaintext.size)
             }
         }
     }
@@ -224,5 +234,11 @@ class SecureLink(
 
         /** How many frames [open] will read while waiting for the peer's two messages. */
         const val HANDSHAKE_READS = 8
+
+        /** The parameters this side's RequestEncryption and EnableEncryption announce. */
+        const val OUR_PARAMETERS = 31
+
+        /** The most one frame holds: 256 blocks, less the pad's one byte at least. */
+        const val FRAME_PLAINTEXT = 256 * 16 - 1
     }
 }

@@ -49,6 +49,8 @@ class GlassesPose {
     var tiltPitchDegrees = 0f
     var shiftX = 0f
     var shiftY = 0f
+    /** Sideways out of the light, in stage widths. */
+    var slide = 0f
     /** Its own slow drift, so it never looks frozen. */
     var idleYaw = 0f
     var idlePitch = 0f
@@ -251,7 +253,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         }
         val signature = floatArrayOf(
             light.level, light.flash, light.core[0], light.core[1], light.core[2],
-            pose.foldLeft, pose.foldRight, pose.framing, pose.yawDegrees, pose.pitchDegrees, pose.tiltYawDegrees, pose.tiltPitchDegrees, pose.shiftX, pose.shiftY,
+            pose.foldLeft, pose.foldRight, pose.framing, pose.yawDegrees, pose.pitchDegrees, pose.tiltYawDegrees, pose.tiltPitchDegrees, pose.shiftX, pose.shiftY, pose.slide,
             pose.idleYaw, pose.idlePitch, pose.idleRoll, pose.idleLift, pose.gestureYaw,
             pose.led, pose.viewYaw, pose.viewPitch, pose.innerLed, pose.button, if (loaded) 1f else 0f,
         )
@@ -307,7 +309,8 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         val m = FloatArray(16)
         Matrix.setIdentityM(m, 0)
         // Folded they are flatter, so they settle a little lower into the light.
-        Matrix.translateM(m, 0, pose.shiftX, pose.shiftY + pose.idleLift - CLOSED_DROP * pose.framing, 0f)
+        // A stage width is twice the radius the camera fits.
+        Matrix.translateM(m, 0, pose.shiftX + pose.slide * 2 * FIT_RADIUS.toFloat(), pose.shiftY + pose.idleLift - CLOSED_DROP * pose.framing, 0f)
         Matrix.rotateM(m, 0, pose.idleRoll, 0f, 0f, 1f)
         Matrix.rotateM(m, 0, pose.pitchDegrees + pose.tiltPitchDegrees + pose.idlePitch + pose.viewPitch, 1f, 0f, 0f)
         Matrix.rotateM(m, 0, REST_YAW + pose.yawDegrees + pose.tiltYawDegrees + pose.idleYaw + pose.gestureYaw + pose.viewYaw, 0f, 1f, 0f)

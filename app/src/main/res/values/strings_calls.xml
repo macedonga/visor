@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="access_call_control">Place and answer calls</string>
+    <string name="access_call_control_why">So the glasses can place and answer calls on this phone.</string>
+</resources>

@@ -8,6 +8,7 @@ import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.Hearing
 import com.macedonga.visor.core.assistant.Timers
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesWifi
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
@@ -37,6 +38,7 @@ class EventLog @Inject constructor(
     keeper: LeKeeper,
     media: MediaImport,
     settings: GlassesSettings,
+    wifi: GlassesWifi,
     live: LiveStream,
     assistant: Assistant,
     tools: com.macedonga.visor.core.assistant.mcp.McpHub,
@@ -64,7 +66,9 @@ class EventLog @Inject constructor(
         }
         scope.launch {
             connection.serviceData.collect { data ->
-                // The assistant says what its svc15 traffic means itself.
+                // The assistant says what its svc15 traffic means itself; the internet tunnel and the data fetcher go to
+                // the Requests page, a packet or a request at a time being far too many for this log.
+                if (data.serviceId in QUIET) return@collect
                 if (data.serviceId != 15) add("Message from service ${data.serviceId}, type ${data.messageType}, ${data.payload.size} bytes")
                 // Debug builds also print the bytes, so a service Visor does not answer can be read over adb.
                 if (BuildConfig.DEBUG && data.serviceId !in setOf(15, 20)) {
@@ -80,6 +84,9 @@ class EventLog @Inject constructor(
         }
         scope.launch {
             settings.notes.collect { add("Settings: $it") }
+        }
+        scope.launch {
+            wifi.notes.collect { add("Wi-Fi networks: $it") }
         }
         scope.launch {
             live.notes.collect { add("Live: $it") }
@@ -147,6 +154,7 @@ class EventLog @Inject constructor(
 
     private companion object {
         const val LIMIT = 1000
+        val QUIET = setOf(com.macedonga.visor.connection.DataFetcher.SVC, com.macedonga.visor.connection.PhoneInternet.SVC)
         val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     }
 }

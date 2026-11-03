@@ -61,12 +61,12 @@ class Receipt(val signature: ByteArray, val bodyJson: ByteArray) {
     }
 }
 
-/** IdentityResponse fields 1 and 2. */
-class DeviceIdentity(val certDer: ByteArray, val serial: String) {
+/** IdentityResponse {1: certificate, 2: serial, 3: registration challenge, 4: DRK present, 5: secondary certificate}. */
+class DeviceIdentity(val certDer: ByteArray, val serial: String, val secondaryCert: ByteArray = ByteArray(0)) {
     companion object {
         fun decode(data: ByteArray): DeviceIdentity {
             val fields = Wire.parse(data)
-            return DeviceIdentity(certDer = fields.bytes(1), serial = String(fields.bytes(2), Charsets.US_ASCII))
+            return DeviceIdentity(certDer = fields.bytes(1), serial = String(fields.bytes(2), Charsets.US_ASCII), secondaryCert = fields.bytes(5))
         }
     }
 }
@@ -134,7 +134,7 @@ class PairingBackend(
         )
     }
 
-    fun pairRequest(certDer: ByteArray, serial: String, deviceNonce: ByteArray, appPubkey: ByteArray): Receipt {
+    fun pairRequest(certDer: ByteArray, serial: String, deviceNonce: ByteArray, appPubkey: ByteArray, secondaryCert: ByteArray = ByteArray(0)): Receipt {
         val fields = common()
         fields["device_cert"] = Base64.getEncoder().encodeToString(certDer)
         fields["serial_number"] = serial
@@ -142,7 +142,8 @@ class PairingBackend(
             buildJsonObject {
                 put("device_nonce", Base64.getEncoder().encodeToString(deviceNonce))
                 put("app_pubkey", Base64.getEncoder().encodeToString(appPubkey))
-                put("secondary_cert", "")
+                // IdentityResponse field 5, as the Meta app sends it; glasses have none.
+                put("secondary_cert", if (secondaryCert.isEmpty()) "" else Base64.getEncoder().encodeToString(secondaryCert))
             },
         )
         return post("pair_request", fields, "pending_ownership_receipt")
@@ -189,6 +190,10 @@ class ProvisioningFlow(
     private val channel = connection.openChannel(ServiceId.IDENTITY.value)
     private var first = true
 
+    /** The device's certificate from its IdentityResponse, once [run] has it. */
+    var deviceCert: ByteArray? = null
+        private set
+
     private suspend fun send(messageType: IdentityMsgType, payload: ByteArray = ByteArray(0)) {
         // A peer names a channel's service only on that channel's first message; later ones
         // carry service_id 0.
@@ -224,6 +229,7 @@ class ProvisioningFlow(
         onStep(ProvisionStep.IDENTITY)
         send(IdentityMsgType.IDENTITY_REQUEST)
         val identity = DeviceIdentity.decode(await(IdentityMsgType.IDENTITY_RESPONSE))
+        deviceCert = identity.certDer
 
         onStep(ProvisionStep.SKIP_CHALLENGE)
         send(IdentityMsgType.SKIP_CHALLENGE)
@@ -231,7 +237,10 @@ class ProvisioningFlow(
 
         onStep(ProvisionStep.PAIR_REQUEST)
         val pending = withContext(Dispatchers.IO) {
-            backend.pairRequest(certDer = identity.certDer, serial = identity.serial, deviceNonce = nonce, appPubkey = appPubkey)
+            backend.pairRequest(
+                certDer = identity.certDer, serial = identity.serial, deviceNonce = nonce, appPubkey = appPubkey,
+                secondaryCert = identity.secondaryCert,
+            )
         }
 
         onStep(ProvisionStep.START_CHANGE_OWNER)

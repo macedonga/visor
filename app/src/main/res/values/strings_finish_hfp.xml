@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="finish_hfp_title">Classic bond for calls</string>
+    <string name="finish_hfp_undo">Undo classic bond</string>
+    <string name="finish_hfp_running">Re-pairing…</string>
+    <string name="finish_hfp_present">Classic bond present</string>
+    <string name="finish_hfp_calls_on">Calls connected</string>
+    <string name="finish_hfp_calls_off">Calls not connected</string>
+    <string name="finish_hfp_unreachable">Pairing mode unreachable</string>
+    <string name="finish_hfp_ready">Ready to re-pair</string>
+    <string name="finish_hfp_confirm_title">Re-pair the glasses?</string>
+    <string name="finish_hfp_undo_title">Pair over LE again?</string>
+    <string name="finish_hfp_confirm_text">The glasses unpair from this phone and pair again. Keep them open and near the phone, and accept the pairing request. If both pairings fail, the glasses need a reset.</string>
+    <string name="finish_hfp_confirm">Re-pair</string>
+    <string name="finish_hfp_fail_unsupported">Not available</string>
+    <string name="finish_hfp_fail_connect">Connect the glasses first</string>
+    <string name="finish_hfp_fail_off">Bluetooth is off</string>
+    <string name="finish_hfp_fail_busy">Not during a call, Live or import</string>
+    <string name="finish_hfp_fail_companion">No companion device</string>
+    <string name="finish_hfp_fail_refused">Refused (%1$s)</string>
+    <string name="finish_hfp_fail_unpair">The phone kept the old pairing</string>
+    <string name="finish_hfp_fail_restored">Not paired, old pairing restored</string>
+    <string name="finish_hfp_fail_lost">Not paired. The glasses may need a reset</string>
+    <string name="finish_hfp_fail">Failed: %1$s</string>
+</resources>

@@ -25,6 +25,9 @@ fun interface SessionCommand {
 /** Runs for every message of one service, before the message is published. */
 fun interface Responder {
     suspend fun respond(message: DataXMessage, connection: DataXConnection)
+
+    /** The peer closed [channelId], a channel of this service. A close frame names no service, so it reaches only this. */
+    suspend fun closed(channelId: Int, connection: DataXConnection) {}
 }
 
 /** The bounded wait this session owns ran out. See [GlassesSession.withLinkDeadline]. */
@@ -206,15 +209,22 @@ class GlassesSession(
         withLinkDeadline(END_LINK_SETUP_TIMEOUT_MILLIS, "the glasses did not send their EndLinkSetup") {
             while (true) {
                 val message = mux.receive()
-                if (message.info.channelId == LINK_SETUP_CHANNEL &&
-                    message.info.messageType == LinkSetupMsgType.END_LINK_SETUP.value
-                ) {
+                if (isTheirEndLinkSetup(message)) {
                     mux.sendStatus(DataXConnection.mirror(message.info.channelId), SUCCESS)
                     return@withLinkDeadline
                 }
                 handleMessage(message)
             }
         }
+    }
+
+    // The glasses answer on the link setup channel our RequestEncryption opened; the Neural Band on one of its own,
+    // 0x9001, that names no service.
+    private fun isTheirEndLinkSetup(message: DataXMessage): Boolean {
+        val info = message.info
+        if (info.messageType != LinkSetupMsgType.END_LINK_SETUP.value || info.flags.hasError) return false
+        return info.channelId == LINK_SETUP_CHANNEL ||
+            ((info.channelId and 0x8000) != 0 && info.serviceId == 0 && registry.serviceForInbound(info.channelId) == 0)
     }
 
     /** Drain what the glasses said during link setup before anyone allocates a local channel. */
@@ -260,20 +270,22 @@ class GlassesSession(
             mux.sendStatus(DataXConnection.mirror(info.channelId), SERVICE_NOT_FOUND)
         }
 
+        // svc4, connection_monitor: the glasses' delivery check (type 0, a counter) is confirmed with a bare OK status.
+        if (serviceId == CONNECTION_MONITOR &&
+            (info.channelId and 0x8000) != 0 &&
+            !info.flags.hasError &&
+            !info.flags.isClosed
+        ) {
+            mux.sendStatus(DataXConnection.mirror(info.channelId), OK)
+        }
+
         val responder = responders[serviceId]
         if (responder != null && !info.flags.hasError) {
-            try {
-                responder.respond(message, mux)
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Throwable) {
-                publish(
-                    ProtocolError(
-                        "responder for service $serviceId failed: ${error.message}",
-                        message.payload,
-                    ),
-                )
-            }
+            guarded(serviceId, message.payload) { responder.respond(message, mux) }
+        }
+        val closing = responders[message.closedService]
+        if (closing != null && info.flags.isClosed && !info.flags.hasError) {
+            guarded(message.closedService, message.payload) { closing.closed(info.channelId, mux) }
         }
 
         if (info.flags.hasError) {
@@ -286,12 +298,24 @@ class GlassesSession(
                             .format(java.util.Locale.ROOT, serviceId, info.errorId, info.channelId),
                     ),
                 )
+                publish(DataXError(serviceId, info.channelId, info.errorId))
             }
             return
         }
         // An empty close frame only ends a channel, and the registry has already forgotten whose it was.
         if (info.flags.isClosed && message.payload.isEmpty()) return
         publish(ServiceData(serviceId, info.messageType, message.payload))
+    }
+
+    /** A responder that fails is reported; the link goes on. */
+    private suspend fun guarded(serviceId: Int, payload: ByteArray, work: suspend () -> Unit) {
+        try {
+            work()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            publish(ProtocolError("responder for service $serviceId failed: ${error.message}", payload))
+        }
     }
 
     /** Run [body] with a bound on how long it may wait for the peer. */
@@ -385,12 +409,17 @@ class GlassesSession(
 
         private val BACKOFF_MILLIS = longArrayOf(1_000, 2_000, 4_000, 8_000)
 
-        /** 0x1000 is the DataX success status every service answers with. */
+        /** 0x1000 is the success status svc36 answers with; DataX's own is [OK]. */
         private const val SUCCESS = 0x1000
 
         /** DataX service_not_found: what a peer answers for a service it does not host. */
         private const val SERVICE_NOT_FOUND = 0xC001
 
         private val REFUSED_PEER_SERVICES = setOf(30, 79)
+
+        /** DataX OK, the status a delivery check is confirmed with. */
+        private const val OK = 0
+
+        private const val CONNECTION_MONITOR = 4
     }
 }

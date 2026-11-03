@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="firmware_title">Firmware</string>
+    <string name="firmware_current">Versione</string>
+    <string name="firmware_update">Aggiornamento</string>
+    <string name="firmware_check">Cerca aggiornamenti</string>
+    <string name="firmware_checking">Ricerca</string>
+    <string name="firmware_up_to_date">Aggiornato</string>
+    <string name="firmware_install">Installa</string>
+    <string name="firmware_confirm">Installare %1$s? Gli occhiali si riavviano al termine.</string>
+    <string name="firmware_installing">Installazione</string>
+    <string name="firmware_progress">Installazione, %1$d%%</string>
+    <string name="firmware_installed">Installato. Gli occhiali si riavviano.</string>
+    <string name="firmware_failed">Errore: %1$s</string>
+</resources>

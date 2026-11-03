@@ -90,7 +90,10 @@ import com.macedonga.visor.BackupKey
 import com.macedonga.visor.DeviceKey
 import com.macedonga.visor.EventLogKey
 import com.macedonga.visor.FlagsKey
+import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.GlassesKey
+import com.macedonga.visor.WebAppsKey
+import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.LanguageKey
 import com.macedonga.visor.LiveSettingsKey
 import com.macedonga.visor.OnboardingKey
@@ -124,7 +127,6 @@ import com.macedonga.visor.gallery.ProgressRing
 import com.macedonga.visor.gallery.RoundIcon
 import com.macedonga.visor.gallery.placesAllowed
 import com.macedonga.visor.gallery.words
-import com.macedonga.visor.home.LastBattery
 import com.macedonga.visor.home.StatusPill
 import com.macedonga.visor.language.languageOfVoice
 import com.macedonga.visor.media.spanWords
@@ -173,7 +175,14 @@ class SettingsViewModel @Inject constructor(
     val backups: Backups,
     val updates: com.macedonga.visor.update.Updates,
     val features: com.macedonga.visor.features.Features,
+    val lastSeen: com.macedonga.visor.home.LastSeen,
     val hearing: com.macedonga.visor.core.assistant.Hearing,
+    val band: com.macedonga.visor.band.BandLink,
+    val bands: com.macedonga.visor.band.Bands,
+    val bandPeers: com.macedonga.visor.band.BandPeers,
+    val bandPair: com.macedonga.visor.band.BandPair,
+    val bandSetup: com.macedonga.visor.band.BandSetup,
+    val bandUpdate: com.macedonga.visor.band.BandUpdate,
     val developer: com.macedonga.visor.outside.DeveloperMode,
 ) : ViewModel()
 
@@ -188,6 +197,9 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
     val context = LocalContext.current
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
+    // The selected pair's model: as read now, else as it last said, so its pages stay while it is away.
+    val seenProduct by model.lastSeen.product.collectAsStateWithLifecycle()
+    val product = state.product ?: seenProduct
     var query by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
     val focus = LocalFocusManager.current
@@ -242,10 +254,20 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
             }
             if (query.isBlank()) {
                 item(key = "tiles") { Tiles(model, open) }
+                // The Display's own pages, up front rather than inside the Glasses page.
+                if (isDisplayProduct(product)) item(key = "display") {
+                    Column(Modifier.padding(top = 18.dp)) {
+                        NavRow(VisorIcons.Wifi, stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) })
+                        NavRow(VisorIcons.Globe, stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) })
+                        NavRow(VisorIcons.People, stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) })
+                    }
+                }
                 for ((i, card) in Topic.CARDS.withIndex()) {
                     item(key = "card-$i") {
-                        Column(Modifier.padding(top = if (i == 0) 18.dp else 14.dp)) {
-                            for (topic in card) NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
+                        Column(Modifier.padding(top = if (i == 0 && !isDisplayProduct(product)) 18.dp else 14.dp)) {
+                            for (topic in card.filter { it.shownOn(product) }) {
+                                NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
+                            }
                         }
                     }
                 }
@@ -270,7 +292,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     }
                 }
             } else {
-                searchResults(query, model, state, glasses) { key ->
+                searchResults(query, model, state, glasses, product) { key ->
                     focus.clearFocus()
                     open(key)
                 }
@@ -290,11 +312,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 .turnsThePair { host.haptics.tick(0.35f) }
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { open(GlassesKey) },
         ) {
-            val remembered = remember {
-                context.getSharedPreferences("home", android.content.Context.MODE_PRIVATE).let { p ->
-                    p.getInt("glasses", -1).takeIf { it >= 0 }?.let { LastBattery(it, p.getInt("case", -1).takeIf { c -> c >= 0 }, p.getLong("at", 0)) }
-                }
-            }
+            val remembered by model.lastSeen.battery.collectAsStateWithLifecycle()
             StatusPill(
                 glasses, mood, remembered, paired = glasses.target?.let { true }, allowed = true, importing = false, importProgress = 0f, waiting = 0,
                 onImport = {}, onAllow = {}, onSetUp = { open(OnboardingKey()) }, onChangeOwner = { open(OnboardingKey(login = true, address = it)) },
@@ -564,6 +582,14 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
             shown("capture_mode")?.let { stringResource(R.string.sum_controls_press, it) },
             shown("tap_and_hold_mapping")?.let { stringResource(R.string.sum_controls_hold, it) },
         ).joinToString(" · ")
+        Topic.BAND -> {
+            // The Display reports the band it holds.
+            val glasses by model.connection.state.collectAsStateWithLifecycle()
+            val paired by model.bandPeers.bands.collectAsStateWithLifecycle()
+            val device = glasses.device
+            device?.bandBattery?.let { batteryWords(it, device.bandCharging) }
+                ?: if (paired?.isEmpty() == true) stringResource(R.string.band_not_paired) else ""
+        }
         Topic.SOUND -> listOfNotNull(
             shown("notification_volume")?.let { stringResource(R.string.sum_sound_volume, it) },
             stringResource(R.string.sum_headphone).takeIf { isOn("sg_headphone_mode_enabled") == true },
@@ -637,11 +663,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
     model: SettingsViewModel,
     state: SettingsState,
     glasses: GlassesState,
+    product: Int?,
     open: (NavKey) -> Unit,
 ) {
     val needle = query.trim().lowercase()
     item(key = "results") {
-        val pages = pageHits().filter { (title, words, _) -> needle in stringResource(title).lowercase() || words.any { needle in it } }
+        val pages = pageHits(product).filter { (title, words, _) -> needle in stringResource(title).lowercase() || words.any { needle in it } }
         val toggles = model.toggles.all.filter { t -> needle in stringResource(t.label).lowercase() || (t.note?.let { needle in stringResource(it).lowercase() } ?: false) }
         val display = hasDisplay(glasses.info?.build)
         val keys = remember(needle, state.stored.keys) {
@@ -679,8 +706,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
     }
 }
 
+private fun displayPages(product: Int?): List<Triple<Int, List<String>, NavKey>> = if (!isDisplayProduct(product)) emptyList() else listOf(
+    Triple(R.string.wifi_networks, listOf("wifi", "wi-fi", "network", "rete", "reti"), WifiNetworksKey),
+    Triple(R.string.webapps_row, listOf("web", "app", "browser"), WebAppsKey),
+    Triple(R.string.accounts_title, listOf("account", "facebook", "instagram", "messenger", "threads", "link", "collega"), AccountsKey),
+)
+
 /** The pages search can find by name or by what they hold. */
-private fun pageHits(): List<Triple<Int, List<String>, NavKey>> = Topic.entries.map { Triple(it.title, emptyList<String>(), placeOf(it)) } + listOf(
+private fun pageHits(product: Int?): List<Triple<Int, List<String>, NavKey>> =
+    Topic.entries.filter { it.shownOn(product) }.map { Triple(it.title, emptyList<String>(), placeOf(it)) } + displayPages(product) + listOf(
     Triple(R.string.glasses_title, listOf("battery", "batteria", "firmware", "serial", "seriale", "account", "owner", "proprietario", "case", "custodia", "rename", "nome"), GlassesKey),
     Triple(R.string.advanced_title, listOf("all", "tutte", "engineering"), AdvancedKey),
     Triple(R.string.backup_title, listOf("export", "esporta", "import", "restore", "ripristina"), BackupKey),

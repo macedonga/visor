@@ -45,7 +45,7 @@ data class Reply(
  * What one answer may use and what it did with it; [photo] is the glasses' JPEG that came with the question, [canEnd]
  * whether the model may end the conversation.
  */
-private class Turn(val box: Toolbox, val photo: ByteArray? = null, val canEnd: Boolean = false) {
+private class Turn(val box: Toolbox, val photo: ByteArray? = null, val glasses: GlassesToolbox? = null, val canEnd: Boolean = false) {
     val remembered = ArrayList<String>()
     val actions = ArrayList<ToolAction>()
     var ends = false
@@ -94,12 +94,13 @@ class Brain(
         image: ByteArray? = null,
         note: String = "",
         audience: Audience = Audience.GLASSES,
+        glasses: GlassesToolbox? = null,
         canEnd: Boolean = false,
     ): Reply = withContext(Dispatchers.IO) {
         val c = config()
         check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
         // The tools never stand in the way of an answer: without them the model still answers.
-        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, canEnd)
+        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd)
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
@@ -181,6 +182,8 @@ class Brain(
             action?.let(turn.actions::add)
             return result
         }
+        val glasses = turn.glasses
+        if (glasses != null) glasses.tools.find { it.short == name }?.let { return glasses.call(it.full, input) }
         val tool = turn.box.find(name) ?: return ToolResult("unknown tool", true)
         val (result, action) = hub?.call(tool, input, turn.photo) ?: return ToolResult("unavailable", true)
         action?.let(turn.actions::add)
@@ -221,6 +224,7 @@ class Brain(
         if (turn?.canEnd == true) tools.put(JSONObject().put("name", END_TOOL).put("description", END_HELP).put("input_schema", NO_INPUT))
         if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> tools.put(JSONObject().put("name", name).put("description", help).put("input_schema", input)) }
         turn?.box?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.name).put("description", t.help()).put("input_schema", t.tool.schema)) }
+        turn?.glasses?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.short).put("description", t.help).put("input_schema", t.schema)) }
         var said = ""
         repeat(MAX_TOOL_ROUNDS) {
             // Current models think before they answer, and the thinking counts toward max_tokens.
@@ -278,6 +282,7 @@ class Brain(
             if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> put(function(name, help, input)) }
             // Some servers behind this API refuse a schema that names its own dialect.
             turn?.box?.tools?.forEach { t -> put(function(t.name, t.help(), JSONObject(t.tool.schema.toString()).apply { remove("\$schema") })) }
+            turn?.glasses?.tools?.forEach { t -> put(function(t.short, t.help, t.schema)) }
         }.takeIf { it.length() > 0 }
         var said = ""
         repeat(MAX_TOOL_ROUNDS) {

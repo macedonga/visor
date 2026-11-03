@@ -37,6 +37,10 @@ sealed interface Gate {
     data class Setting(val key: String, val on: String, val off: String? = null) : Gate
 }
 
+// Meta Ray-Ban Display, whose image has no hearingservice.
+private val DISPLAY = setOf(259, 270, 271)
+private val NO_HEARING_SERVICE = DISPLAY
+
 // Ray-Ban Meta (2023), Oakley Meta HSTN and Ray-Ban Meta Gen 2 share one DSP (hammerhead-rt600). Its hearing pipeline
 // has one output channel, while the hearing service always sends a left and a right gain map: the right one is
 // refused and hearing correction never starts (#42). Meta's app offers it on none of them.
@@ -79,6 +83,7 @@ enum class Feature(
         listOf(Gate.Setting("hearing_boost_nux_completed", "true"), Gate.Config("hearing_on_sn.cf_enabled", true, live = true)) + FOCUS_FLOORS,
         Topic.HEARING,
         page = true,
+        absentOn = NO_HEARING_SERVICE,
     ),
     // setupForHCModes refuses "HC is not supported on this device" (INVALID_DEVICE) while the first is off. The second
     // is the version pass Meta's server sets beside it ("update your device"). Both apply at once on the glasses.
@@ -90,7 +95,7 @@ enum class Feature(
         ),
         Topic.HEARING,
         page = true,
-        absentOn = ONE_CHANNEL_HEARING,
+        absentOn = NO_HEARING_SERVICE + ONE_CHANNEL_HEARING,
     ),
     // The group app's MainActivity finishes unless the first two are on; enable_aurachat starts aurachat through
     // sysprop_map. Without Meta's signed key material the group key is AurachatKeyManager's all-zero DEBUG_KEY.
@@ -102,6 +107,8 @@ enum class Feature(
             Gate.Config("wearable_connectivity_device_features.enable_aurachat", true),
         ),
         Topic.HEARING,
+        // The Display ships neither aurachat nor the group app.
+        absentOn = DISPLAY,
     ),
     // The glasses' TAR gate (isSgAlarmMCEnabled); Visor's timer service keeps the alarms Meta's app refuses.
     ALARMS(

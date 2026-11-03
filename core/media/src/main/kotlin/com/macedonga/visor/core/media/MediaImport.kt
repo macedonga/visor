@@ -97,6 +97,9 @@ class MediaImport(
     // Asked for while another import ran: they go next. Guarded by this, with running and inFlight's additions.
     private val queued = LinkedHashSet<String>()
 
+    // Captures that are not media, logged once each.
+    private val noticed = java.util.Collections.synchronizedSet(HashSet<String>())
+
     // The import running, and when it last said or received anything.
     @Volatile
     private var running: Job? = null
@@ -499,6 +502,9 @@ class MediaImport(
     private fun onMedia(data: ServiceData) {
         when (data.messageType) {
             MT_CAPTURE -> parseCapture(data.payload)?.let { capture ->
+                if (!capture.isMedia && noticed.add(capture.handle)) {
+                    say("Skipped a capture of kind ${capture.kindCode}: no photo or video in it, assets ${capture.assets.map { it.kind }}")
+                }
                 _captures.update { list ->
                     (list.filter { it.handle != capture.handle } + capture).sortedByDescending { it.timestampNs }
                 }

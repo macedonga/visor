@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="finish_conn_channel">Richieste dagli occhiali</string>
+    <string name="finish_conn_notification_access">Consenti l\'accesso alle notifiche</string>
+</resources>

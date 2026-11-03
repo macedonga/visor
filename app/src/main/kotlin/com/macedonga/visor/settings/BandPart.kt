@@ -1,0 +1,233 @@
+package com.macedonga.visor.settings
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.macedonga.visor.R
+import com.macedonga.visor.band.BandErrand
+import com.macedonga.visor.band.BandPair
+import com.macedonga.visor.band.BandSetup
+import com.macedonga.visor.band.BandUpdate
+import com.macedonga.visor.band.BandWork
+import com.macedonga.visor.core.session.LinkState
+import kotlinx.coroutines.launch
+
+/**
+ * The Neural Band: as the Display holds it (paired and connected, its battery and its fit), and for a band set up here
+ * its wrist, a buzz and its firmware, each an errand that takes the band from the Display for a moment.
+ */
+@Composable
+internal fun BandPart(model: SettingsViewModel) {
+    val glasses by model.connection.state.collectAsStateWithLifecycle()
+    val paired by model.bandPeers.bands.collectAsStateWithLifecycle()
+    val pairing by model.bandPair.status.collectAsStateWithLifecycle()
+    val setup by model.bandSetup.status.collectAsStateWithLifecycle()
+    val all by model.bands.all.collectAsStateWithLifecycle()
+    val pair by model.connection.pair.collectAsStateWithLifecycle()
+    val own by model.band.state.collectAsStateWithLifecycle()
+    val ready = glasses.link == LinkState.READY
+    LaunchedEffect(ready) { if (ready) model.bandPeers.refresh() }
+    val device = glasses.device
+    val band = paired?.firstOrNull()
+    // Set up here: the phone owns the band and can reach it.
+    val owned = all.any { it.glasses == pair }
+    val running = pairing is BandPair.Status.Running
+    // No band on the Display, or one it does not reach: pairing it sets the band up here first when it has to.
+    val offer = running || (ready && paired != null && (band == null || !band.connected))
+    // A band the Display holds that is not set up here; the pairing runs its own setup.
+    val settingUp = setup is BandSetup.Status.Running && !running
+    val setUp = settingUp || (!running && !owned && ready && band?.connected == true)
+    val battery = device?.bandBattery?.let { it to device.bandCharging } ?: own.battery?.takeIf { owned }?.let { it to own.charging }
+    val scope = rememberCoroutineScope()
+    var wristBusy by remember { mutableStateOf(false) }
+    var wristOutcome by remember { mutableStateOf<BandErrand?>(null) }
+    var buzzing by remember { mutableStateOf(false) }
+    var buzzOutcome by remember { mutableStateOf<BandErrand?>(null) }
+    var firmwareOpen by remember { mutableStateOf(false) }
+    Rows(
+        {
+            ValueRow(
+                stringResource(R.string.band_glasses),
+                when {
+                    !ready || paired == null -> stringResource(R.string.settings_unknown)
+                    band == null -> stringResource(R.string.band_not_paired)
+                    band.connected -> stringResource(R.string.band_paired_connected)
+                    else -> stringResource(R.string.band_paired_away)
+                },
+                onClick = null,
+            )
+        },
+        if (offer) row {
+            ValueRow(
+                stringResource(R.string.band_pair), pairWords(pairing),
+                onClick = if (running) null else model.bandPair::start,
+                busy = running,
+            )
+        } else null,
+        if (setUp) row {
+            RowFrame(
+                stringResource(R.string.finish_band_set_up),
+                onClick = if (settingUp) null else model.bandSetup::start,
+                value = if (settingUp) stringResource(R.string.band_pair_setting_up) else null,
+                busy = settingUp,
+                problem = setupProblem(setup),
+            )
+        } else null,
+        battery?.let { (percent, charging) -> row { ValueRow(stringResource(R.string.band_battery), batteryWords(percent, charging), onClick = null) } },
+        fitWords(device?.bandFit)?.let { fit ->
+            row {
+                ValueRow(
+                    stringResource(R.string.band_fit), fit, onClick = null,
+                    problem = if (device?.bandOrientation == "INCORRECT") stringResource(R.string.band_wrong_way) else null,
+                )
+            }
+        },
+        if (owned) row {
+            PillsRow(
+                stringResource(R.string.finish_band_wrist),
+                listOf(true to stringResource(R.string.finish_band_left), false to stringResource(R.string.finish_band_right)),
+                selected = own.leftHanded,
+                onPick = { left ->
+                    if (!wristBusy) scope.launch {
+                        wristBusy = true
+                        wristOutcome = null
+                        wristOutcome = model.band.setWrist(left)
+                        wristBusy = false
+                    }
+                },
+                busy = wristBusy,
+                problem = errandProblem(wristOutcome),
+            )
+        } else null,
+        if (owned) row {
+            RowFrame(
+                stringResource(R.string.finish_band_vibrate),
+                onClick = {
+                    if (!buzzing) scope.launch {
+                        buzzing = true
+                        buzzOutcome = null
+                        buzzOutcome = model.band.vibrate()
+                        buzzing = false
+                    }
+                },
+                busy = buzzing,
+                problem = errandProblem(buzzOutcome),
+            )
+        } else null,
+        if (owned) row {
+            ValueRow(
+                stringResource(R.string.glasses_firmware), own.firmware?.toString() ?: stringResource(R.string.settings_unknown),
+                onClick = { firmwareOpen = true },
+            )
+        } else null,
+    )
+    if (firmwareOpen && owned) BandFirmwareSheet(model.bandUpdate, own.firmware) { firmwareOpen = false }
+}
+
+/** Meta's firmware for the band: a check, then an install after a yes; the band is the phone's while it runs. */
+@Composable
+private fun BandFirmwareSheet(update: BandUpdate, version: Long?, onDismiss: () -> Unit) {
+    val work by update.work.collectAsStateWithLifecycle()
+    val offer by update.offer.collectAsStateWithLifecycle()
+    val checked by update.checked.collectAsStateWithLifecycle()
+    var confirming by remember { mutableStateOf(false) }
+    VisorSheet({ confirming = false; update.dismiss(); onDismiss() }) {
+        SheetTitle(stringResource(R.string.firmware_title))
+        Rows(
+            { ValueRow(stringResource(R.string.firmware_current), version?.toString() ?: stringResource(R.string.settings_unknown), onClick = null) },
+            offer?.let { o -> @Composable { ValueRow(stringResource(R.string.firmware_update), o.displayName.ifEmpty { o.targetVersion }, onClick = null) } },
+        )
+        val status: String? = when (val w = work) {
+            BandWork.Checking -> stringResource(R.string.firmware_checking)
+            is BandWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
+            BandWork.Installed -> stringResource(R.string.finish_band_fw_installed)
+            is BandWork.Failed -> stringResource(R.string.firmware_failed, w.reason)
+            BandWork.Idle -> if (checked && offer == null) stringResource(R.string.firmware_up_to_date) else null
+        }
+        Column(Modifier.padding(horizontal = SIDE, vertical = 16.dp)) {
+            if (status != null) Footnote(status)
+            val o = offer
+            if (work is BandWork.Installing) {
+                Row(Modifier.padding(top = 16.dp)) { ActionPill(stringResource(R.string.language_cancel), { update.cancel() }, quiet = true) }
+            } else if (confirming && o != null) {
+                Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionPill(stringResource(R.string.firmware_install), { confirming = false; update.install() })
+                    ActionPill(stringResource(R.string.language_cancel), { confirming = false }, quiet = true)
+                }
+                Footnote(stringResource(R.string.finish_band_fw_confirm, o.displayName.ifEmpty { o.targetVersion }))
+            } else {
+                Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ActionPill(stringResource(R.string.firmware_check), { update.check() }, quiet = true, enabled = work != BandWork.Checking)
+                    if (o != null) ActionPill(stringResource(R.string.firmware_install), { confirming = true })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun batteryWords(percent: Int, charging: Boolean?): String =
+    stringResource(if (charging == true) R.string.glasses_battery_charging else R.string.band_percent, percent)
+
+@Composable
+private fun fitWords(fit: String?): String? = when (fit) {
+    "LOOSE" -> stringResource(R.string.band_fit_loose)
+    "TIGHT" -> stringResource(R.string.band_fit_tight)
+    else -> null
+}
+
+@Composable
+private fun errandProblem(outcome: BandErrand?): String? = when (outcome) {
+    BandErrand.NO_ANSWER -> stringResource(R.string.band_pair_fail_no_answer)
+    BandErrand.NOT_CHANGED -> stringResource(R.string.finish_band_not_changed)
+    BandErrand.REFUSED -> stringResource(R.string.finish_band_refused)
+    BandErrand.DONE, null -> null
+}
+
+@Composable
+private fun setupProblem(status: BandSetup.Status): String? {
+    val failed = status as? BandSetup.Status.Failed ?: return null
+    return when (failed.reason) {
+        BandSetup.Reason.NO_GLASSES -> stringResource(R.string.band_pair_fail_glasses)
+        BandSetup.Reason.NOT_PAIRED -> stringResource(R.string.band_pair_fail_no_band)
+        BandSetup.Reason.NO_ANSWER -> stringResource(R.string.band_pair_fail_no_answer)
+        BandSetup.Reason.REFUSED -> stringResource(R.string.band_pair_fail_band_refused)
+        BandSetup.Reason.WRONG_OWNER -> stringResource(R.string.band_pair_fail_wrong_owner)
+        BandSetup.Reason.FAILED -> stringResource(R.string.band_pair_fail, failed.detail)
+    }
+}
+
+@Composable
+fun pairWords(status: BandPair.Status): String? = when (status) {
+    is BandPair.Status.Running -> stringResource(
+        when (status.step) {
+            BandPair.Step.SETUP -> R.string.band_pair_setting_up
+            BandPair.Step.BAND -> R.string.band_pair_reaching
+            BandPair.Step.PAIRING -> R.string.band_pair_pairing
+            BandPair.Step.CONNECTING -> R.string.band_pair_connecting
+        },
+    )
+    is BandPair.Status.Failed -> when (status.reason) {
+        BandPair.Reason.NOT_CONNECTED -> stringResource(R.string.band_pair_fail_glasses)
+        BandPair.Reason.NO_BAND -> stringResource(R.string.band_pair_fail_no_band)
+        BandPair.Reason.NO_ANSWER -> stringResource(R.string.band_pair_fail_no_answer)
+        BandPair.Reason.BAND_REFUSED -> stringResource(R.string.band_pair_fail_band_refused)
+        BandPair.Reason.WRONG_OWNER -> stringResource(R.string.band_pair_fail_wrong_owner)
+        BandPair.Reason.UNSUPPORTED -> stringResource(R.string.band_pair_fail_unsupported)
+        BandPair.Reason.REFUSED -> stringResource(R.string.band_pair_fail_refused, status.detail)
+        BandPair.Reason.FAILED -> stringResource(R.string.band_pair_fail, status.detail)
+    }
+    else -> null
+}

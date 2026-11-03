@@ -5,6 +5,7 @@ import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.Adler32
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -61,7 +62,7 @@ data class Transfer(val uuid: String, val received: Long, val size: Long, val by
 /** Files for someone other than the media import, such as the assistant's photo. */
 interface ExtraFiles {
     /** Whether to take an offer outside the media and bug report namespaces. */
-    fun wants(namespace: String, size: Long): Boolean
+    fun wants(offer: Offer): Boolean
 
     /** A file this side wanted, whole. The receiver deletes it afterwards. */
     fun take(received: Received)
@@ -77,10 +78,10 @@ class AirshipReceiver(private val spool: File) : Responder {
     @Volatile
     var describe: (String) -> String = { "" }
 
-    @Volatile
-    var extra: ExtraFiles? = null
+    /** Takers of other files, asked in order; the first that wants an offer gets it. */
+    val extras = CopyOnWriteArrayList<ExtraFiles>()
 
-    private class Live(val offer: Offer, val file: File) {
+    private class Live(val offer: Offer, val file: File, val taker: ExtraFiles?) {
         var out = FileOutputStream(file)
         val adler = Adler32()
         var received = 0L
@@ -172,10 +173,11 @@ class AirshipReceiver(private val spool: File) : Responder {
         baseName: String,
         file: java.io.File,
         chunk: Int = 1024,
+        uuid: ByteArray? = null,
         onProgress: (Long) -> Unit = {},
     ): String? =
         java.io.RandomAccessFile(file, "r").use { raf ->
-            send(connection, namespace, baseName, file.length(), chunk, onProgress) { at, n -> ByteArray(n).also { raf.seek(at); raf.readFully(it) } }
+            send(connection, namespace, baseName, file.length(), chunk, onProgress, uuid) { at, n -> ByteArray(n).also { raf.seek(at); raf.readFully(it) } }
         }
 
     private suspend fun send(
@@ -262,13 +264,14 @@ class AirshipReceiver(private val spool: File) : Responder {
                 val f = fields(payload)
                 val offer = Offer(f.bytes(1), f.long(2), f.bytes(3).decodeToString())
                 live.remove(channel)?.discard()
+                val taker = if (offer.namespace in ACCEPTED) null else extras.firstOrNull { runCatching { it.wants(offer) }.getOrDefault(false) }
                 // Refusing still needs the drop, or the glasses' queue stalls behind this offer.
-                if (offer.namespace !in ACCEPTED && extra?.wants(offer.namespace, offer.size) != true) {
+                if (offer.namespace !in ACCEPTED && taker == null) {
                     if (offer.namespace !in QUIET) _notes.trySend("Refused ${sizeWords(offer.size)} in namespace \"${offer.namespace}\"")
                     return MT_DROP to fileId(offer.raw)
                 }
                 spool.mkdirs()
-                live[channel] = Live(offer, File(spool, offer.uuid))
+                live[channel] = Live(offer, File(spool, offer.uuid), taker)
                 _notes.trySend("Receiving ${sizeWords(offer.size)}${describe(offer.uuid)}")
                 publish()
                 // Offset 0 with the adler32 of nothing: what FileReceiver::acceptOffer sends.
@@ -298,10 +301,10 @@ class AirshipReceiver(private val spool: File) : Responder {
                 val verified = f.long(1) == t.received && f.long(2) == t.adler.value
                 val whole = Received(t.offer, t.file, verified)
                 if (t.offer.namespace in ACCEPTED) {
-                    extra?.let { runCatching { it.peek(whole) } }
+                    extras.forEach { runCatching { it.peek(whole) } }
                     _received.trySend(whole)
                 } else {
-                    extra?.let { runCatching { it.take(whole) } }
+                    t.taker?.let { runCatching { it.take(whole) } }
                     t.file.delete()
                 }
                 publish()

@@ -59,6 +59,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -90,7 +91,17 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
+import com.macedonga.visor.band.BandErrand
+import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.band.BandPair
+import com.macedonga.visor.connection.GlassesService
+import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesTarget
+import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.settings.hasDisplay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.provision.ProvisionStep
@@ -127,7 +138,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** The setup's pages, in order. */
-enum class Page { WELCOME, ACCESS, LOGIN, PAIRING, LINKING }
+enum class Page { WELCOME, ACCESS, LOGIN, PAIRING, LINKING, BAND }
 
 /** What the setup asks of the phone, in order. Nearby Wi-Fi goes with nearby devices: Android asks for both at once. */
 private val ASKED = listOf(Need.NEARBY, Need.NOTIFY, Need.LISTENER, Need.CONTACTS, Need.MIC, Need.LOCATION, Need.LOCATION_ALWAYS)
@@ -139,6 +150,9 @@ class OnboardingViewModel @Inject constructor(
     val provisioner: Provisioner,
     private val nearby: NearbyGlasses,
     private val store: IdentityStore,
+    private val connection: GlassesConnection,
+    val bandPair: BandPair,
+    val bandLink: BandLink,
 ) : ViewModel() {
     var page by mutableStateOf(Page.WELCOME)
         private set
@@ -269,6 +283,20 @@ class OnboardingViewModel @Inject constructor(
         page = Page.LOGIN
     }
 
+    /** The pair just set up, connected at once so a Display can be told apart and its band paired. */
+    fun connect(target: GlassesTarget) = GlassesService.start(context, target)
+
+    /** True for a Display, false for other glasses, null until the session with [serial] is up. */
+    fun display(serial: String): Flow<Boolean?> = connection.state.map { s ->
+        val build = s.info?.build
+        if (s.target?.serial == serial && s.link == LinkState.READY && build != null) hasDisplay(build) else null
+    }.distinctUntilChanged()
+
+    fun toBand() {
+        bandPair.reset()
+        go(Page.BAND)
+    }
+
     /** Bond the chosen pair if it is not, then make this phone its owner. */
     fun link() {
         val pair = chosen ?: return
@@ -317,7 +345,9 @@ fun OnboardingScreen(
     val colors = Visor.colors
     val haptics = rememberHaptics()
     val status by model.provisioner.status.collectAsStateWithLifecycle()
-    val busy = page == Page.LINKING && (model.bonding || status is Provisioner.Status.Running)
+    val band by model.bandPair.status.collectAsStateWithLifecycle()
+    val busy = page == Page.LINKING && (model.bonding || status is Provisioner.Status.Running) ||
+        page == Page.BAND && band is BandPair.Status.Running
     // While the glasses are being bonded or handed over, back does nothing: leaving would cut it half done.
     BackHandler { if (!busy && !model.back()) onLeave() }
 
@@ -395,6 +425,11 @@ fun OnboardingScreen(
             failed -> lookOf(Mood.FAR, colors)
             else -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
         }
+        Page.BAND -> when (band) {
+            is BandPair.Status.Running -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
+            is BandPair.Status.Failed -> lookOf(Mood.FAR, colors)
+            else -> lookOf(Mood.CONNECTED, colors)
+        }
     }
     StageLight(look)
     LaunchedEffect(Unit) { if (welcome && page == Page.WELCOME) stage.light.dark() }
@@ -434,6 +469,7 @@ fun OnboardingScreen(
             Page.LOGIN -> topPx + stagePx * 0.36f to 0.78f
             Page.PAIRING -> topPx + stagePx * 0.4f to 1f
             Page.LINKING -> heightPx * 0.36f to 1f
+            Page.BAND -> heightPx * 0.3f to 0.8f
         }
         val centre by animateFloatAsState(centreTo, spring(dampingRatio = 0.9f, stiffness = 40f), label = "centre")
         val scale by animateFloatAsState(scaleTo, spring(dampingRatio = 0.9f, stiffness = 40f), label = "scale")
@@ -471,6 +507,7 @@ fun OnboardingScreen(
                 Page.LOGIN -> LoginPage(model, onLogin, onEventLog, frame.padding(top = with(density) { (stagePx * 0.7f).toDp() }))
                 Page.PAIRING -> PairingPage(model, clock, frame.padding(top = with(density) { (stagePx * 0.8f).toDp() }))
                 Page.LINKING -> LinkingPage(model, status, onDone, frame)
+                Page.BAND -> BandPage(model, status, onDone, frame)
             }
         }
     }
@@ -769,10 +806,27 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                 )
                 if (!done.reusedKey) Text(stringResource(R.string.onboard_new_key), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
                 Spacer(Modifier.height(32.dp))
-                BigPill(stringResource(R.string.onboard_open), {
+                // A Display goes on to its band, which can wait; other glasses are done here.
+                LaunchedEffect(done.target) { model.connect(done.target) }
+                val display by remember(done.target.serial) { model.display(done.target.serial) }.collectAsStateWithLifecycle(null)
+                var waited by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    delay(MODEL_WAIT_MS)
+                    waited = true
+                }
+                val open = {
                     model.provisioner.reset()
                     onDone(done.target)
-                })
+                }
+                when {
+                    display == true -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        QuietButton(stringResource(R.string.onboard_band_later), open)
+                        Spacer(Modifier.width(12.dp))
+                        BigPill(stringResource(R.string.onboard_band_next), model::toBand, Modifier.weight(1f))
+                    }
+                    display == null && !waited -> BigPill(stringResource(R.string.onboard_band_connecting), {}, enabled = false)
+                    else -> BigPill(stringResource(R.string.onboard_open), open)
+                }
             }
             bondFailure != null || failure != null -> {
                 Text(stringResource(R.string.onboard_failed), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
@@ -814,6 +868,82 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                     Box(Modifier.fillMaxWidth(progress).height(2.dp).background(Color.White))
                 }
                 Text(stringResource(R.string.onboard_keep_close), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
+            }
+        }
+    }
+}
+
+/** The Display's band: owned by this phone, paired with the glasses, then the wrist. Later leaves it for Settings. */
+@Composable
+private fun BandPage(model: OnboardingViewModel, status: Provisioner.Status, onDone: (GlassesTarget) -> Unit, modifier: Modifier) {
+    val colors = Visor.colors
+    val band by model.bandPair.status.collectAsStateWithLifecycle()
+    val target = (status as? Provisioner.Status.Done)?.target
+    val scope = rememberCoroutineScope()
+    var wrist by remember { mutableStateOf<Boolean?>(null) }
+    var wristBusy by remember { mutableStateOf(false) }
+    var wristProblem by remember { mutableStateOf<BandErrand?>(null) }
+    val finish: () -> Unit = {
+        model.bandPair.reset()
+        model.provisioner.reset()
+        if (target != null) onDone(target)
+    }
+    Column(modifier, verticalArrangement = Arrangement.Bottom) {
+        when (val s = band) {
+            BandPair.Status.Done -> {
+                Text(stringResource(R.string.onboard_band_done), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
+                Text(stringResource(R.string.onboard_band_wrist), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
+                Row(Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    for (left in listOf(true, false)) {
+                        val words = stringResource(if (left) R.string.onboard_band_left else R.string.onboard_band_right)
+                        val pick: () -> Unit = {
+                            if (!wristBusy) {
+                                wristBusy = true
+                                wristProblem = null
+                                scope.launch {
+                                    val outcome = model.bandLink.setWrist(left)
+                                    if (outcome == BandErrand.DONE) wrist = left else wristProblem = outcome
+                                    wristBusy = false
+                                }
+                            }
+                        }
+                        if (wrist == left) BigPill(words, pick, Modifier.width(120.dp)) else QuietButton(words, pick)
+                    }
+                    if (wristBusy) com.macedonga.visor.settings.Spinner()
+                }
+                if (wristProblem != null) {
+                    Text(stringResource(R.string.band_pair_fail_no_answer), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 10.dp))
+                }
+                Spacer(Modifier.height(32.dp))
+                BigPill(stringResource(R.string.onboard_open), finish, enabled = !wristBusy)
+            }
+            is BandPair.Status.Failed -> {
+                Text(stringResource(R.string.onboard_band_failed), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
+                Text(com.macedonga.visor.settings.pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
+                Spacer(Modifier.height(32.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    QuietButton(stringResource(R.string.onboard_band_later), finish)
+                    Spacer(Modifier.width(12.dp))
+                    BigPill(stringResource(R.string.onboard_try_again), model.bandPair::start, Modifier.weight(1f))
+                }
+            }
+            is BandPair.Status.Running -> {
+                Text(stringResource(R.string.onboard_band_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
+                Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    com.macedonga.visor.settings.Spinner()
+                    Text(com.macedonga.visor.settings.pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+                }
+                Text(stringResource(R.string.onboard_band_keep_close), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
+            }
+            BandPair.Status.Idle -> {
+                Text(stringResource(R.string.onboard_band_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
+                Text(stringResource(R.string.onboard_band_body), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
+                Spacer(Modifier.height(32.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    QuietButton(stringResource(R.string.onboard_band_later), finish)
+                    Spacer(Modifier.width(12.dp))
+                    BigPill(stringResource(R.string.onboard_band_pair), model.bandPair::start, Modifier.weight(1f))
+                }
             }
         }
     }
@@ -1030,3 +1160,6 @@ internal val LED_BLUE = Color(0xFF2F6BFF)
 private const val FOLLOW_SECONDS = 0.18f
 private const val CAMERA_SECONDS = 0.5f
 private const val HELP_AFTER_MS = 25_000L
+
+// How long the done page waits for the new pair to say whether it is a Display.
+private const val MODEL_WAIT_MS = 20_000L

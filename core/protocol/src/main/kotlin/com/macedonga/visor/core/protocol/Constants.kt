@@ -140,7 +140,10 @@ enum class ServiceId(val value: Int) {
     AIRSHIELD_AUTH(54),
     CONSTELLATION_AUTH(79),
 
-    /** `wireless_input_service` in the firmware's registry. */
+    /** `conn_device_lease`: the Display asks the phone for its band here. */
+    CONN_DEVICE_LEASE(150),
+
+    /** `wireless_input_service` in the firmware's registry; the Neural Band's whole RPC set. */
     WIRELESS_INPUT(52822),
     ;
 

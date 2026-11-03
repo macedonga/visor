@@ -10,6 +10,9 @@ object Kdf {
     val AIRSHIELD_INFO: ByteArray = "AirShield".toByteArray(Charsets.US_ASCII)
     val HMAC_DERIVE_LABEL: ByteArray = "hmac_derive".toByteArray(Charsets.US_ASCII)
 
+    /** EncryptionParameters bit 4: a separate HMAC key. The Neural Band leaves it out (27, the glasses 31). */
+    const val MULTIKEY: Int = 4
+
     /** Derive ONE direction's key set, in the live-confirmed construction. */
     fun deriveDirectionKeys(
         ecdhSecret: ByteArray,
@@ -17,13 +20,16 @@ object Kdf {
         seed: ByteArray,
         preambleIv: ByteArray,
         info: ByteArray = AIRSHIELD_INFO,
+        // Without Multikey on both ends the AES key is the HMAC key too (CipherBuilder::buildFramingKeys).
+        multikey: Boolean = true,
     ): SessionKeys {
         require(ecdhSecret.size == 32) { "ECDH secret must be 32 bytes, got ${ecdhSecret.size}" }
         require(preambleIv.size == 16) { "preamble IV must be 16 bytes, got ${preambleIv.size}" }
 
         val aesSalt = sha256(nonce, seed)
-        val hmacSalt = sha256(seed, nonce, HMAC_DERIVE_LABEL)
         val aesKey = hkdfExpand(hkdfExtract(aesSalt, ecdhSecret), info, 32)
+        if (!multikey) return SessionKeys(aesKey = aesKey, hmacKey = aesKey, iv = preambleIv)
+        val hmacSalt = sha256(seed, nonce, HMAC_DERIVE_LABEL)
         val hmacKey = hkdfExpand(hkdfExtract(hmacSalt, ecdhSecret), info, 32)
         return SessionKeys(aesKey = aesKey, hmacKey = hmacKey, iv = preambleIv)
     }

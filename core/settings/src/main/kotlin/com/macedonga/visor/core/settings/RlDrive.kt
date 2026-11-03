@@ -35,6 +35,8 @@ data class SyncReply(
     val requestId: String,
     val versions: Versions,
     val objects: List<DriveObject>,
+    // The use case tag of a sync the sender started.
+    val usecaseTag: String,
 )
 
 /**
@@ -51,6 +53,8 @@ fun buildSync(
     push: Map<String, String> = emptyMap(),
     // Objects of any type, the same way.
     objects: List<PushObject> = emptyList(),
+    terminated: Boolean = false,
+    usecaseTag: String = "",
 ): ByteArray {
     val all = push.map { (uri, data) -> PushObject(uri, TYPE_KV, data.toByteArray()) } + objects
     var sync = ByteArray(0)
@@ -78,7 +82,9 @@ fun buildSync(
         Wire.fieldBytes(18, requestId.toByteArray()) +
         Wire.fieldVarint(19, API_VERSION) +
         Wire.fieldBytes(20, namespace.toByteArray()) +
-        Wire.fieldBytes(21, LOCAL_WRITER.toByteArray())
+        Wire.fieldBytes(21, LOCAL_WRITER.toByteArray()) +
+        (if (terminated) Wire.fieldVarint(22, 1) else ByteArray(0)) +
+        (if (usecaseTag.isNotEmpty()) Wire.fieldBytes(31, usecaseTag.toByteArray()) else ByteArray(0))
     return Wire.fieldVarint(1, TYPE_SYNC_MESSAGE) + Wire.fieldBytes(2, sync) + Wire.fieldBytes(6, namespace.toByteArray())
 }
 
@@ -116,12 +122,13 @@ fun decodeSync(payload: ByteArray): SyncReply {
         }
     }
     return SyncReply(
-        namespace = text(outer.bytes(6)),
+        namespace = text(outer.bytes(6)).ifEmpty { text(sync.bytes(20)) },
         round = sync.varint(17),
         terminated = sync.varint(22) != 0L,
         requestId = text(sync.bytes(18)),
         versions = versions,
         objects = objects,
+        usecaseTag = text(sync.bytes(31)),
     )
 }
 

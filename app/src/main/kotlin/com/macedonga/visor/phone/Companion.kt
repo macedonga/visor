@@ -1,12 +1,16 @@
 package com.macedonga.visor.phone
 
+import android.annotation.SuppressLint
 import android.companion.AssociationRequest
 import android.companion.BluetoothDeviceFilter
 import android.companion.CompanionDeviceManager
+import android.companion.ObservingDevicePresenceRequest
 import android.content.Context
 import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.annotation.RequiresApi
+import com.macedonga.visor.log.EventLog
 
 /**
  * The glasses as Visor's companion device, as the Meta app holds them: Android lets a companion app open other apps
@@ -51,5 +55,43 @@ fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) cdm.associate(request, context.mainExecutor, callback)
     else cdm.associate(request, callback, null)
 }
+
+/**
+ * Asks Android to tell [com.macedonga.visor.connection.GlassesPresence] when each association's glasses appear.
+ * Called at every start of the app; repeating it is harmless.
+ */
+fun observeCompanions(context: Context, log: EventLog) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return
+    runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            cdm.myAssociations.forEach { cdm.startObservingDevicePresence(ObservingDevicePresenceRequest.Builder().setAssociationId(it.id).build()) }
+        } else {
+            @Suppress("DEPRECATION")
+            cdm.associations.forEach { cdm.startObservingDevicePresence(it) }
+        }
+    }.onFailure { log.add("Companion presence not observed: ${it.message}") }
+}
+
+/** Visor's association with the device at [address], by its id, or null. */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+fun companionId(context: Context, address: String): Int? = runCatching {
+    context.getSystemService(CompanionDeviceManager::class.java)?.myAssociations
+        ?.firstOrNull { it.deviceMacAddress?.toString().equals(address, ignoreCase = true) }?.id
+}.getOrNull()
+
+/** Has Android remove the phone's bond with the device of association [id]; the device's own removeBond is a system API. */
+@RequiresApi(Build.VERSION_CODES.BAKLAVA)
+@SuppressLint("MissingPermission")
+fun removeCompanionBond(context: Context, id: Int, failed: (Throwable) -> Unit = {}): Boolean = runCatching {
+    context.getSystemService(CompanionDeviceManager::class.java)?.removeBond(id) == true
+}.onFailure(failed).getOrDefault(false)
+
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+fun disassociateCompanion(context: Context, id: Int): Boolean = runCatching {
+    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return false
+    cdm.disassociate(id)
+    true
+}.getOrDefault(false)
 
 private const val ASKED = "asked"
