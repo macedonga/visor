@@ -209,11 +209,14 @@ class Assistant(
         l.listening = interaction
         if (interaction.isEmpty() || !store.config.value.enabled) return
         say("Listening to the microphone for $interaction")
+        // The question as the phone hears it, every utterance before the answer: the recogniser can split it, and its
+        // first piece can be the wake word heard as words of the wearer's language (issue #43).
+        val words = java.util.concurrent.CopyOnWriteArrayList<String>().also { l.words[interaction] = it }
+        val asked = { words.joinToString(" ").trim() }
         ears = GlassesEars(
             context, spoken(l), continuous = true,
             onUtterance = { text, startMs, _ ->
-                // With a speech language set, the question waits for these words instead of the glasses' (issue #38).
-                if (store.config.value.speechLanguage.isNotEmpty()) l.heard.getOrPut(interaction) { CompletableDeferred() }.complete(text)
+                if (interaction !in l.answered && !WAKE_WORD_ONLY.matches(text.trim())) words += text
                 scope.launch {
                     delay(OWN_RECOGNITION_GRACE_MS)
                     if (interaction in l.closed) return@launch
@@ -236,16 +239,19 @@ class Assistant(
                             if (WAKE_WORD_ONLY.matches(text.trim())) return@launch
                             withTimeoutOrNull(MIC_END_WAIT_MS) { ended.await() }
                             delay(QUESTION_GRACE_MS)
-                            if (interaction in l.taken || interaction in l.closed) return@launch
-                            l.taken.add(interaction)
+                            if (interaction in l.closed || !l.taken.add(interaction)) return@launch
                             l.fresh.add(interaction)
-                            say("Heard \"$text\" myself: the glasses left this question to the server")
-                            answer(l, interaction, text, Visual(null, "", "", false, ""))
+                            val question = asked().ifEmpty { text }
+                            l.words.remove(interaction)
+                            say("Heard \"$question\" myself: the glasses left this question to the server")
+                            answer(l, interaction, question, Visual(null, "", "", false, ""))
                         }
                     }
                 }
             },
             onProblem = { say("Assistant: $it") },
+            // With a speech language set, the question waits for these words instead of the glasses' (issue #38).
+            onDone = { if (store.config.value.speechLanguage.isNotEmpty()) l.heard.getOrPut(interaction) { CompletableDeferred() }.complete(asked()) },
         ).also { it.start() }
     }
 
@@ -289,6 +295,7 @@ class Assistant(
         @Volatile var locale: Locale = Locale.US
         // What the phone heard on each microphone stream, for a speech language the glasses do not have.
         val heard = ConcurrentHashMap<String, CompletableDeferred<String>>()
+        val words = ConcurrentHashMap<String, MutableList<String>>()
         // ev57's field 30, MobileConfig assistant_on_sn.simplify_mwa_message_forwarding. Off (the factory value),
         // the glasses act on a VARM the moment it lands and end the turn there.
         @Volatile var simplified = true
@@ -795,8 +802,11 @@ class Assistant(
         if (store.config.value.speechLanguage.isNotEmpty()) {
             val mic = l.listening ?: interaction
             scope.launch {
-                val own = withTimeoutOrNull(OWN_WORDS_MS) { l.heard.getOrPut(mic) { CompletableDeferred() }.await() }?.trim()
+                // The whole stream as heard; if the recogniser is still at it, what it has heard so far.
+                val own = (withTimeoutOrNull(OWN_WORDS_MS) { l.heard.getOrPut(mic) { CompletableDeferred() }.await() }
+                    ?: l.words[mic]?.joinToString(" "))?.trim()
                 l.heard.remove(mic)
+                l.words.remove(mic)
                 if (own.isNullOrEmpty()) say("The phone heard nothing; answering the glasses' words") else say("Heard \"$own\" myself")
                 answer(l, interaction, own?.takeIf { it.isNotEmpty() } ?: transcript, visual)
             }
