@@ -109,6 +109,7 @@ import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.design.Visor
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.Control
@@ -166,6 +167,7 @@ class SettingsViewModel @Inject constructor(
     val settings: GlassesSettings,
     val connection: GlassesConnection,
     val importChoice: ImportChoice,
+    val albums: Albums,
     val notifyChoice: NotifyChoice,
     val apps: NotifyApps,
     val assistant: AssistantConfigStore,

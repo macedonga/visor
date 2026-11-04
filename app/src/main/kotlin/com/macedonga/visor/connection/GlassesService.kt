@@ -75,6 +75,9 @@ class GlassesService : Service() {
     lateinit var importChoice: com.macedonga.visor.gallery.ImportChoice
 
     @Inject
+    lateinit var albums: com.macedonga.visor.core.media.Albums
+
+    @Inject
     lateinit var live: com.macedonga.visor.core.media.LiveStream
 
     @Inject
@@ -145,7 +148,7 @@ class GlassesService : Service() {
             moveToLe()
             holdLe()
             com.macedonga.visor.gallery.notePlaces(this, scope, connection, media.places)
-            com.macedonga.visor.gallery.importOnItsOwn(this, scope, connection, media, importChoice)
+            com.macedonga.visor.gallery.importOnItsOwn(this, scope, connection, media, importChoice, albums)
             com.macedonga.visor.language.keepAssistantConfig(scope, connection, glassesConfig, media, glassesSettings, assistantConfig, log)
             developer.keep(scope)
             com.macedonga.visor.settings.keepCameraInLine(scope, glassesSettings, assistantConfig, log)

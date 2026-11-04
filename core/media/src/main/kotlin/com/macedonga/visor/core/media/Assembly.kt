@@ -24,6 +24,7 @@ import org.json.JSONObject
  */
 class Assembly(
     private val context: Context,
+    private val albums: Albums,
     private val index: GalleryIndex,
     private val places: PlaceLog,
     private val say: (String) -> Unit,
@@ -184,7 +185,7 @@ class Assembly(
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName(format, takenAt))
             put(MediaStore.MediaColumns.MIME_TYPE, format.mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/Visor" else "Pictures/Visor")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.path(video))
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAt)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }

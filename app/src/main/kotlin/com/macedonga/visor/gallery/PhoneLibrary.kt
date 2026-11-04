@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import com.macedonga.visor.core.media.Albums
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,7 +42,7 @@ data class PhoneItem(
  * changes them with no media permission. A deletion waits out its undo before it goes to the system's trash.
  */
 @Singleton
-class PhoneLibrary @Inject constructor(@ApplicationContext private val context: Context) {
+class PhoneLibrary @Inject constructor(@ApplicationContext private val context: Context, private val albums: Albums) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _items = MutableStateFlow<List<PhoneItem>>(emptyList())
@@ -62,7 +63,7 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
     }
 
     fun reload() {
-        scope.launch { _items.value = (query(IMAGES, "Pictures/Visor%", false) + query(VIDEOS, "Movies/Visor%", true)).sortedByDescending { it.takenAt } }
+        scope.launch { _items.value = (query(IMAGES, albums.photosPattern(), false) + query(VIDEOS, albums.videosPattern(), true)).sortedByDescending { it.takenAt } }
     }
 
     /** Takes [uris] out of sight at once; they go to the trash once [undoMs] passes without [undo]. */
@@ -135,7 +136,7 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
         }.toTypedArray()
         val out = ArrayList<PhoneItem>()
         runCatching {
-            context.contentResolver.query(collection, columns, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf(path), null)?.use { c ->
+            context.contentResolver.query(collection, columns, Albums.MATCH, arrayOf(path), null)?.use { c ->
                 while (c.moveToNext()) {
                     val taken = c.getLong(1).takeIf { it > 0 } ?: (c.getLong(2) * 1000)
                     out += PhoneItem(

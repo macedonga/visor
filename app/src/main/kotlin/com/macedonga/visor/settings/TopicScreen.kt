@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.NotifyAppsKey
 import com.macedonga.visor.R
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.settings.offeredOn
 import com.macedonga.visor.features.featureSection
@@ -151,10 +152,20 @@ private fun PhotosPart(model: SettingsViewModel) {
         onPauseOrDispose { }
     }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { places = placesAllowed(context) }
+    // Which album is being renamed: null for none, then whether it is the videos'.
+    var renaming by remember { mutableStateOf<Boolean?>(null) }
+    val photosAlbum by model.albums.photos.collectAsStateWithLifecycle()
+    val videosAlbum by model.albums.videos.collectAsStateWithLifecycle()
     Column {
         SectionLabel(stringResource(R.string.import_title), Modifier.padding(top = 0.dp))
         OptionCards(AutoImport.entries.map { Triple(it, stringResource(it.title), stringResource(it.detail)) }, mode, model.importChoice::set)
         Footnote(stringResource(R.string.import_note))
+        SectionLabel(stringResource(R.string.section_album))
+        Rows(
+            row { ValueRow(stringResource(R.string.album_photos), photosAlbum, onClick = { renaming = false }) },
+            row { ValueRow(stringResource(R.string.album_videos), videosAlbum, onClick = { renaming = true }) },
+        )
+        Footnote(stringResource(R.string.album_note))
         SectionLabel(stringResource(R.string.section_places))
         Rows({
             RowFrame(stringResource(R.string.places_title), onClick = null, sub = stringResource(R.string.places_sub)) {
@@ -170,6 +181,15 @@ private fun PhotosPart(model: SettingsViewModel) {
                 }
             }
         })
+        val video = renaming
+        if (video != null) TextSheet(
+            stringResource(if (video) R.string.album_videos else R.string.album_photos),
+            if (video) videosAlbum else photosAlbum,
+            onSave = if (video) model.albums::setVideos else model.albums::setPhotos,
+            onDismiss = { renaming = null },
+            sub = stringResource(R.string.album_sub),
+            hint = Albums.DEFAULT,
+        )
     }
 }
 
