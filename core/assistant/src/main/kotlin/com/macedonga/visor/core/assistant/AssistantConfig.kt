@@ -18,6 +18,8 @@ data class AssistantConfig(
     val webSearch: Boolean = false,
     // Let a visual question use the glasses' camera.
     val vision: Boolean = true,
+    // Let a partner-language voice command take a photo; it turns on the glasses' Robusta switch, not Developer mode.
+    val voicePhotos: Boolean = false,
     // Answers in the glasses' own voice, the one that reads notifications; off, the phone's voice streamed to them.
     val glassesVoice: Boolean = true,
     // No spoken answer when every tool the model used did what was asked, such as music that now plays (#48).
@@ -75,6 +77,7 @@ class AssistantConfigStore(context: Context) : FieldBook {
             .putString("base_url", next.baseUrl)
             .putBoolean("web_search", next.webSearch)
             .putBoolean("vision", next.vision)
+            .putBoolean("voice_photos", next.voicePhotos)
             .putBoolean("glasses_voice", next.glassesVoice)
             .putBoolean("quiet_after_actions", next.quietAfterActions)
             .putString("speech_language", next.speechLanguage)
@@ -96,6 +99,7 @@ class AssistantConfigStore(context: Context) : FieldBook {
             baseUrl = prefs.getString("base_url", d.baseUrl).orEmpty(),
             webSearch = prefs.getBoolean("web_search", d.webSearch),
             vision = prefs.getBoolean("vision", d.vision),
+            voicePhotos = prefs.getBoolean("voice_photos", d.voicePhotos),
             glassesVoice = prefs.getBoolean("glasses_voice", d.glassesVoice),
             quietAfterActions = prefs.getBoolean("quiet_after_actions", d.quietAfterActions),
             speechLanguage = prefs.getString("speech_language", d.speechLanguage).orEmpty(),

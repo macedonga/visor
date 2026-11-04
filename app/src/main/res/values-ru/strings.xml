@@ -293,6 +293,8 @@
     <string name="language_partner_voice">Для языков 3P используется голос телефона, который воспроизводится через очки.</string>
     <string name="language_partner_speed">Измените скорость голоса в настройках синтеза речи Android.</string>
     <string name="meta_ai_title">Meta AI</string>
+    <string name="language_photos_title">Включить съёмку голосом?</string>
+    <string name="language_photos_text">Голосовые команды смогут делать снимки через очки. Другие приложения не получают доступ к камере. Настройка может занять несколько минут. Этот язык можно использовать и без этого.</string>
     <string name="meta_ai_ask">Спросите о чём угодно</string>
     <string name="meta_ai_send">Отправить</string>
     <string name="meta_ai_hold">Удерживайте, чтобы говорить</string>
@@ -521,6 +523,8 @@
     <string name="ai_glasses_voice_sub">Если выключено, ответы озвучивает голос телефона.</string>
     <string name="ai_vision">Использовать камеру</string>
     <string name="ai_vision_sub">Для вопросов о том, на что вы смотрите.</string>
+    <string name="ai_voice_photos">Фото голосом</string>
+    <string name="ai_voice_photos_sub">Голосовая команда на языке 3P может сделать снимок. Очки держат включённым переключатель камеры Meta; режим разработчика остаётся выключенным.</string>
     <string name="ai_web">Искать в интернете</string>
     <string name="ai_web_sub">Claude ищет информацию, когда это нужно. Медленнее.</string>
     <string name="ai_quiet_actions">Тишина после действий</string>

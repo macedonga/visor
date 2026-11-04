@@ -115,6 +115,7 @@ class Assistant(
     private val phone: Phone? = null,
     /** The connected glasses have a display: each answer then comes with a card for it. */
     private val display: () -> Boolean = { false },
+    private val cameraAction: (suspend (CameraAction) -> Boolean)? = null,
 ) : Responder {
 
     // A send on a channel the glasses closed, or after the link went, throws: it is logged, not a crash.
@@ -1224,14 +1225,24 @@ class Assistant(
             update(turn) { it.copy(image = file.path) }
         }
         if (image != null) saveImage(image)
+        fun checkCameraTurn(needsCamera: Boolean = true) {
+            check(!needsCamera || store.config.value.vision) { "camera use is disabled" }
+            check(link === l && l.partnerCanAnswer(interaction)) { "the glasses closed this question" }
+        }
         val capturePhoto: (suspend () -> ByteArray?)? = if (partner && store.config.value.vision && !visualQuestion) {
             {
-                check(store.config.value.vision) { "camera use is disabled" }
-                check(link === l && l.partnerCanAnswer(interaction)) { "the glasses closed this question" }
+                checkCameraTurn()
                 photo(l, interaction, visual).also { captured ->
-                    check(store.config.value.vision && link === l && l.partnerCanAnswer(interaction)) { "the camera request is no longer active" }
+                    checkCameraTurn()
                     if (captured != null) saveImage(captured)
                 }
+            }
+        } else null
+        val cameraForTurn: (suspend (CameraAction) -> Boolean)? = if (partner && !visualQuestion && cameraAction != null) {
+            { action ->
+                checkCameraTurn(action != CameraAction.STOP_RECORDING)
+                // Once sent, what the glasses did is the result, even if they closed the turn meanwhile.
+                cameraAction(action)
             }
         } else null
         // The glasses' OCR of the photo they took comes just after the question; a model without vision has only this.
@@ -1250,13 +1261,14 @@ class Assistant(
             val left = (budget - (System.currentTimeMillis() - started)).coerceAtLeast(MIN_MODEL_MS)
             withTimeout(left) {
                 brain.answer(transcript, spoken(l), pastOf(turn), image, note, glasses = glasses,
-                    canEnd = interaction !in l.partnerTurns, capturePhoto = capturePhoto)
+                    canEnd = interaction !in l.partnerTurns, capturePhoto = capturePhoto, cameraAction = cameraForTurn)
             }
         } catch (error: Exception) {
             problem = error.message ?: error::class.simpleName.orEmpty()
             Reply(fallback(spoken(l), store.config.value.apiKey.isBlank() && store.config.value.provider == Provider.CLAUDE))
         }
         val text = reply.text
+        val diaryText = text.ifEmpty { reply.actions.joinToString { it.what } }
         // Without simplified forwarding the VARM follows the audio, and the glasses keep waiting for it until then.
         if (l.simplified && interaction !in l.partnerTurns) waiting.cancel()
         val modelMs = System.currentTimeMillis() - started
@@ -1264,11 +1276,13 @@ class Assistant(
         if (interaction in l.closed || (interaction in l.partnerTurns && (link !== l || !l.partnerCanAnswer(interaction)))) {
             waiting.cancel()
             say("The glasses closed this turn before the answer was ready (${modelMs / 1000} s); not sending it")
-            update(turn) { it.copy(answer = text, problem = ANSWER_TOO_LATE, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
+            // A turn whose every action worked and that has nothing to say lost nothing to the close.
+            val done = text.isEmpty() && problem.isEmpty() && reply.actions.isNotEmpty() && reply.actions.all { it.ok }
+            update(turn) { it.copy(answer = diaryText, problem = if (done) "" else ANSWER_TOO_LATE, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
             if (link === l) _phase.value = AssistantPhase.LISTENING
             return
         }
-        update(turn) { it.copy(answer = text, problem = problem, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
+        update(turn) { it.copy(answer = diaryText, problem = problem, modelMs = modelMs, remembered = reply.remembered, actions = reply.actions) }
         if (reply.ends) say("The model ended the conversation: the glasses stop listening after this answer")
         // Every tool did what was asked and that is the answer, such as music that now plays: the turn ends without a word (#48).
         val quiet = store.config.value.quietAfterActions && problem.isEmpty() && (!l.sessionTurn || interaction in l.partnerTurns) &&
@@ -1407,7 +1421,7 @@ class Assistant(
     private suspend fun deliver(l: Link, interaction: String, transcript: String, text: String, listen: Boolean = true, live: Boolean = false): Long {
         // A typed or handwritten question has no stream id for the phone's voice. The glasses' own voice speaks only their language.
         val written = l.typedOf.containsKey(interaction) || interaction in l.written
-        if (!l.sessionTurn && (written || store.config.value.glassesVoice && !l.foreign && store.config.value.speechLanguage.isEmpty())) {
+        if (text.isEmpty() && interaction in l.partnerTurns || !l.sessionTurn && (written || store.config.value.glassesVoice && !l.foreign && store.config.value.speechLanguage.isEmpty())) {
             speakOnGlasses(l, interaction, transcript, text, listen)
             return 0
         }
@@ -1670,7 +1684,11 @@ class Assistant(
     /** What the model has heard of [id]'s conversation before it. */
     private fun pastOf(id: String): List<Exchange> {
         val conversation = diary.turn(id)?.conversation ?: return emptyList()
-        return diary.past(conversation, before = id).map { Exchange(it.question, it.answer, it.actions) }
+        return diary.past(conversation, before = id).map {
+            // A silent camera turn keeps the actions' names as its diary answer; the model gets only Visor's note of them.
+            val named = it.actions.isNotEmpty() && it.answer == it.actions.joinToString { a -> a.what }
+            Exchange(it.question, if (named) "" else it.answer, it.actions)
+        }
     }
 
     /** Into the diary, in the open conversation unless it names its own. */

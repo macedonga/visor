@@ -281,6 +281,8 @@
     <string name="language_partner_speed">Change the phone voice speed in Android text-to-speech settings.</string>
     <!-- Meta AI: the diary -->
     <string name="meta_ai_title">Meta AI</string>
+    <string name="language_photos_title">Enable voice photos?</string>
+    <string name="language_photos_text">Voice commands can then take photos on your glasses. Other apps get no camera access. Setup may take a few minutes. You can use this language without it.</string>
     <string name="meta_ai_ask">Ask anything</string>
     <string name="meta_ai_send">Send</string>
     <string name="meta_ai_hold">Hold to talk</string>
@@ -519,6 +521,8 @@
     <string name="ai_glasses_voice_sub">Off, answers are spoken with the phone\'s voice.</string>
     <string name="ai_vision">Use the camera</string>
     <string name="ai_vision_sub">For questions about what you are looking at.</string>
+    <string name="ai_voice_photos">Voice photos</string>
+    <string name="ai_voice_photos_sub">A partner-language voice command can take a photo. The glasses keep a Meta camera switch on for it; Developer mode stays off.</string>
     <string name="ai_web">Search the web</string>
     <string name="ai_web_sub">Claude looks things up when it needs to. Slower.</string>
     <string name="ai_quiet_actions">Quiet after actions</string>
