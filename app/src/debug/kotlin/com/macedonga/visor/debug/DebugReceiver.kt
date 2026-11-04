@@ -39,6 +39,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * MCP_TOOLS (what the model would get), MCP_CALL (--es tool exposed-name --es args json), MCP_REMOVE (--es id),
  * DEMO_PAIR (--ez on false takes it away): a second pair on the home, a black Skyler, never connected or looked at.
  * PHONE (--es do directions --es to --es mode | play --es q --es app | media --es c pause|resume|next|... | now).
+ * ALBUMS: the albums, and how many of Visor's own files each top folder holds. ALBUM_SET (--es photos --es videos
+ * --ez together): changes them as Settings does, moves included.
  */
 @AndroidEntryPoint
 class DebugReceiver : BroadcastReceiver() {
@@ -72,6 +74,8 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var hearing: com.macedonga.visor.core.assistant.Hearing
     @Inject lateinit var bandPair: com.macedonga.visor.band.BandPair
     @Inject lateinit var classicBond: com.macedonga.visor.connection.ClassicBond
+    @Inject lateinit var albums: com.macedonga.visor.core.media.Albums
+    @Inject lateinit var library: com.macedonga.visor.gallery.PhoneLibrary
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -281,6 +285,26 @@ class DebugReceiver : BroadcastReceiver() {
             "SET" -> {
                 val key = intent.getStringExtra("key").orEmpty()
                 resultData = if (settings.write(key, intent.getStringExtra("value").orEmpty())) "written; READ_SETTINGS to check" else "refused: unknown key or value"
+            }
+            "ALBUMS" -> resultData = buildString {
+                appendLine("photos=${albums.photosPath()} videos=${albums.videosPath()} together=${albums.together.value} moving=${albums.moving.value} gallery=${library.items.value.size}")
+                val store = android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY
+                for ((kind, uri) in listOf(
+                    "images" to android.provider.MediaStore.Images.Media.getContentUri(store),
+                    "videos" to android.provider.MediaStore.Video.Media.getContentUri(store),
+                )) {
+                    val counts = sortedMapOf<String, Int>()
+                    context.contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.RELATIVE_PATH), null, null, null)?.use { c ->
+                        while (c.moveToNext()) c.getString(0).orEmpty().let { counts[it] = (counts[it] ?: 0) + 1 }
+                    }
+                    counts.forEach { (path, n) -> appendLine("$kind $path $n") }
+                }
+            }
+            "ALBUM_SET" -> {
+                intent.getStringExtra("photos")?.let(albums::setPhotos)
+                intent.getStringExtra("videos")?.let(albums::setVideos)
+                if (intent.hasExtra("together")) albums.setTogether(intent.getBooleanExtra("together", false))
+                resultData = "set; ALBUMS to watch the move"
             }
             "RAW" -> resultData = intent.getStringExtra("key")?.let { key ->
                 settings.rawObject(key)?.let { (ns, b) -> "$ns ${b.joinToString("") { "%02x".format(it) }}" } ?: "not read"

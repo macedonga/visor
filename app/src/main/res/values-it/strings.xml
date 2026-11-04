@@ -156,6 +156,8 @@
     <string name="section_album">Album</string>
     <string name="album_photos">Album delle foto</string>
     <string name="album_videos">Album dei video</string>
+    <string name="album_together">Un solo album per entrambi</string>
+    <string name="album_both">Album di foto e video</string>
     <string name="import_charging">In carica</string>
     <string name="import_charging_detail">Quando gli occhiali sono connessi e in carica</string>
     <string name="import_always">Sempre</string>

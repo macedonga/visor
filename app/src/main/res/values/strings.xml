@@ -157,6 +157,8 @@
     <string name="section_album">Album</string>
     <string name="album_photos">Photos album</string>
     <string name="album_videos">Videos album</string>
+    <string name="album_together">One album for both</string>
+    <string name="album_both">Photos and videos album</string>
     <string name="import_charging">While charging</string>
     <string name="import_charging_detail">When the glasses are connected and charging</string>
     <string name="import_always">Always</string>

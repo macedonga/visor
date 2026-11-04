@@ -157,14 +157,21 @@ private fun PhotosPart(model: SettingsViewModel) {
     val photosAlbum by model.albums.photos.collectAsStateWithLifecycle()
     val videosAlbum by model.albums.videos.collectAsStateWithLifecycle()
     val moving by model.albums.moving.collectAsStateWithLifecycle()
+    val together by model.albums.together.collectAsStateWithLifecycle()
     Column {
         SectionLabel(stringResource(R.string.import_title), Modifier.padding(top = 0.dp))
         OptionCards(AutoImport.entries.map { Triple(it, stringResource(it.title), stringResource(it.detail)) }, mode, model.importChoice::set)
         Footnote(stringResource(R.string.import_note))
         SectionLabel(stringResource(R.string.section_album))
         Rows(
-            row { ValueRow(stringResource(R.string.album_photos), photosAlbum, onClick = { renaming = false }, busy = moving > 0) },
-            row { ValueRow(stringResource(R.string.album_videos), videosAlbum, onClick = { renaming = true }, busy = moving > 0) },
+            row { ToggleRow(stringResource(R.string.album_together), together, model.albums::setTogether) },
+            row {
+                ValueRow(
+                    stringResource(if (together) R.string.album_both else R.string.album_photos), photosAlbum,
+                    onClick = { renaming = false }, busy = moving > 0,
+                )
+            },
+            if (together) null else row { ValueRow(stringResource(R.string.album_videos), videosAlbum, onClick = { renaming = true }, busy = moving > 0) },
         )
         SectionLabel(stringResource(R.string.section_places))
         Rows({
@@ -183,7 +190,7 @@ private fun PhotosPart(model: SettingsViewModel) {
         })
         val video = renaming
         if (video != null) TextSheet(
-            stringResource(if (video) R.string.album_videos else R.string.album_photos),
+            stringResource(if (video) R.string.album_videos else if (together) R.string.album_both else R.string.album_photos),
             if (video) videosAlbum else photosAlbum,
             onSave = if (video) model.albums::setVideos else model.albums::setPhotos,
             onDismiss = { renaming = null },

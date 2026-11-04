@@ -107,7 +107,7 @@ class Backups @Inject constructor(
             )
             .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("muted", JSONArray(apps.muted.value.sorted())))
             .put("import", import.mode.value.name)
-            .put("albums", JSONObject().put("photos", albums.photos.value).put("videos", albums.videos.value))
+            .put("albums", JSONObject().put("photos", albums.photos.value).put("videos", albums.videos.value).put("together", albums.together.value))
             .put(
                 "live",
                 JSONObject()
@@ -185,6 +185,7 @@ class Backups @Inject constructor(
         backup.optJSONObject("albums")?.let { o ->
             o.optString("photos").takeIf { it.isNotEmpty() }?.let(albums::setPhotos)
             o.optString("videos").takeIf { it.isNotEmpty() }?.let(albums::setVideos)
+            if (o.has("together")) albums.setTogether(o.optBoolean("together"))
         }
         backup.optJSONObject("live")?.let { o ->
             live.update {
