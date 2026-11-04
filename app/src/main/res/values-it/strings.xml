@@ -272,16 +272,15 @@
     <string name="language_need_glasses">Collega gli occhiali per cambiare lingua.</string>
     <string name="language_offers_problem">Impossibile chiedere i pacchetti a Meta: %1$s</string>
     <string name="language_footnote">I pacchetti arrivano da Meta con il tuo accesso. Ognuno contiene il riconoscimento vocale e le voci della lingua.</string>
-    <string name="language_partner">Lingue del telefono (3P)</string>
-    <string name="language_partner_sub">Il telefono riconosce le domande e genera le risposte vocali. Gli occhiali riproducono la voce. Il riconoscimento può richiedere internet o un modello vocale da scaricare.</string>
-    <string name="language_checking_phone">Verifica del riconoscimento e della voce sul telefono</string>
-    <string name="language_recognition_unknown">Il servizio non ha confermato il supporto per questa lingua. Il riconoscimento potrebbe non funzionare.</string>
-    <string name="language_partner_voice">Le lingue 3P usano una voce del telefono, riprodotta dagli occhiali.</string>
-    <string name="language_partner_speed">Cambia la velocità della voce nelle impostazioni di sintesi vocale di Android.</string>
+    <string name="language_partner">Lingue del telefono</string>
+    <string name="language_checking_phone">Controllo il telefono</string>
+    <string name="language_recognition_unknown">Il telefono non ha confermato di riconoscere questa lingua.</string>
+    <string name="language_partner_voice">Le lingue del telefono usano la voce del telefono.</string>
+    <string name="language_partner_speed">Si imposta nella sintesi vocale di Android.</string>
     <!-- Meta AI: il diario -->
     <string name="meta_ai_title">Meta AI</string>
     <string name="language_photos_title">Attivare le foto con la voce?</string>
-    <string name="language_photos_text">I comandi vocali potranno scattare foto con gli occhiali. Le altre app non ottengono accesso alla fotocamera. La configurazione può richiedere alcuni minuti. Puoi usare questa lingua anche senza.</string>
+    <string name="language_photos_text">Scatta foto con la voce nelle lingue del telefono. Nessun\'altra app ottiene la fotocamera.</string>
     <string name="meta_ai_ask">Chiedi qualsiasi cosa</string>
     <string name="meta_ai_send">Invia</string>
     <string name="meta_ai_hold">Tieni premuto per parlare</string>
@@ -521,7 +520,7 @@
     <string name="ai_vision">Usa la fotocamera</string>
     <string name="ai_vision_sub">Per le domande su ciò che stai guardando.</string>
     <string name="ai_voice_photos">Foto con la voce</string>
-    <string name="ai_voice_photos_sub">Un comando vocale in una lingua partner può scattare una foto. Gli occhiali tengono attivo un interruttore Meta della fotocamera; la modalità sviluppatore resta spenta.</string>
+    <string name="ai_voice_photos_sub">Scatta foto con la voce in una lingua del telefono.</string>
     <string name="ai_web">Cerca sul web</string>
     <string name="ai_web_sub">Claude cerca quando ne ha bisogno. Più lento.</string>
     <string name="ai_quiet_actions">Silenzio dopo le azioni</string>

@@ -158,7 +158,6 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
         item(key = "partner_languages") {
             Column {
                 SectionLabel(stringResource(R.string.language_partner))
-                Footnote(stringResource(R.string.language_partner_sub))
                 Card {
                     PARTNER_LANGUAGES.filter { it != current }.sortedBy { it.nativeName() }.forEachIndexed { i, language ->
                         if (i > 0) Hairline()
@@ -170,7 +169,8 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
                             waiting = switching == language.defaultVoice || (work as? LanguageWork.Working)?.language == language,
                         ) {
                             model.installer.use(language.voices.first())
-                            if (!model.assistant.config.value.voicePhotos) askingPhotos = true
+                            // Asked on the way into phone languages, not again on each one.
+                            if (!model.assistant.config.value.voicePhotos && current?.partner != true) askingPhotos = true
                         }
                     }
                 }

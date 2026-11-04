@@ -43,9 +43,10 @@ fun keepAssistantConfig(
         combine(
             connection.state.map { it.link == LinkState.READY }.distinctUntilChanged(),
             store.config.map { Triple(it.enabled, it.glassesVoice, it.answerWaitSeconds.toLong()) }.distinctUntilChanged(),
-            settings.state.map { state -> state.readAt?.let { settings.value("assistant_voice_id")?.startsWith("3p_") == true } }.distinctUntilChanged(),
+            // A phone language has no glasses voice to keep. Settings come in on connect, well inside the settle below.
+            settings.state.map { settings.value("assistant_voice_id")?.startsWith("3p_") == true }.distinctUntilChanged(),
         ) { ready, wanted, partner ->
-            Triple(wanted.first, wanted.second && partner == false, wanted.third).takeIf { ready && partner != null }
+            Triple(wanted.first, wanted.second && !partner, wanted.third).takeIf { ready }
         }.collectLatest { wanted ->
             val (enabled, own, wait) = wanted ?: return@collectLatest
             if (!(enabled || own)) return@collectLatest

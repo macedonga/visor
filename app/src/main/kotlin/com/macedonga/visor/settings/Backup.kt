@@ -198,7 +198,8 @@ class Backups @Inject constructor(
 
         val glasses = backup.optJSONObject("glasses") ?: return true
         if (connection.state.value.link != LinkState.READY) return true
-        val keys = glasses.keys().asSequence().filter { settings.catalogue[it]?.writable == true }.toList()
+        // The voice last: a phone that cannot speak it, or glasses that keep theirs, stop the restore with a reason.
+        val keys = glasses.keys().asSequence().filter { settings.catalogue[it]?.writable == true }.sortedBy { it == "assistant_voice_id" }.toList()
         var recognitionChecked = true
         for ((i, key) in keys.withIndex()) {
             onProgress(i, keys.size)

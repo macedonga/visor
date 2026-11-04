@@ -155,19 +155,24 @@ class LanguageInstaller @Inject constructor(
         if (job?.isActive != true) _work.value = LanguageWork.Idle
     }
 
-    /** Check phone support when needed, switch the voice and wait for the glasses to confirm it. */
+    /** Switch to [voice]; a phone language is checked on the phone first, then confirmed by the glasses. */
     fun use(voice: GlassesVoice) {
         if (job?.isActive == true) return
         val language = languageOfVoice(voice.id) ?: return
+        // A voice on the glasses: its row shows the switch and a refusal, as the glasses report them.
+        if (!language.partner) {
+            settings.write(VOICE_KEY, voice.id)
+            return
+        }
         job = scope.launch {
             try {
                 check(connection.state.value.link == LinkState.READY) { "the glasses are not connected" }
                 val locale = Locale.forLanguageTag(language.locale.replace('_', '-'))
-                if (language.partner) step(language, LanguageWork.Step.CHECKING_PHONE)
+                step(language, LanguageWork.Step.CHECKING_PHONE)
                 val recognitionChecked = checkPhone(voice.id)
                 step(language, LanguageWork.Step.SWITCHING)
                 switchVoice(voice.id)
-                if (language.partner) SpeechModels.prepare(context, locale) { log.add("Language: $it") }
+                SpeechModels.prepare(context, locale) { log.add("Language: $it") }
                 _work.value = LanguageWork.Finished(language, recognitionChecked)
             } catch (error: kotlinx.coroutines.CancellationException) {
                 _work.value = LanguageWork.Idle
