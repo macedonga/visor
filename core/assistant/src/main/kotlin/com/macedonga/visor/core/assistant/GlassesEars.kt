@@ -305,7 +305,11 @@ class GlassesEars(
                 }
                 return
             }
-            onProblem("speech recognition error $error; stopped listening")
+            onProblem(when (error) {
+                SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "the phone has no speech recognition for $tag; stopped listening"
+                SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "speech recognition for $tag is unavailable; download its speech model or check the network"
+                else -> "speech recognition error $error for $tag; stopped listening"
+            })
             main.post { close() }
         }
 

@@ -46,6 +46,8 @@ private val VISUAL_WORDS = listOf(
     "translate this", "picture", "photo",
     "guarda", "vedi", "vedo", "leggi", "descrivi", "cos'è questo", "cos'è quello", "che cos'è", "cosa c'è",
     "davanti a me", "inquadr", "foto", "cosa sto",
+    "nhìn thấy", "đang nhìn", "trước mặt", "cái gì đây", "đây là gì", "cái này là gì", "đọc giúp", "đọc cái", "mô tả",
+    "dịch cái này", "tấm ảnh", "bức ảnh",
 )
 
 /**

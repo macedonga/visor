@@ -276,6 +276,8 @@
     <string name="language_switching">Переключение голоса</string>
     <string name="language_done">%1$s установлен на очках.</string>
     <string name="language_failed">%1$s не установлен: %2$s</string>
+    <string name="language_partner_done">Выбран язык: %1$s.</string>
+    <string name="language_partner_failed">Не удалось выбрать %1$s: %2$s</string>
     <string name="language_cancel">Отмена</string>
     <string name="language_ok">OK</string>
     <string name="language_confirm_title">Скачать %1$s?</string>
@@ -284,6 +286,12 @@
     <string name="language_need_glasses">Подключите очки, чтобы сменить язык.</string>
     <string name="language_offers_problem">Не удалось запросить у Meta языковые пакеты: %1$s</string>
     <string name="language_footnote">Пакеты скачиваются из Meta через ваш аккаунт. В каждом есть распознавание речи и голоса языка.</string>
+    <string name="language_partner">Языки телефона (3P)</string>
+    <string name="language_partner_sub">Телефон распознаёт вопросы и озвучивает ответы. Звук воспроизводится через очки. Для распознавания может потребоваться интернет или загрузка речевой модели.</string>
+    <string name="language_checking_phone">Проверка распознавания речи и голоса на телефоне</string>
+    <string name="language_recognition_unknown">Сервис распознавания не подтвердил поддержку этого языка. Распознавание может не работать.</string>
+    <string name="language_partner_voice">Для языков 3P используется голос телефона, который воспроизводится через очки.</string>
+    <string name="language_partner_speed">Измените скорость голоса в настройках синтеза речи Android.</string>
     <string name="meta_ai_title">Meta AI</string>
     <string name="meta_ai_ask">Спросите о чём угодно</string>
     <string name="meta_ai_send">Отправить</string>

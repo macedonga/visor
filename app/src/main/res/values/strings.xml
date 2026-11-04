@@ -263,6 +263,8 @@
     <string name="language_switching">Switching the voice</string>
     <string name="language_done">%1$s is on the glasses.</string>
     <string name="language_failed">%1$s did not install: %2$s</string>
+    <string name="language_partner_done">%1$s is selected.</string>
+    <string name="language_partner_failed">%1$s could not be selected: %2$s</string>
     <string name="language_cancel">Cancel</string>
     <string name="language_ok">OK</string>
     <string name="language_confirm_title">Download %1$s?</string>
@@ -271,6 +273,12 @@
     <string name="language_need_glasses">Connect the glasses to change the language.</string>
     <string name="language_offers_problem">Meta could not be asked for the packs: %1$s</string>
     <string name="language_footnote">Packs come from Meta with your login. Each one holds the language’s speech recognition and voices.</string>
+    <string name="language_partner">Phone languages (3P)</string>
+    <string name="language_partner_sub">Questions and replies use the phone. Audio plays on the glasses. Recognition may need internet or a speech-model download.</string>
+    <string name="language_checking_phone">Checking phone recognition and voice support</string>
+    <string name="language_recognition_unknown">The recognition service could not confirm support for this language. Recognition may fail.</string>
+    <string name="language_partner_voice">3P languages use a phone voice, played through the glasses.</string>
+    <string name="language_partner_speed">Change the phone voice speed in Android text-to-speech settings.</string>
     <!-- Meta AI: the diary -->
     <string name="meta_ai_title">Meta AI</string>
     <string name="meta_ai_ask">Ask anything</string>

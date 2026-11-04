@@ -36,6 +36,7 @@ import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.gallery.AutoImport
 import com.macedonga.visor.gallery.ImportChoice
+import com.macedonga.visor.language.LanguageInstaller
 import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -44,6 +45,7 @@ import java.time.Instant
 import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +72,7 @@ class Backups @Inject constructor(
     private val live: LiveSettingsStore,
     private val pins: Pins,
     private val mcp: McpStore,
+    private val languages: LanguageInstaller,
 ) {
     private val prefs = context.getSharedPreferences("backup", Context.MODE_PRIVATE)
     private val _last = MutableStateFlow(prefs.getLong(LAST, 0L).takeIf { it > 0 })
@@ -134,7 +137,7 @@ class Backups @Inject constructor(
     }
 
     /** Puts Visor's part back at once, and the glasses' part one write at a time; the glasses' part needs them connected. */
-    suspend fun restore(backup: JSONObject, onProgress: (Int, Int) -> Unit) {
+    suspend fun restore(backup: JSONObject, onProgress: (Int, Int) -> Unit): Boolean {
         backup.optJSONObject("assistant")?.let { o ->
             assistant.update {
                 it.copy(
@@ -192,18 +195,25 @@ class Backups @Inject constructor(
         }
         backup.optJSONArray("pins")?.let { a -> pins.set((0 until a.length()).map { a.getString(it) }) }
 
-        val glasses = backup.optJSONObject("glasses") ?: return
-        if (connection.state.value.link != LinkState.READY) return
+        val glasses = backup.optJSONObject("glasses") ?: return true
+        if (connection.state.value.link != LinkState.READY) return true
         val keys = glasses.keys().asSequence().filter { settings.catalogue[it]?.writable == true }.toList()
+        var recognitionChecked = true
         for ((i, key) in keys.withIndex()) {
             onProgress(i, keys.size)
             val want = glasses.getString(key)
             if (settings.value(key) != want) {
-                settings.write(key, want)
-                delay(WRITE_GAP_MS)
+                if (key == "assistant_voice_id") {
+                    recognitionChecked = languages.checkPhone(want)
+                    languages.switchVoice(want)
+                } else {
+                    settings.write(key, want)
+                    delay(WRITE_GAP_MS)
+                }
             }
         }
         onProgress(keys.size, keys.size)
+        return recognitionChecked
     }
 
     private companion object {
@@ -230,6 +240,7 @@ fun BackupScreen(model: BackupModel = hiltViewModel()) {
     val ready = glasses.link == LinkState.READY
     val wordsSaved = stringResource(R.string.backup_saved)
     val wordsDone = stringResource(R.string.backup_restored)
+    val recognitionUnknown = stringResource(R.string.language_recognition_unknown)
 
     val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch {
@@ -283,9 +294,18 @@ fun BackupScreen(model: BackupModel = hiltViewModel()) {
                     pending = null
                     scope.launch {
                         restoring = true
-                        model.backups.restore(backup) { done, total -> progress = context.getString(R.string.backup_restoring, done, total) }
-                        restoring = false
-                        progress = wordsDone
+                        try {
+                            val checked = model.backups.restore(backup) { done, total -> progress = context.getString(R.string.backup_restoring, done, total) }
+                            progress = wordsDone
+                            problem = if (checked) null else recognitionUnknown
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            progress = null
+                            problem = error.message ?: error::class.java.simpleName
+                        } finally {
+                            restoring = false
+                        }
                     }
                 })
                 ActionPill(stringResource(R.string.language_cancel), { pending = null }, quiet = true)

@@ -2,6 +2,8 @@ package com.macedonga.visor.language
 
 import com.macedonga.visor.core.identity.token.withToken
 import android.content.Context
+import com.macedonga.visor.core.assistant.SpeechModels
+import com.macedonga.visor.core.assistant.Voice
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.language.LANGUAGE_FEATURE
 import com.macedonga.visor.core.identity.language.PackOffer
@@ -15,6 +17,7 @@ import com.macedonga.visor.login.MetaLogin
 import com.macedonga.visor.pairs.pairPrefs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -27,17 +30,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Where an install is. [done] and [total] are bytes for the download and the transfer. */
 sealed interface LanguageWork {
     data object Idle : LanguageWork
     data class Working(val language: GlassesLanguage, val step: Step, val done: Long = 0, val total: Long = 0) : LanguageWork
-    data class Finished(val language: GlassesLanguage) : LanguageWork
+    data class Finished(val language: GlassesLanguage, val recognitionChecked: Boolean = true) : LanguageWork
     data class Failed(val language: GlassesLanguage, val reason: String) : LanguageWork
 
-    enum class Step { ASKING, DOWNLOADING, SENDING, SWITCHING }
+    enum class Step { CHECKING_PHONE, ASKING, DOWNLOADING, SENDING, SWITCHING }
 }
 
 /**
@@ -87,7 +92,7 @@ class LanguageInstaller @Inject constructor(
 
     init {
         // The voice in use says its language is there.
-        scope.launch { settings.state.collect { languageOfVoice(settings.value(VOICE_KEY))?.let { markInstalled(it.locale) } } }
+        scope.launch { settings.state.collect { languageOfVoice(settings.value(VOICE_KEY))?.takeUnless { it.partner }?.let { markInstalled(it.locale) } } }
     }
 
     /** Ask Meta for every language's pack, for the sizes. Quietly does nothing until the glasses have said who they are. */
@@ -129,7 +134,7 @@ class LanguageInstaller @Inject constructor(
                 markInstalled(language.locale)
                 zip.delete()
                 step(language, LanguageWork.Step.SWITCHING)
-                use(language.voices.first { it.id == language.defaultVoice })
+                switchVoice(language.defaultVoice)
                 log.add("Language: ${language.locale} is on the glasses")
                 _work.value = LanguageWork.Finished(language)
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -150,8 +155,57 @@ class LanguageInstaller @Inject constructor(
         if (job?.isActive != true) _work.value = LanguageWork.Idle
     }
 
-    /** Switch the assistant to [voice], and with it to its language. False when the glasses are not there to hear it. */
-    fun use(voice: GlassesVoice): Boolean = settings.write(VOICE_KEY, voice.id)
+    /** Check phone support when needed, switch the voice and wait for the glasses to confirm it. */
+    fun use(voice: GlassesVoice) {
+        if (job?.isActive == true) return
+        val language = languageOfVoice(voice.id) ?: return
+        job = scope.launch {
+            try {
+                check(connection.state.value.link == LinkState.READY) { "the glasses are not connected" }
+                val locale = Locale.forLanguageTag(language.locale.replace('_', '-'))
+                if (language.partner) step(language, LanguageWork.Step.CHECKING_PHONE)
+                val recognitionChecked = checkPhone(voice.id)
+                step(language, LanguageWork.Step.SWITCHING)
+                switchVoice(voice.id)
+                if (language.partner) SpeechModels.prepare(context, locale) { log.add("Language: $it") }
+                _work.value = LanguageWork.Finished(language, recognitionChecked)
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                _work.value = LanguageWork.Idle
+                throw error
+            } catch (error: Exception) {
+                log.add("Language: ${language.locale} failed: ${error.message}")
+                _work.value = LanguageWork.Failed(language, error.message ?: error::class.java.simpleName)
+            }
+        }
+    }
+
+    internal suspend fun checkPhone(voiceId: String): Boolean {
+        if (!voiceId.startsWith("3p_")) return true
+        val language = languageOfVoice(voiceId) ?: error("unknown 3P voice: $voiceId")
+        val locale = Locale.forLanguageTag(language.locale.replace('_', '-'))
+        val recognitionChecked = SpeechModels.check(context, locale)
+        val voice = Voice(context)
+        try {
+            voice.checkLanguage(locale)
+        } finally {
+            voice.close()
+        }
+        return recognitionChecked
+    }
+
+    internal suspend fun switchVoice(voiceId: String) {
+        check(settings.write(VOICE_KEY, voiceId)) { "the voice could not be sent to the glasses" }
+        val defaultVoice = settings.catalogue[VOICE_KEY]?.default
+        val confirmed = withTimeoutOrNull(20_000) {
+            settings.state.first { state ->
+                VOICE_KEY !in state.pending && (state.stored[VOICE_KEY] ?: defaultVoice) == voiceId
+            }
+        }
+        check(confirmed != null) {
+            if (VOICE_KEY in settings.state.value.kept) "the glasses kept their previous voice"
+            else "the glasses did not confirm the voice"
+        }
+    }
 
     private fun step(language: GlassesLanguage, step: LanguageWork.Step, done: Long = 0, total: Long = 0) {
         _work.value = LanguageWork.Working(language, step, done, total)

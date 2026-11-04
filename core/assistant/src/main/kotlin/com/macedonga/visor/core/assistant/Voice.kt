@@ -12,14 +12,13 @@ import java.nio.ByteOrder
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.coroutines.resume
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One Opus packet and how long it plays. */
 class OpusPacket(val data: ByteArray, val durationUs: Long)
@@ -37,6 +36,10 @@ class Voice(private val context: Context) {
     /** The engine and its default voice, for the screen. */
     var engine: String = ""
         private set
+
+    suspend fun checkLanguage(locale: Locale) = lock.withLock {
+        selectLanguage(ready(), locale)
+    }
 
     suspend fun speak(text: String, locale: Locale): List<OpusPacket> = lock.withLock {
         val wav = File(context.cacheDir, "assistant-tts.wav")
@@ -57,14 +60,25 @@ class Voice(private val context: Context) {
         check(ok && out.length() > 44) { "the phone's text to speech failed" }
     }
 
+    private fun selectLanguage(engine: TextToSpeech, locale: Locale) {
+        val required = if (locale.language == "zh") TextToSpeech.LANG_COUNTRY_AVAILABLE else TextToSpeech.LANG_AVAILABLE
+        check(engine.isLanguageAvailable(locale) >= required && engine.setLanguage(locale) >= required) {
+            "the phone has no text-to-speech voice for ${locale.toLanguageTag()}; install it in Android text-to-speech settings"
+        }
+    }
+
     private suspend fun ready(): TextToSpeech {
         tts?.let { return it }
-        var made: TextToSpeech? = null
-        val status = suspendCancellableCoroutine { cont ->
-            made = TextToSpeech(context) { cont.resume(it) }
+        val initialized = CompletableDeferred<Int>()
+        val engine = TextToSpeech(context) { initialized.complete(it) }
+        try {
+            val status = withTimeoutOrNull(10_000) { initialized.await() }
+                ?: error("the phone's text to speech did not start")
+            check(status == TextToSpeech.SUCCESS) { "the phone has no working text to speech" }
+        } catch (error: Exception) {
+            engine.shutdown()
+            throw error
         }
-        val engine = checkNotNull(made)
-        check(status == TextToSpeech.SUCCESS) { "the phone has no working text to speech" }
         engine.setOnUtteranceProgressListener(
             object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String) = Unit

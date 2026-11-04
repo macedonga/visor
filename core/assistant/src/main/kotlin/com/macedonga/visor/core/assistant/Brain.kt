@@ -16,6 +16,7 @@ import java.util.Locale
 import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -45,10 +46,14 @@ data class Reply(
  * What one answer may use and what it did with it; [photo] is the glasses' JPEG that came with the question, [canEnd]
  * whether the model may end the conversation.
  */
-private class Turn(val box: Toolbox, val photo: ByteArray? = null, val glasses: GlassesToolbox? = null, val canEnd: Boolean = false) {
+private class Turn(
+    val box: Toolbox, var photo: ByteArray? = null, val glasses: GlassesToolbox? = null, val canEnd: Boolean = false,
+    val capturePhoto: (suspend () -> ByteArray?)? = null,
+) {
     val remembered = ArrayList<String>()
     val actions = ArrayList<ToolAction>()
     var ends = false
+    var photoRequested = false
 }
 
 /** What the assistant keeps about the wearer across conversations; the model adds and drops entries with its tools. */
@@ -96,11 +101,12 @@ class Brain(
         audience: Audience = Audience.GLASSES,
         glasses: GlassesToolbox? = null,
         canEnd: Boolean = false,
+        capturePhoto: (suspend () -> ByteArray?)? = null,
     ): Reply = withContext(Dispatchers.IO) {
         val c = config()
         check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
         // The tools never stand in the way of an answer: without them the model still answers.
-        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd)
+        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd, capturePhoto)
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
@@ -108,7 +114,7 @@ class Brain(
             phoneTools?.prompt.orEmpty() +
             (if (canEnd) END_PROMPT else "") +
             turn.box.prompt +
-            (if (image != null && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
+            (if ((image != null || capturePhoto != null) && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
             (if (note.isNotBlank()) " $note" else "") +
             if (c.instructions.isNotBlank()) " " + c.instructions else ""
         val recent = past.takeLast(MAX_EXCHANGES)
@@ -163,6 +169,20 @@ class Brain(
 
     /** A tool run for the model: remember or forget, or one of the person's servers'. What it is told back. */
     private suspend fun runTool(name: String, input: JSONObject, turn: Turn): ToolResult {
+        if (name == PHOTO_TOOL) {
+            val capture = turn.capturePhoto ?: return ToolResult("the glasses camera is not available for this question", true)
+            if (turn.photoRequested) return ToolResult("a photo was already requested for this question; use that result", true)
+            turn.photoRequested = true
+            return try {
+                turn.photo = capture()
+                if (turn.photo == null) ToolResult("no photo arrived from the glasses; do not guess what the wearer sees", true)
+                else ToolResult("the glasses photo is attached", false)
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                ToolResult(error.message ?: "the glasses could not take a photo", true)
+            }
+        }
         if (turn.canEnd && name == END_TOOL) {
             turn.ends = true
             return ToolResult("the glasses stop listening after your answer", false)
@@ -204,15 +224,7 @@ class Brain(
             messages.put(JSONObject().put("role", "assistant").put("content", e.told()))
         }
         val content = JSONArray()
-        if (image != null) {
-            content.put(
-                JSONObject().put("type", "image").put(
-                    "source",
-                    JSONObject().put("type", "base64").put("media_type", "image/jpeg")
-                        .put("data", Base64.encodeToString(image, Base64.NO_WRAP)),
-                ),
-            )
-        }
+        if (image != null) content.put(claudeImage(image))
         content.put(JSONObject().put("type", "text").put("text", question))
         messages.put(JSONObject().put("role", "user").put("content", content))
         val tools = JSONArray()
@@ -222,6 +234,7 @@ class Brain(
             tools.put(JSONObject().put("name", "forget").put("description", FORGET_HELP).put("input_schema", schema("id", "The fact's id.")))
         }
         if (turn?.canEnd == true) tools.put(JSONObject().put("name", END_TOOL).put("description", END_HELP).put("input_schema", NO_INPUT))
+        if (turn?.capturePhoto != null) tools.put(JSONObject().put("name", PHOTO_TOOL).put("description", PHOTO_HELP).put("input_schema", NO_INPUT))
         if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> tools.put(JSONObject().put("name", name).put("description", help).put("input_schema", input)) }
         turn?.box?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.name).put("description", t.help()).put("input_schema", t.tool.schema)) }
         turn?.glasses?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.short).put("description", t.help).put("input_schema", t.schema)) }
@@ -242,9 +255,13 @@ class Brain(
             messages.put(JSONObject().put("role", "assistant").put("content", blocks))
             val results = JSONArray()
             for (use in uses) {
-                val out = runTool(use.getString("name"), use.optJSONObject("input") ?: JSONObject(), turn)
+                val name = use.getString("name")
+                val out = runTool(name, use.optJSONObject("input") ?: JSONObject(), turn)
+                val result: Any = if (name == PHOTO_TOOL && !out.isError) JSONArray()
+                    .put(JSONObject().put("type", "text").put("text", out.text))
+                    .put(claudeImage(checkNotNull(turn.photo))) else out.text
                 results.put(
-                    JSONObject().put("type", "tool_result").put("tool_use_id", use.getString("id")).put("content", out.text)
+                    JSONObject().put("type", "tool_result").put("tool_use_id", use.getString("id")).put("content", result)
                         .apply { if (out.isError) put("is_error", true) },
                 )
             }
@@ -264,12 +281,7 @@ class Brain(
         }
         val user: Any = if (image == null) question else JSONArray()
             .put(JSONObject().put("type", "text").put("text", question))
-            .put(
-                JSONObject().put("type", "image_url").put(
-                    "image_url",
-                    JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(image, Base64.NO_WRAP)),
-                ),
-            )
+            .put(openAiImage(image))
         messages.put(JSONObject().put("role", "user").put("content", user))
         val headers = if (c.apiKey.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${c.apiKey}")
         val url = c.baseUrl.trimEnd('/') + "/chat/completions"
@@ -279,6 +291,7 @@ class Brain(
                 put(function("forget", FORGET_HELP, schema("id", "The fact's id.")))
             }
             if (turn?.canEnd == true) put(function(END_TOOL, END_HELP, NO_INPUT))
+            if (turn?.capturePhoto != null) put(function(PHOTO_TOOL, PHOTO_HELP, NO_INPUT))
             if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> put(function(name, help, input)) }
             // Some servers behind this API refuse a schema that names its own dialect.
             turn?.box?.tools?.forEach { t -> put(function(t.name, t.help(), JSONObject(t.tool.schema.toString()).apply { remove("\$schema") })) }
@@ -295,6 +308,7 @@ class Brain(
                 // own tools are never dropped unseen: their refusal is the answer's error.
                 if (tools == null || turn?.box?.tools.orEmpty().isNotEmpty() || !TOOLS_REFUSED.containsMatchIn(error.message.orEmpty())) throw error
                 tools = null
+                if (turn?.capturePhoto != null) messages.put(JSONObject().put("role", "system").put("content", NO_PHOTO))
                 send(url, headers, body.apply { remove("tools") })
             }
             val choice = answer.getJSONArray("choices").getJSONObject(0)
@@ -305,12 +319,19 @@ class Brain(
             val calls = message.optJSONArray("tool_calls")
             if (calls == null || calls.length() == 0 || turn == null) return said
             messages.put(message)
+            var photo: ByteArray? = null
             for (i in 0 until calls.length()) {
                 val call = calls.getJSONObject(i)
                 val fn = call.getJSONObject("function")
                 val input = runCatching { JSONObject(fn.optString("arguments")) }.getOrDefault(JSONObject())
                 val out = runTool(fn.getString("name"), input, turn)
                 messages.put(JSONObject().put("role", "tool").put("tool_call_id", call.getString("id")).put("content", out.text))
+                if (fn.getString("name") == PHOTO_TOOL && !out.isError) photo = turn.photo
+            }
+            photo?.let {
+                messages.put(JSONObject().put("role", "user").put("content", JSONArray()
+                    .put(JSONObject().put("type", "text").put("text", "The glasses photo from take_photo."))
+                    .put(openAiImage(it))))
             }
         }
         return said
@@ -389,6 +410,14 @@ class Brain(
         }
     }
 
+    private fun claudeImage(image: ByteArray): JSONObject = JSONObject().put("type", "image").put("source",
+        JSONObject().put("type", "base64").put("media_type", "image/jpeg").put("data", Base64.encodeToString(image, Base64.NO_WRAP)),
+    )
+
+    private fun openAiImage(image: ByteArray): JSONObject = JSONObject().put("type", "image_url").put("image_url",
+        JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(image, Base64.NO_WRAP)),
+    )
+
     private companion object {
         /** Thinking a server left inline in the answer. */
         val THINKING = Regex("(?s)<think>.*?</think>")
@@ -418,6 +447,11 @@ class Brain(
         const val FORGET_HELP = "Drop a fact you remember that is wrong or outdated, or that the wearer asks you to forget."
         const val FACT_HELP = "One short sentence addressed to the wearer, in their language, e.g. \"Your sister is called Giulia.\""
         const val END_TOOL = "end_conversation"
+        const val PHOTO_TOOL = "take_photo"
+        const val NO_PHOTO = "This model cannot see what the wearer sees. If the question needs it, say so briefly."
+        const val PHOTO_HELP = "Take one photo of what the wearer sees through the glasses. Use it when their question " +
+            "needs the current view, such as identifying something, reading text or describing their surroundings. " +
+            "Do not use it for general knowledge. The result includes the image; answer from it. Available once per question."
         const val END_HELP = "After each answer the glasses keep listening for another question. Call this when the wearer is " +
             "done: they say no, that's all, thanks, stop or goodbye, or they turn down what you offered. The glasses then " +
             "stop listening after this answer. Still answer, in a few words."
@@ -435,5 +469,5 @@ class Brain(
 }
 
 // A tool takes the glasses' photo by a placeholder; McpHub puts the photo in its place.
-private val PHOTO_PROMPT = " The glasses' photo comes with this question. To hand it to a tool, write \"$PHOTO_BASE64\" as " +
+private val PHOTO_PROMPT = " When a glasses photo is available, hand it to a tool by writing \"$PHOTO_BASE64\" as " +
     "that argument's value for the JPEG as base64, or \"$PHOTO_DATA_URL\" for it as a data URL; Visor puts the photo there."

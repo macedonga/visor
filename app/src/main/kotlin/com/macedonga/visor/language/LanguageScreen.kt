@@ -78,7 +78,7 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
     LaunchedEffect(glasses.info != null) { if (glasses.info != null && offers.isEmpty()) model.installer.refreshOffers() }
 
     val voiceId = state.stored["assistant_voice_id"] ?: model.settings.value("assistant_voice_id")
-    val current = languageOfVoice(voiceId) ?: GLASSES_LANGUAGES.first()
+    val current = languageOfVoice(voiceId)
     // A switch sent and not yet seen back on the glasses, and one they refused.
     val switching = state.pending["assistant_voice_id"]
     val refused = "assistant_voice_id" in state.kept
@@ -91,9 +91,9 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
                 SectionLabel(stringResource(R.string.language_in_use), Modifier.padding(top = 0.dp))
                 Rows({
                     RowFrame(
-                        current.nativeName(), onClick = null,
-                        value = current.voices.firstOrNull { it.id == voiceId }?.label(),
-                        sub = current.localName().takeIf { it != current.nativeName() },
+                        current?.nativeName() ?: voiceId ?: stringResource(R.string.settings_not_read), onClick = null,
+                        value = if (current?.partner == true) stringResource(R.string.ai_voice_phone) else current?.voices?.firstOrNull { it.id == voiceId }?.label(),
+                        sub = current?.localName()?.takeIf { it != current.nativeName() },
                         busy = switching != null,
                         problem = if (refused) stringResource(R.string.language_kept) else null,
                     )
@@ -102,7 +102,7 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
         }
         item(key = "work") { WorkCard(work, model.installer::cancel, model.installer::dismiss) }
         if (!ready) item(key = "away") { Footnote(stringResource(R.string.language_need_glasses)) }
-        item(key = "voices") {
+        if (current != null && !current.partner) item(key = "voices") {
             Column {
                 SectionLabel(stringResource(R.string.language_voice))
                 Card {
@@ -152,6 +152,24 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
                 Footnote(stringResource(R.string.language_footnote))
             }
         }
+        item(key = "partner_languages") {
+            Column {
+                SectionLabel(stringResource(R.string.language_partner))
+                Footnote(stringResource(R.string.language_partner_sub))
+                Card {
+                    PARTNER_LANGUAGES.filter { it != current }.sortedBy { it.nativeName() }.forEachIndexed { i, language ->
+                        if (i > 0) Hairline()
+                        LanguageRow(
+                            language,
+                            detail = stringResource(R.string.ai_voice_phone),
+                            action = stringResource(R.string.language_use),
+                            enabled = ready && !busy,
+                            waiting = switching == language.defaultVoice || (work as? LanguageWork.Working)?.language == language,
+                        ) { model.installer.use(language.voices.first()) }
+                    }
+                }
+            }
+        }
     }
 
     asking?.let { language ->
@@ -183,6 +201,7 @@ private fun WorkCard(work: LanguageWork, onCancel: () -> Unit, onDismiss: () -> 
                 is LanguageWork.Working -> {
                     Text(work.language.nativeName(), style = Visor.type.heading, color = Visor.colors.textPrimary)
                     val step = when (work.step) {
+                        LanguageWork.Step.CHECKING_PHONE -> stringResource(R.string.language_checking_phone)
                         LanguageWork.Step.ASKING -> stringResource(R.string.language_asking)
                         LanguageWork.Step.DOWNLOADING -> stringResource(R.string.language_downloading)
                         LanguageWork.Step.SENDING -> stringResource(R.string.language_sending)
@@ -193,15 +212,18 @@ private fun WorkCard(work: LanguageWork, onCancel: () -> Unit, onDismiss: () -> 
                         if (work.total > 0) Text("${mb(work.done)} / ${mb(work.total)}", style = Visor.type.readoutSmall, color = Visor.colors.textSecondary)
                     }
                     StepBar(work)
-                    Text(
+                    if (work.step != LanguageWork.Step.SWITCHING) Text(
                         stringResource(R.string.language_cancel),
                         style = Visor.type.label,
                         color = Visor.colors.textPrimary,
                         modifier = Modifier.clip(RoundedCornerShape(50)).background(Visor.colors.control).clickable(onClick = onCancel).padding(horizontal = 14.dp, vertical = 8.dp),
                     )
                 }
-                is LanguageWork.Finished -> Done(stringResource(R.string.language_done, work.language.nativeName()), Visor.colors.textPrimary, onDismiss)
-                is LanguageWork.Failed -> Done(stringResource(R.string.language_failed, work.language.nativeName(), work.reason), Visor.colors.signal, onDismiss)
+                is LanguageWork.Finished -> {
+                    Done(stringResource(if (work.language.partner) R.string.language_partner_done else R.string.language_done, work.language.nativeName()), Visor.colors.textPrimary, onDismiss)
+                    if (!work.recognitionChecked) Text(stringResource(R.string.language_recognition_unknown), style = Visor.type.body, color = Visor.colors.textSecondary)
+                }
+                is LanguageWork.Failed -> Done(stringResource(if (work.language.partner) R.string.language_partner_failed else R.string.language_failed, work.language.nativeName(), work.reason), Visor.colors.signal, onDismiss)
                 LanguageWork.Idle -> Unit
             }
         }
@@ -213,6 +235,7 @@ private fun WorkCard(work: LanguageWork, onCancel: () -> Unit, onDismiss: () -> 
 private fun StepBar(work: LanguageWork.Working) {
     val within = if (work.total > 0) (work.done.toFloat() / work.total).coerceIn(0f, 1f) else 0f
     val target = when (work.step) {
+        LanguageWork.Step.CHECKING_PHONE -> 0.02f
         LanguageWork.Step.ASKING -> 0.02f
         LanguageWork.Step.DOWNLOADING -> 0.02f + 0.48f * within
         LanguageWork.Step.SENDING -> 0.5f + 0.48f * within
