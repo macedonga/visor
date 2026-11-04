@@ -153,6 +153,11 @@
     <string name="gallery_not_now">Non ora</string>
     <string name="import_title">Importazione automatica</string>
     <string name="import_note">Le foto e i video nuovi arrivano via Wi-Fi Direct, con il Wi-Fi acceso.</string>
+    <string name="section_album">Album</string>
+    <string name="album_photos">Album delle foto</string>
+    <string name="album_videos">Album dei video</string>
+    <string name="album_note">Gli import finiscono in queste cartelle della galleria: le foto in Pictures, i video in Movies.</string>
+    <string name="album_sub">La cartella nella tua galleria, come la vedi lì.</string>
     <string name="import_charging">In carica</string>
     <string name="import_charging_detail">Quando gli occhiali sono connessi e in carica</string>
     <string name="import_always">Sempre</string>

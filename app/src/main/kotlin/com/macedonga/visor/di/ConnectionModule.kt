@@ -31,6 +31,7 @@ import com.macedonga.visor.core.connection.TransportFactory
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.KeystoreSealer
 import com.macedonga.visor.core.media.AirshipReceiver
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.Screencast
@@ -289,7 +290,11 @@ object ConnectionModule {
 
     @Provides
     @Singleton
-    fun liveOutputs(@ApplicationContext context: Context): LiveOutputs = LiveOutputs(context)
+    fun liveOutputs(@ApplicationContext context: Context, albums: Albums): LiveOutputs = LiveOutputs(context, albums)
+
+    @Provides
+    @Singleton
+    fun albums(@ApplicationContext context: Context): Albums = Albums(context)
 
     @Provides
     @Singleton
@@ -308,7 +313,8 @@ object ConnectionModule {
         airship: AirshipReceiver,
         store: IdentityStore,
         hosts: SessionHostFactory,
-    ): MediaImport = MediaImport(context, connection, airship, store, hosts)
+        albums: Albums,
+    ): MediaImport = MediaImport(context, albums, connection, airship, store, hosts)
 
     @Provides
     @Singleton

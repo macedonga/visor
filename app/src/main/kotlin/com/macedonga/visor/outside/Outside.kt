@@ -4,6 +4,7 @@ import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.identity.IdentityStore
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
@@ -52,6 +53,7 @@ data class Glimpse(
 @Singleton
 class Outside @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val albums: Albums,
     private val connection: GlassesConnection,
     private val store: IdentityStore,
     lastSeen: LastSeen,
@@ -96,7 +98,7 @@ class Outside @Inject constructor(
 
     private suspend fun readPaired() = withContext(Dispatchers.IO) { runCatching { store.all().isNotEmpty() }.getOrNull() }
 
-    private suspend fun newestMoment() = moments(recentShots(context), max = 1).firstOrNull().orEmpty()
+    private suspend fun newestMoment() = moments(recentShots(context, albums), max = 1).firstOrNull().orEmpty()
 
     private fun glimpseOf(
         state: GlassesState,

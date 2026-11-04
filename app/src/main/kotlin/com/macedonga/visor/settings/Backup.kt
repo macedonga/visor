@@ -35,6 +35,7 @@ import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.gallery.AutoImport
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.gallery.ImportChoice
 import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
@@ -67,6 +68,7 @@ class Backups @Inject constructor(
     private val notify: NotifyChoice,
     private val apps: NotifyApps,
     private val import: ImportChoice,
+    private val albums: Albums,
     private val live: LiveSettingsStore,
     private val pins: Pins,
     private val mcp: McpStore,
@@ -102,6 +104,7 @@ class Backups @Inject constructor(
             )
             .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("muted", JSONArray(apps.muted.value.sorted())))
             .put("import", import.mode.value.name)
+            .put("albums", JSONObject().put("photos", albums.photos.value).put("videos", albums.videos.value))
             .put(
                 "live",
                 JSONObject()
@@ -175,6 +178,10 @@ class Backups @Inject constructor(
             o.optJSONArray("muted")?.let { a -> apps.restore((0 until a.length()).map { a.getString(it) }.toSet()) }
         }
         backup.optString("import").takeIf { it.isNotEmpty() }?.let { m -> runCatching { AutoImport.valueOf(m) }.getOrNull()?.let(import::set) }
+        backup.optJSONObject("albums")?.let { o ->
+            o.optString("photos").takeIf { it.isNotEmpty() }?.let(albums::setPhotos)
+            o.optString("videos").takeIf { it.isNotEmpty() }?.let(albums::setVideos)
+        }
         backup.optJSONObject("live")?.let { o ->
             live.update {
                 it.copy(
