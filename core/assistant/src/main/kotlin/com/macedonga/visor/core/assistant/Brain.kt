@@ -10,6 +10,7 @@ import com.macedonga.visor.core.assistant.mcp.ToolResult
 import com.macedonga.visor.core.assistant.mcp.Toolbox
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.Normalizer
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -49,11 +50,12 @@ data class Reply(
 private class Turn(
     val box: Toolbox, var photo: ByteArray? = null, val glasses: GlassesToolbox? = null, val canEnd: Boolean = false,
     val capturePhoto: (suspend () -> ByteArray?)? = null,
+    val cameraAction: (suspend (CameraAction) -> Boolean)? = null,
 ) {
     val remembered = ArrayList<String>()
     val actions = ArrayList<ToolAction>()
     var ends = false
-    var photoRequested = false
+    var cameraRequested = false
 }
 
 /** What the assistant keeps about the wearer across conversations; the model adds and drops entries with its tools. */
@@ -77,6 +79,36 @@ interface FieldBook {
 
 /** Who the answer is for: spoken by the glasses, or read on the phone. */
 enum class Audience { GLASSES, PHONE }
+
+/** Why a photo was refused before the glasses were asked: the wearer has not turned on Voice photos. */
+const val VOICE_PHOTOS_OFF = "turn on Voice photos in Meta AI settings before taking photos"
+
+enum class CameraAction(val tool: String, val title: String, val help: String, val confirmed: String) {
+    TAKE_PHOTO(
+        "take_photo", "Take photo",
+        "Take a normal photo to keep on the glasses, without analyzing the scene. No image is returned. " +
+            "Report failure rather than substituting look_at_view. At most one camera request per question.",
+        "photo capture started",
+    ),
+    RECORD_VIDEO(
+        "record_video", "Record video",
+        "Start recording a normal video on the glasses. Use for requests to record or film a video. " +
+            "The video stays on the glasses, not in image analysis. At most one camera request per question.",
+        "video recording started",
+    ),
+    RECORD_HYPERLAPSE(
+        "record_hyperlapse", "Record hyperlapse",
+        "Start recording a hyperlapse on the glasses, only when the wearer asks for hyperlapse. " +
+            "The video stays on the glasses. At most one camera request per question.",
+        "hyperlapse recording started",
+    ),
+    STOP_RECORDING(
+        "stop_recording", "Stop recording",
+        "Stop recording video or hyperlapse on the glasses. This does not stop music or end the conversation. " +
+            "It is available even when camera use is off. At most one camera request per question.",
+        "video recording is stopped",
+    ),
+}
 
 /** The model behind the assistant. The conversation comes with each question, from the diary; tools from [hub] and [phone]. */
 class Brain(
@@ -102,11 +134,28 @@ class Brain(
         glasses: GlassesToolbox? = null,
         canEnd: Boolean = false,
         capturePhoto: (suspend () -> ByteArray?)? = null,
+        cameraAction: (suspend (CameraAction) -> Boolean)? = null,
     ): Reply = withContext(Dispatchers.IO) {
+        // With the camera off only a stop goes without the model; the model answers the rest, its camera tools withheld.
+        val keyword = if (cameraAction != null && audience == Audience.GLASSES) {
+            cameraKeyword(question, locale)?.takeIf { it == CameraAction.STOP_RECORDING || config().vision }
+        } else null
+        if (keyword != null) {
+            val turn = Turn(Toolbox(emptyList(), ""), cameraAction = cameraAction)
+            val result = runTool(keyword.tool, JSONObject(), turn)
+            val text = when {
+                !result.isError -> ""
+                result.text == VOICE_PHOTOS_OFF && locale.language == "vi" -> "Hãy bật Voice photos trong cài đặt Meta AI để chụp ảnh."
+                result.text == VOICE_PHOTOS_OFF -> "Turn on Voice photos in Meta AI settings to take photos."
+                locale.language == "vi" -> "Kính chưa xác nhận lệnh camera."
+                else -> "The glasses did not confirm the camera command."
+            }
+            return@withContext Reply(text, actions = turn.actions)
+        }
         val c = config()
         check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
         // The tools never stand in the way of an answer: without them the model still answers.
-        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd, capturePhoto)
+        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd, capturePhoto, cameraAction)
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
@@ -169,19 +218,29 @@ class Brain(
 
     /** A tool run for the model: remember or forget, or one of the person's servers'. What it is told back. */
     private suspend fun runTool(name: String, input: JSONObject, turn: Turn): ToolResult {
-        if (name == PHOTO_TOOL) {
-            val capture = turn.capturePhoto ?: return ToolResult("the glasses camera is not available for this question", true)
-            if (turn.photoRequested) return ToolResult("a photo was already requested for this question; use that result", true)
-            turn.photoRequested = true
-            return try {
-                turn.photo = capture()
-                if (turn.photo == null) ToolResult("no photo arrived from the glasses; do not guess what the wearer sees", true)
-                else ToolResult("the glasses photo is attached", false)
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (error: Exception) {
-                ToolResult(error.message ?: "the glasses could not take a photo", true)
+        val cameraAction = CameraAction.entries.firstOrNull { it.tool == name }
+        if (name == PHOTO_TOOL || cameraAction != null) {
+            val result = if (turn.cameraRequested) ToolResult("a camera request was already made for this question; use that result", true) else {
+                turn.cameraRequested = true
+                try {
+                    if (cameraAction != null) {
+                        val perform = checkNotNull(turn.cameraAction) { "camera commands are not available for this question" }
+                        if (perform(cameraAction)) ToolResult("the glasses confirmed ${cameraAction.confirmed}; do not describe the scene", false)
+                        else ToolResult("the glasses did not confirm ${cameraAction.title}; do not report success", true)
+                    } else {
+                        val capture = checkNotNull(turn.capturePhoto) { "the glasses camera is not available for this question" }
+                        turn.photo = capture()
+                        if (turn.photo == null) ToolResult("no photo arrived from the glasses; do not guess what the wearer sees", true)
+                        else ToolResult("the glasses photo is attached", false)
+                    }
+                } catch (cancel: CancellationException) {
+                    throw cancel
+                } catch (error: Exception) {
+                    ToolResult(error.message ?: "the glasses could not complete the camera request", true)
+                }
             }
+            if (cameraAction != null) turn.actions += ToolAction("Glasses", if (result.isError) "${cameraAction.title}: ${result.text.substringBefore(';')}" else cameraAction.title, !result.isError)
+            return result
         }
         if (turn.canEnd && name == END_TOOL) {
             turn.ends = true
@@ -235,6 +294,9 @@ class Brain(
         }
         if (turn?.canEnd == true) tools.put(JSONObject().put("name", END_TOOL).put("description", END_HELP).put("input_schema", NO_INPUT))
         if (turn?.capturePhoto != null) tools.put(JSONObject().put("name", PHOTO_TOOL).put("description", PHOTO_HELP).put("input_schema", NO_INPUT))
+        if (turn?.cameraAction != null) CameraAction.entries.filter { c.vision || it == CameraAction.STOP_RECORDING }.forEach {
+            tools.put(JSONObject().put("name", it.tool).put("description", it.help).put("input_schema", NO_INPUT))
+        }
         if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> tools.put(JSONObject().put("name", name).put("description", help).put("input_schema", input)) }
         turn?.box?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.name).put("description", t.help()).put("input_schema", t.tool.schema)) }
         turn?.glasses?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.short).put("description", t.help).put("input_schema", t.schema)) }
@@ -292,6 +354,9 @@ class Brain(
             }
             if (turn?.canEnd == true) put(function(END_TOOL, END_HELP, NO_INPUT))
             if (turn?.capturePhoto != null) put(function(PHOTO_TOOL, PHOTO_HELP, NO_INPUT))
+            if (turn?.cameraAction != null) CameraAction.entries.filter { c.vision || it == CameraAction.STOP_RECORDING }.forEach {
+                put(function(it.tool, it.help, NO_INPUT))
+            }
             if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> put(function(name, help, input)) }
             // Some servers behind this API refuse a schema that names its own dialect.
             turn?.box?.tools?.forEach { t -> put(function(t.name, t.help(), JSONObject(t.tool.schema.toString()).apply { remove("\$schema") })) }
@@ -309,6 +374,9 @@ class Brain(
                 if (tools == null || turn?.box?.tools.orEmpty().isNotEmpty() || !TOOLS_REFUSED.containsMatchIn(error.message.orEmpty())) throw error
                 tools = null
                 if (turn?.capturePhoto != null) messages.put(JSONObject().put("role", "system").put("content", NO_PHOTO))
+                if (turn?.cameraAction != null) messages.put(JSONObject().put("role", "system").put("content",
+                    "Camera commands are unavailable for this answer. If the wearer asked for a camera action, explain " +
+                        "that this model cannot use camera tools. Otherwise answer normally. Do not claim a camera action succeeded."))
                 send(url, headers, body.apply { remove("tools") })
             }
             val choice = answer.getJSONArray("choices").getJSONObject(0)
@@ -318,6 +386,7 @@ class Brain(
             if (text.isNotBlank()) said = text
             val calls = message.optJSONArray("tool_calls")
             if (calls == null || calls.length() == 0 || turn == null) return said
+            check(tools != null) { "the model requested a tool after tools were disabled" }
             messages.put(message)
             var photo: ByteArray? = null
             for (i in 0 until calls.length()) {
@@ -330,7 +399,7 @@ class Brain(
             }
             photo?.let {
                 messages.put(JSONObject().put("role", "user").put("content", JSONArray()
-                    .put(JSONObject().put("type", "text").put("text", "The glasses photo from take_photo."))
+                    .put(JSONObject().put("type", "text").put("text", "The current view from the glasses."))
                     .put(openAiImage(it))))
             }
         }
@@ -419,6 +488,25 @@ class Brain(
     )
 
     private companion object {
+        val CAMERA_WORD_SPACES = Regex("[\\s\\p{Z}]+")
+        val CAMERA_WAKE_PREFIX = Regex("^hey meta(?:, ?| )")
+
+        fun cameraKeyword(question: String, locale: Locale): CameraAction? {
+            if (locale.language != "vi" && locale.language != "en") return null
+            val words = Normalizer.normalize(question, Normalizer.Form.NFC).lowercase(Locale.ROOT)
+                .trim().trimEnd('.', '!').trim().replace(CAMERA_WORD_SPACES, " ").replace(CAMERA_WAKE_PREFIX, "")
+            return when (words) {
+                "chụp", "chụp ảnh", "chụp hình", "take photo", "take a photo", "take picture", "take a picture" -> CameraAction.TAKE_PHOTO
+                "quay video", "quay phim", "bắt đầu quay video", "bắt đầu quay phim", "record video", "record a video",
+                "start recording", "start recording video" -> CameraAction.RECORD_VIDEO
+                "quay hyperlapse", "bắt đầu quay hyperlapse", "record hyperlapse", "start hyperlapse",
+                "start recording hyperlapse" -> CameraAction.RECORD_HYPERLAPSE
+                "dừng quay", "dừng quay video", "dừng quay phim", "dừng quay hyperlapse", "stop recording",
+                "stop recording video", "stop recording hyperlapse", "stop hyperlapse" -> CameraAction.STOP_RECORDING
+                else -> null
+            }
+        }
+
         /** Thinking a server left inline in the answer. */
         val THINKING = Regex("(?s)<think>.*?</think>")
         /** Visor's note on past answers, should the model copy it into its own. */
@@ -447,11 +535,12 @@ class Brain(
         const val FORGET_HELP = "Drop a fact you remember that is wrong or outdated, or that the wearer asks you to forget."
         const val FACT_HELP = "One short sentence addressed to the wearer, in their language, e.g. \"Your sister is called Giulia.\""
         const val END_TOOL = "end_conversation"
-        const val PHOTO_TOOL = "take_photo"
+        const val PHOTO_TOOL = "look_at_view"
         const val NO_PHOTO = "This model cannot see what the wearer sees. If the question needs it, say so briefly."
-        const val PHOTO_HELP = "Take one photo of what the wearer sees through the glasses. Use it when their question " +
+        const val PHOTO_HELP = "Look at what the wearer sees through the glasses. Use it when their question " +
             "needs the current view, such as identifying something, reading text or describing their surroundings. " +
-            "Do not use it for general knowledge. The result includes the image; answer from it. Available once per question."
+            "Do not use it for general knowledge or a request just to take a photo. The result includes the image; answer from it. " +
+            "For a photo to keep, use take_photo instead. At most one camera request per question."
         const val END_HELP = "After each answer the glasses keep listening for another question. Call this when the wearer is " +
             "done: they say no, that's all, thanks, stop or goodbye, or they turn down what you offered. The glasses then " +
             "stop listening after this answer. Still answer, in a few words."

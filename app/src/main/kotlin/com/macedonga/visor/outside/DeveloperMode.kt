@@ -15,6 +15,7 @@ import java.security.SecureRandom
 import java.util.Base64
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
+import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.Shutter
 import com.macedonga.visor.core.connection.VideoKind
@@ -45,10 +46,13 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Meta's Robusta demo switch: with it on, the glasses take a photo for the phone. */
+const val ROBUSTA = "wearables_robusta.demo_enabled"
+
 /**
  * Developer mode: other apps work the glasses' camera and import through [DeveloperIntents] and hear of each capture.
  * The glasses take a photo for the phone only with Meta's Robusta demo switch on, so the mode turns it on and, when
- * it ends, off.
+ * it ends, off. Voice photos need the same switch, so it stays on while either wants it.
  */
 @Singleton
 class DeveloperMode @Inject constructor(
@@ -58,6 +62,7 @@ class DeveloperMode @Inject constructor(
     private val media: MediaImport,
     private val shutter: Shutter,
     private val log: EventLog,
+    private val assistant: AssistantConfigStore,
 ) {
     private val prefs = context.getSharedPreferences("developer", Context.MODE_PRIVATE)
     private val _on = MutableStateFlow(prefs.getBoolean(ON, false))
@@ -181,7 +186,8 @@ class DeveloperMode @Inject constructor(
             var upAt = 0L
             val ready = connection.state.map { it.link == LinkState.READY }.distinctUntilChanged()
                 .onEach { if (it) upAt = SystemClock.elapsedRealtime() }
-            combine(ready, on) { ready, on -> on.takeIf { ready } }.collectLatest { on ->
+            val photos = assistant.config.map { it.voicePhotos }.distinctUntilChanged()
+            combine(ready, on, photos) { ready, on, photos -> (on || photos).takeIf { ready } }.collectLatest { on ->
                 on ?: return@collectLatest
                 // A link just up settles first; the configuration comes in a bug report.
                 delay(upAt + SETTLE_MS - SystemClock.elapsedRealtime())
@@ -300,7 +306,6 @@ class DeveloperMode @Inject constructor(
         const val PHOTO = "shutter_photo"
         const val VIDEO = "shutter_video"
         val SHORTCUTS = listOf(PHOTO, VIDEO)
-        const val ROBUSTA = "wearables_robusta.demo_enabled"
         const val VIDEO_RUNNING = "CAPTURE_VIDEO_STARTED"
         const val NOT_FOUND = "NOT_FOUND"
         const val WAKE_MS = 20_000L

@@ -92,6 +92,7 @@ Everything else stays between the phone and the glasses.
 - **Your own builds and releases do not mix.** A build you made has a different signing key from a release, so uninstall one before you install the other. Uninstalling removes the login and the glasses' keys from the phone, and you set up again.
 - **The first "Hey Meta" can go unheard.** For English answers in the glasses' own voice, Visor sometimes turns off a Meta setting and restarts the glasses' assistant when it connects.
 - **The assistant is as good as your model.** Visor sends it the question, the recent conversation and, when you ask about what you see, the photo the glasses take. In a partner language, questions about what you see need a model with tool calls and images.
+- **Partner-language camera commands** take a photo, record a video or hyperlapse, and stop recording. Photos need "Voice photos" on.
 
 ## Build from source
 

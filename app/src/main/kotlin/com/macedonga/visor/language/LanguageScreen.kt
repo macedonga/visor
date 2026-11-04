@@ -40,6 +40,7 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.settings.Card
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.Spinner
@@ -62,6 +63,7 @@ class LanguageViewModel @Inject constructor(
     val installer: LanguageInstaller,
     val settings: GlassesSettings,
     val connection: GlassesConnection,
+    val assistant: AssistantConfigStore,
 ) : ViewModel()
 
 /** The glasses' language: the one in use and its voices, the others to switch to or fetch from Meta. */
@@ -84,6 +86,7 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
     val refused = "assistant_voice_id" in state.kept
     val busy = work is LanguageWork.Working || switching != null
     var asking by remember { mutableStateOf<GlassesLanguage?>(null) }
+    var askingPhotos by remember { mutableStateOf(false) }
 
     SettingsPage(stringResource(R.string.topic_language), stringResource(R.string.language_hero_sub)) {
         item(key = "current") {
@@ -165,9 +168,25 @@ fun LanguageScreen(model: LanguageViewModel = hiltViewModel()) {
                             action = stringResource(R.string.language_use),
                             enabled = ready && !busy,
                             waiting = switching == language.defaultVoice || (work as? LanguageWork.Working)?.language == language,
-                        ) { model.installer.use(language.voices.first()) }
+                        ) {
+                            model.installer.use(language.voices.first())
+                            if (!model.assistant.config.value.voicePhotos) askingPhotos = true
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    if (askingPhotos) {
+        VisorSheet({ askingPhotos = false }) {
+            SheetTitle(stringResource(R.string.language_photos_title), stringResource(R.string.language_photos_text))
+            Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                ActionPill(stringResource(R.string.features_turn_on), {
+                    askingPhotos = false
+                    model.assistant.update { it.copy(voicePhotos = true) }
+                })
+                ActionPill(stringResource(R.string.gallery_not_now), { askingPhotos = false }, quiet = true)
             }
         }
     }

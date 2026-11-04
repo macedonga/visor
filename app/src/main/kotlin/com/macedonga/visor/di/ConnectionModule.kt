@@ -14,12 +14,17 @@ import com.macedonga.visor.core.assistant.SVC_TAR
 import com.macedonga.visor.core.assistant.Timers
 import com.macedonga.visor.core.assistant.SVC_GLASSES_PHOTO
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Brain
+import com.macedonga.visor.core.assistant.CameraAction
+import com.macedonga.visor.core.assistant.VOICE_PHOTOS_OFF
+import com.macedonga.visor.outside.ROBUSTA
 import com.macedonga.visor.core.assistant.Diary
 import com.macedonga.visor.core.assistant.SVC_ASSISTANT
 import com.macedonga.visor.core.assistant.Voice
+import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.assistant.mcp.McpHub
 import com.macedonga.visor.core.assistant.mcp.McpStore
 import com.macedonga.visor.core.connection.GlassesConnection
@@ -28,6 +33,7 @@ import com.macedonga.visor.core.connection.RealSessionHostFactory
 import com.macedonga.visor.core.connection.SessionHostFactory
 import com.macedonga.visor.core.connection.Shutter
 import com.macedonga.visor.core.connection.TransportFactory
+import com.macedonga.visor.core.connection.VideoKind
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.KeystoreSealer
 import com.macedonga.visor.core.media.AirshipReceiver
@@ -251,6 +257,7 @@ object ConnectionModule {
         hearing: Hearing,
         glassesConfig: GlassesConfig,
         phone: PhoneActions,
+        shutter: Shutter,
     ): Assistant = Assistant(
         context, connection, Voice(context), Brain({ config.config.value }, diary, hub, config, phone), config, airship, diary,
         live.wifiSession, live::frameNow,
@@ -269,6 +276,27 @@ object ConnectionModule {
         { (glassesConfig.state.value.values[com.macedonga.visor.language.PROCESSING_TIMEOUT] as? Number)?.toLong() },
         phone,
         { com.macedonga.visor.settings.hasDisplay(connection.state.value.info?.build) },
+        cameraAction = { action ->
+            when (action) {
+                CameraAction.TAKE_PHOTO -> {
+                    // The switch as the wearer left it, and the glasses told so: a value from before it went off does not count.
+                    check(config.config.value.voicePhotos) { VOICE_PHOTOS_OFF }
+                    check(glassesConfig.state.value.values[ROBUSTA] == true) { "the glasses are not set up for voice photos yet; try again in a minute" }
+                    shutter.photo()
+                }
+                CameraAction.RECORD_VIDEO, CameraAction.RECORD_HYPERLAPSE -> {
+                    check(!shutter.recording.first()) { "a video is already recording; stop it before starting another" }
+                    shutter.video(if (action == CameraAction.RECORD_HYPERLAPSE) VideoKind.HYPERLAPSE else VideoKind.VIDEO)
+                }
+                CameraAction.STOP_RECORDING -> {
+                    // Away, or before the glasses said what the camera does, stop() would answer "stopped" unasked.
+                    val state = connection.state.value
+                    check(state.link == LinkState.READY) { "the glasses are not connected" }
+                    check(state.device?.camera != null) { "the glasses have not said whether they are recording" }
+                    shutter.stop()
+                }
+            }
+        },
     )
 
     @Provides

@@ -86,6 +86,10 @@ class VisorToggles @Inject constructor(
             assistant.config.on { it.vision }, { on -> assistant.update { it.copy(vision = on) } },
         ),
         VisorToggle(
+            "voice_photos", R.string.ai_voice_photos, R.string.ai_voice_photos_sub, Topic.META_AI,
+            assistant.config.on { it.voicePhotos }, { on -> assistant.update { it.copy(voicePhotos = on) } },
+        ),
+        VisorToggle(
             "glasses_voice", R.string.ai_glasses_voice, R.string.ai_glasses_voice_sub, Topic.META_AI,
             assistant.config.on { it.glassesVoice }, { on -> assistant.update { it.copy(glassesVoice = on) } },
         ),
