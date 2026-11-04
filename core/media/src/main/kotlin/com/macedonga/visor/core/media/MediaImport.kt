@@ -60,6 +60,7 @@ private const val MT_REQUEST_BUG_REPORT_RESPONSE = 2
  */
 class MediaImport(
     private val context: Context,
+    private val albums: Albums,
     private val connection: GlassesConnection,
     private val receiver: AirshipReceiver,
     private val store: IdentityStore,
@@ -131,7 +132,7 @@ class MediaImport(
     val imported: SharedFlow<String> = _imported.asSharedFlow()
 
     private val assembly = Assembly(
-        context, index, places, ::say,
+        context, albums, index, places, ::say,
         onSaved = { handle ->
             _saved.update { it + 1 }
             _imported.tryEmit(handle)
@@ -675,7 +676,7 @@ class MediaImport(
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "Visor_" + NAME.format(Instant.ofEpochMilli(taken)) + "." + ext)
             put(MediaStore.MediaColumns.MIME_TYPE, MIME.getValue(ext))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, if (video) "Movies/Visor" else "Pictures/Visor")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.path(video))
             put(MediaStore.MediaColumns.DATE_TAKEN, taken)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }

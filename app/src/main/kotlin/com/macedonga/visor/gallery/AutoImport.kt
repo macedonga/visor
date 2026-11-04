@@ -11,6 +11,7 @@ import android.util.Size
 import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiIsOn
@@ -52,7 +53,7 @@ class ImportChoice @Inject constructor(@ApplicationContext context: Context) {
  * default), Wi-Fi is on and nothing else is coming over. When it is done a quiet notification says how much came.
  * A try that brought nothing waits [RETRY_MS] before the next.
  */
-fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesConnection, media: MediaImport, choice: ImportChoice) {
+fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesConnection, media: MediaImport, choice: ImportChoice, albums: Albums) {
     scope.launch {
         var lastTry = 0L
         var failed = false
@@ -83,12 +84,12 @@ fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesC
             }
             val came = media.saved.value - before
             failed = came <= 0
-            if (came > 0) notifyImported(context, came)
+            if (came > 0) notifyImported(context, came, albums)
         }
     }
 }
 
-private fun notifyImported(context: Context, count: Int) {
+private fun notifyImported(context: Context, count: Int, albums: Albums) {
     val manager = context.getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(
         NotificationChannel(CHANNEL, context.getString(R.string.import_channel), NotificationManager.IMPORTANCE_LOW),
@@ -102,19 +103,19 @@ private fun notifyImported(context: Context, count: Int) {
         .setSmallIcon(R.drawable.ic_stat_visor)
         .setContentTitle(context.resources.getQuantityString(R.plurals.import_done, count, count))
         .setContentText(context.getString(R.string.import_done_text))
-        .setLargeIcon(newest(context))
+        .setLargeIcon(newest(context, albums.photosPattern()))
         .setContentIntent(open)
         .setAutoCancel(true)
         .build()
     manager.notify(NOTIFICATION_ID, notification)
 }
 
-/** The newest photo in Pictures/Visor, small, for the notification. */
-private fun newest(context: Context): Bitmap? = runCatching {
+/** The newest photo in the photos album, small, for the notification. */
+private fun newest(context: Context, pattern: String): Bitmap? = runCatching {
     val collection = android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
     context.contentResolver.query(
         collection, arrayOf(android.provider.MediaStore.MediaColumns._ID),
-        "${android.provider.MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("Pictures/Visor%"),
+        Albums.MATCH, arrayOf(pattern),
         "${android.provider.MediaStore.MediaColumns.DATE_TAKEN} DESC",
     )?.use { c ->
         if (!c.moveToFirst()) return@use null

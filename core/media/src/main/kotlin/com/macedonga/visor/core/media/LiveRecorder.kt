@@ -17,11 +17,11 @@ class AudioPacket(val ptsUs: Long, val data: ByteArray)
 class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
 
 /**
- * One MP4 in Movies/Visor, written as the frames come: the glasses' video as it is (HEVC or H.264), the audio as AAC. The file
+ * One MP4 in the videos album, written as the frames come: the glasses' video as it is (HEVC or H.264), the audio as AAC. The file
  * stays pending, so the gallery does not list it, until [finish]. Audio before the first video frame is dropped,
  * and everything is timed from that frame.
  */
-class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFormat?, name: String, takenAt: Long) {
+class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFormat?, name: String, takenAt: Long, album: String) {
     val uri: Uri
     private val muxer: MediaMuxer
     private val fd: android.os.ParcelFileDescriptor
@@ -36,7 +36,7 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Movies/Visor")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, album)
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAt)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }

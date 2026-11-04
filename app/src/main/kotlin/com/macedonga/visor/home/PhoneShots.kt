@@ -4,6 +4,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import com.macedonga.visor.core.media.Albums
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -14,9 +15,9 @@ data class PhoneShot(val uri: Uri, val video: Boolean, val takenAt: Long)
  * The newest shots in Pictures/Visor and Movies/Visor. The app wrote them, so it may read them back
  * without a media permission.
  */
-suspend fun recentShots(context: Context, limit: Int = 80): List<PhoneShot> = withContext(Dispatchers.IO) {
-    val photos = query(context, MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "Pictures/Visor%", video = false, limit)
-    val videos = query(context, MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "Movies/Visor%", video = true, limit)
+suspend fun recentShots(context: Context, albums: Albums, limit: Int = 80): List<PhoneShot> = withContext(Dispatchers.IO) {
+    val photos = query(context, MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), albums.photosPattern(), video = false, limit)
+    val videos = query(context, MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), albums.videosPattern(), video = true, limit)
     (photos + videos).sortedByDescending { it.takenAt }.take(limit)
 }
 
@@ -39,7 +40,7 @@ private fun query(context: Context, collection: Uri, path: String, video: Boolea
     val out = ArrayList<PhoneShot>()
     runCatching {
         context.contentResolver.query(
-            collection, columns, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf(path),
+            collection, columns, Albums.MATCH, arrayOf(path),
             "${MediaStore.MediaColumns.DATE_TAKEN} DESC",
         )?.use { c ->
             while (c.moveToNext() && out.size < limit) {

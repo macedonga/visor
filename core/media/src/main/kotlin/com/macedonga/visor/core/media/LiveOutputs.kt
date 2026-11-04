@@ -25,7 +25,7 @@ data class RecordingState(val since: Long)
  * Where the stream goes besides the screen: the replay ring always, an MP4 while recording, an RTMP server while
  * broadcasting. Fed by [LiveStream] with every frame and audio packet as it arrives.
  */
-class LiveOutputs(private val context: Context) {
+class LiveOutputs(private val context: Context, private val albums: Albums) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
 
@@ -101,7 +101,7 @@ class LiveOutputs(private val context: Context) {
         val c = config ?: return false
         if (mp4 != null) return true
         val now = System.currentTimeMillis()
-        mp4 = runCatching { Mp4Recording(context, c, aac, "Visor_${stamp(now)}.mp4", now) }.getOrNull() ?: return false
+        mp4 = runCatching { Mp4Recording(context, c, aac, "Visor_${stamp(now)}.mp4", now, albums.videosPath()) }.getOrNull() ?: return false
         _recording.value = RecordingState(now)
         return true
     }
@@ -119,7 +119,7 @@ class LiveOutputs(private val context: Context) {
             val held = replay.take() ?: return@withContext null
             val duration = (held.video.last().ptsUs - held.video.first().ptsUs) / 1000
             val takenAt = System.currentTimeMillis() - duration
-            val r = Mp4Recording(context, held.config, aac.takeIf { held.audio.isNotEmpty() }, "Visor_${stamp(takenAt)}_replay.mp4", takenAt)
+            val r = Mp4Recording(context, held.config, aac.takeIf { held.audio.isNotEmpty() }, "Visor_${stamp(takenAt)}_replay.mp4", takenAt, albums.videosPath())
             // Interleaved by time, as the muxer prefers.
             var a = 0
             for (frame in held.video) {
@@ -130,18 +130,18 @@ class LiveOutputs(private val context: Context) {
         }
     }
 
-    /** The picture now, decoded from the ring and saved to Pictures/Visor. */
+    /** The picture now, decoded from the ring and saved to the photos album. */
     suspend fun saveFrame(): Uri? = withContext(Dispatchers.IO) {
         val jpeg = replay.lastPicture()?.let { grabJpeg(it, quality = 95) } ?: return@withContext null
         savePhoto(jpeg, System.currentTimeMillis())
     }
 
-    /** A photo into Pictures/Visor, as the gallery lists it: a JPEG from the screen, or the glasses' own HEIC. */
+    /** A photo into the photos album, as the gallery lists it: a JPEG from the screen, or the glasses' own HEIC. */
     fun savePhoto(bytes: ByteArray, takenAt: Long, heic: Boolean = false): Uri? {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "Visor_${stamp(takenAt)}" + if (heic) ".heic" else ".jpg")
             put(MediaStore.MediaColumns.MIME_TYPE, if (heic) "image/heic" else "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Visor")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.photosPath())
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAt)
         }
         val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null

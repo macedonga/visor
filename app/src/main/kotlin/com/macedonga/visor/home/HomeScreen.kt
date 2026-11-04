@@ -102,6 +102,7 @@ import com.macedonga.visor.settings.TextSheet
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.media.LiveStream
+import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.transport.LeKeeper
@@ -153,6 +154,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val albums: Albums,
     val connection: GlassesConnection,
     val live: LiveStream,
     val media: MediaImport,
@@ -176,12 +178,12 @@ class HomeViewModel @Inject constructor(
 
     init {
         // Whatever is saved shows up here as soon as it lands.
-        viewModelScope.launch { media.saved.collect { shots.value = recentShots(context) } }
+        viewModelScope.launch { media.saved.collect { shots.value = recentShots(context, albums) } }
     }
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) { paired.value = runCatching { store.all().isNotEmpty() }.getOrDefault(false) }
-        viewModelScope.launch { shots.value = recentShots(context) }
+        viewModelScope.launch { shots.value = recentShots(context, albums) }
         viewModelScope.launch { firstName.value = ownerFirstName(context) }
         pairs.refresh()
     }
