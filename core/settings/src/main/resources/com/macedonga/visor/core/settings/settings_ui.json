@@ -10653,12 +10653,12 @@
 },
 {
 "key":"hatch_enabled",
-"label":"Hatch feature",
-"note":"Turns on a feature gate named hatch.",
-"group":"Developer and tests",
+"label":"Muse",
+"note":"Meta's Muse assistant. Newer firmware wakes on a custom phrase only with it on.",
+"group":"Meta AI",
 "invert":false,
 "user_facing":false,
-"confidence":"low",
+"confidence":"medium",
 "control":{
 "type":"toggle"
 }

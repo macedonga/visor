@@ -51,6 +51,7 @@ import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.asBool
 import com.macedonga.visor.features.ChoicePill
 import com.macedonga.visor.features.StoryWords
+import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.pairs.pairPrefs
 import com.macedonga.visor.setup.BigPill
 import com.macedonga.visor.stage.LightLook
@@ -72,6 +73,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /** Where a custom wake word enrolment is. */
@@ -400,4 +403,22 @@ fun WakeWordRow(onClick: () -> Unit, model: WakeWordModel = hiltViewModel()) {
     ValueRow(stringResource(R.string.ww_title), value, onClick = onClick)
 }
 
+/**
+ * Firmware from 72387580112400100 (Gen 2) on wakes on a custom phrase only with Meta's Muse switch on; otherwise the
+ * glasses answer "opt in to Muse in the Meta AI app" (#75). Older firmware stores the switch: there it only picks the
+ * session path, which its passthrough flags in the configuration keep off. So with a phrase on the glasses, after
+ * every read the switch goes on.
+ */
+fun keepMuseWithWakeWord(scope: CoroutineScope, settings: GlassesSettings, log: EventLog) {
+    scope.launch {
+        settings.state.map { it.readAt }.distinctUntilChanged().collect { readAt ->
+            if (readAt == null || settings.value(CWW_KEY)?.let { asBool(it) } != true) return@collect
+            val state = settings.state.value
+            if (MUSE_KEY in state.pending || MUSE_KEY in state.kept || settings.value(MUSE_KEY)?.let { asBool(it) } == true) return@collect
+            if (settings.write(MUSE_KEY, "true")) log.add("Custom wake word: turning on the glasses' Muse switch, which newer firmware wants for it")
+        }
+    }
+}
+
 private const val CWW_KEY = "custom_wake_word_enabled"
+private const val MUSE_KEY = "hatch_enabled"
