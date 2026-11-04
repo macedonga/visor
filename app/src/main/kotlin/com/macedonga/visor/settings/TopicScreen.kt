@@ -156,16 +156,16 @@ private fun PhotosPart(model: SettingsViewModel) {
     var renaming by remember { mutableStateOf<Boolean?>(null) }
     val photosAlbum by model.albums.photos.collectAsStateWithLifecycle()
     val videosAlbum by model.albums.videos.collectAsStateWithLifecycle()
+    val moving by model.albums.moving.collectAsStateWithLifecycle()
     Column {
         SectionLabel(stringResource(R.string.import_title), Modifier.padding(top = 0.dp))
         OptionCards(AutoImport.entries.map { Triple(it, stringResource(it.title), stringResource(it.detail)) }, mode, model.importChoice::set)
         Footnote(stringResource(R.string.import_note))
         SectionLabel(stringResource(R.string.section_album))
         Rows(
-            row { ValueRow(stringResource(R.string.album_photos), photosAlbum, onClick = { renaming = false }) },
-            row { ValueRow(stringResource(R.string.album_videos), videosAlbum, onClick = { renaming = true }) },
+            row { ValueRow(stringResource(R.string.album_photos), photosAlbum, onClick = { renaming = false }, busy = moving > 0) },
+            row { ValueRow(stringResource(R.string.album_videos), videosAlbum, onClick = { renaming = true }, busy = moving > 0) },
         )
-        Footnote(stringResource(R.string.album_note))
         SectionLabel(stringResource(R.string.section_places))
         Rows({
             RowFrame(stringResource(R.string.places_title), onClick = null, sub = stringResource(R.string.places_sub)) {
@@ -187,7 +187,6 @@ private fun PhotosPart(model: SettingsViewModel) {
             if (video) videosAlbum else photosAlbum,
             onSave = if (video) model.albums::setVideos else model.albums::setPhotos,
             onDismiss = { renaming = null },
-            sub = stringResource(R.string.album_sub),
             hint = Albums.DEFAULT,
         )
     }

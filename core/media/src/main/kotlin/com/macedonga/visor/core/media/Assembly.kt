@@ -182,10 +182,11 @@ class Assembly(
     /** The new row, and where it is as MediaStore has it. */
     private fun insert(format: Format, takenAt: Long, write: (OutputStream) -> Unit): Pair<Uri, String> {
         val video = format.video
+        val album = albums.path(video)
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName(format, takenAt))
             put(MediaStore.MediaColumns.MIME_TYPE, format.mime)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.path(video))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, album)
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAt)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
@@ -195,7 +196,9 @@ class Assembly(
         val uri = resolver.insert(collection, values) ?: error("the gallery would not take it")
         try {
             checkNotNull(resolver.openOutputStream(uri)).use(write)
-            return uri to publish(resolver, uri)
+            val where = publish(resolver, uri)
+            albums.follow(uri, album, video)
+            return uri to where
         } catch (error: Exception) {
             resolver.delete(uri, null, null)
             throw error

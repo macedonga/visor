@@ -21,7 +21,7 @@ class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
  * stays pending, so the gallery does not list it, until [finish]. Audio before the first video frame is dropped,
  * and everything is timed from that frame.
  */
-class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFormat?, name: String, takenAt: Long, album: String) {
+class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFormat?, name: String, takenAt: Long, val album: String) {
     val uri: Uri
     private val muxer: MediaMuxer
     private val fd: android.os.ParcelFileDescriptor

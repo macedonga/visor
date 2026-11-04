@@ -12,7 +12,7 @@ import kotlinx.coroutines.withContext
 data class PhoneShot(val uri: Uri, val video: Boolean, val takenAt: Long)
 
 /**
- * The newest shots in Pictures/Visor and Movies/Visor. The app wrote them, so it may read them back
+ * The newest shots in the photos and videos albums. The app wrote them, so it may read them back
  * without a media permission.
  */
 suspend fun recentShots(context: Context, albums: Albums, limit: Int = 80): List<PhoneShot> = withContext(Dispatchers.IO) {

@@ -673,10 +673,11 @@ class MediaImport(
     private fun save(file: File, ext: String, capture: Capture?): String {
         val video = ext == "mp4"
         val taken = capture?.takenAtMillis ?: System.currentTimeMillis()
+        val album = albums.path(video)
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "Visor_" + NAME.format(Instant.ofEpochMilli(taken)) + "." + ext)
             put(MediaStore.MediaColumns.MIME_TYPE, MIME.getValue(ext))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.path(video))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, album)
             put(MediaStore.MediaColumns.DATE_TAKEN, taken)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
@@ -689,7 +690,7 @@ class MediaImport(
         val uri = resolver.insert(collection, values) ?: error("the gallery would not take it")
         try {
             checkNotNull(resolver.openOutputStream(uri)).use { out -> file.inputStream().use { it.copyTo(out) } }
-            return publish(resolver, uri)
+            return publish(resolver, uri).also { albums.follow(uri, album, video) }
         } catch (error: Exception) {
             resolver.delete(uri, null, null)
             throw error

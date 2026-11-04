@@ -110,7 +110,7 @@ class LiveOutputs(private val context: Context, private val albums: Albums) {
         val r = mp4 ?: return@withContext null
         mp4 = null
         _recording.value = null
-        synchronized(r) { r.finish() }.also { _saved.value = it }
+        synchronized(r) { r.finish() }?.also { albums.follow(it, r.album, video = true) }.also { _saved.value = it }
     }
 
     /** What the replay ring holds, written out as its own video. Null if there was nothing to save. */

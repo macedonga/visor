@@ -37,6 +37,7 @@ class EventLog @Inject constructor(
     connection: GlassesConnection,
     keeper: LeKeeper,
     media: MediaImport,
+    albums: com.macedonga.visor.core.media.Albums,
     settings: GlassesSettings,
     wifi: GlassesWifi,
     live: LiveStream,
@@ -81,6 +82,9 @@ class EventLog @Inject constructor(
         }
         scope.launch {
             media.notes.collect { add("Media: $it") }
+        }
+        scope.launch {
+            albums.notes.collect { add("Albums: $it") }
         }
         scope.launch {
             settings.notes.collect { add("Settings: $it") }

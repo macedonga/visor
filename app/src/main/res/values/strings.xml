@@ -157,8 +157,6 @@
     <string name="section_album">Album</string>
     <string name="album_photos">Photos album</string>
     <string name="album_videos">Videos album</string>
-    <string name="album_note">Imports land in these folders of your gallery: photos in Pictures, videos in Movies.</string>
-    <string name="album_sub">The folder in your gallery, as it shows there.</string>
     <string name="import_charging">While charging</string>
     <string name="import_charging_detail">When the glasses are connected and charging</string>
     <string name="import_always">Always</string>
