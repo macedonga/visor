@@ -7,12 +7,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import com.macedonga.visor.core.connection.CAMERA_VIDEO_STARTED
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.design.VisorColors
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.ui.animationsOff
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.sin
 
@@ -32,10 +32,7 @@ data class LightLook(
     val pace: Float = 1f,
 )
 
-/**
- * Each mood keeps the light nearly white and leans it a few percent towards a hue of its own: cool while
- * searching, green while charging, red while recording, amber when the battery runs out, blue while importing.
- */
+/** Each mood's light: near white, tinted towards a hue of its own. */
 fun lookOf(mood: Mood, c: VisorColors): LightLook = when (mood) {
     Mood.ABSENT -> LightLook(c.lightCold, c.lightCold, level = 0.05f, spread = 0.7f, warp = 0.1f)
     Mood.FAR -> LightLook(c.lightCold, c.lightCold, level = 0.16f, spread = 0.75f, warp = 0.12f)
@@ -45,7 +42,7 @@ fun lookOf(mood: Mood, c: VisorColors): LightLook = when (mood) {
     )
     Mood.CONNECTED -> LightLook(c.lightNeutral, c.lightWarm, level = 1f, spread = 1f, breathSeconds = 9f, breathDepth = 0.06f)
     // Charging, above all in the case, the light leans clearly green, bright enough that the pair reads.
-    Mood.CHARGING -> LightLook(
+    Mood.CHARGING, Mood.IN_CASE -> LightLook(
         lerp(c.lightWarm, HUE_CHARGING, 0.35f), lerp(c.lightWarm, HUE_CHARGING, 0.55f),
         level = 0.86f, spread = 0.86f, breathSeconds = 6f, breathDepth = 0.2f, warp = 0.14f,
     )
@@ -56,11 +53,6 @@ fun lookOf(mood: Mood, c: VisorColors): LightLook = when (mood) {
     Mood.LOW_BATTERY -> LightLook(lerp(c.lightNeutral, HUE_LOW, 0.18f), lerp(c.lightNeutral, HUE_LOW, 0.3f), level = 0.8f, spread = 0.95f)
     // Folded and asleep: as dim as away, a little warmer, nearly still.
     Mood.ASLEEP -> LightLook(lerp(c.lightCold, c.lightWarm, 0.3f), c.lightCold, level = 0.14f, spread = 0.75f, warp = 0.1f)
-    // Asleep in the case: charging, as far as anyone can tell from the last thing they said.
-    Mood.IN_CASE -> LightLook(
-        lerp(c.lightWarm, HUE_CHARGING, 0.35f), lerp(c.lightWarm, HUE_CHARGING, 0.55f),
-        level = 0.84f, spread = 0.85f, breathSeconds = 6f, breathDepth = 0.2f, warp = 0.14f,
-    )
     // The camera coming on over Wi-Fi: the light turns towards the signal colour and breathes until the first frame.
     Mood.GOING_LIVE -> LightLook(
         lerp(c.lightNeutral, c.signal, 0.3f), lerp(c.lightNeutral, c.signal, 0.62f),
@@ -78,7 +70,8 @@ private val HUE_CHARGING = Color(0xFF9DF0B4)
 private val HUE_LOW = Color(0xFFFFA43A)
 private val HUE_IMPORT = Color(0xFF5B9BFF)
 
-private const val CRITICAL_PERCENT = 10L
+/** At or below this the battery counts as low. */
+const val CRITICAL_PERCENT = 10
 
 fun moodOf(state: GlassesState, live: Boolean): Mood {
     if (state.target == null) return Mood.ABSENT
@@ -86,17 +79,14 @@ fun moodOf(state: GlassesState, live: Boolean): Mood {
     return when {
         state.link == LinkState.DISCONNECTED || state.link == LinkState.LOST -> Mood.FAR
         state.link != LinkState.READY -> Mood.SEARCHING
-        live || device?.streamingActive == true || device?.camera == "CAPTURE_VIDEO_STARTED" -> Mood.RECORDING
+        live || device?.streamingActive == true || device?.camera == CAMERA_VIDEO_STARTED -> Mood.RECORDING
         device?.battery?.charging == true -> Mood.CHARGING
         (device?.battery?.percent ?: 100L) <= CRITICAL_PERCENT -> Mood.LOW_BATTERY
         else -> Mood.CONNECTED
     }
 }
 
-/**
- * The light as it is this frame, read by the pool shader and the 3D lights alike. Plain fields, written
- * and read on the main thread; [tick] is the Compose state the pool draws from.
- */
+/** The light this frame, for the pool and the 3D lights; main thread only, [tick] is the state the pool draws from. */
 class LightFrame {
     var level = 0f
     var spread = 0.7f
@@ -117,7 +107,6 @@ class LightFrame {
     private var flickerLeft = 0f
 
     fun aim(look: LightLook) {
-        if (look == target) return
         target = look
     }
 
@@ -182,6 +171,12 @@ class LightFrame {
         const val FLICKER_SECONDS = 0.6f
     }
 }
+
+/** The light's heart, turned towards white by a photo's flash. */
+internal fun LightFrame.flashedCore() = FloatArray(3) { core[it] + (1 - core[it]) * flash }
+
+/** How bright the pool is, with a photo's flash and the swell of a word. */
+internal val LightFrame.poolLevel: Float get() = level + flash * 0.6f + swell
 
 /** Steps [frame] towards [look] every frame while this is composed: it eases between moods, breathes, and drifts. */
 @Composable

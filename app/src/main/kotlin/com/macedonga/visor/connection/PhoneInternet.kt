@@ -15,8 +15,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -28,7 +28,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
@@ -47,11 +46,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 @Singleton
 class PhoneInternet @Inject constructor(
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
     private val relay: PhoneHttpRelay,
 ) : Responder {
     // A connection that fails ends alone; nothing in here may take the app down.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Internet: a connection failed: $e") })
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.add("Internet: a connection failed: $e") })
     private val sessions = ConcurrentHashMap<Int, Session>()
     // Tunnel frames waiting for the link. Control frames of the session share its one send lock, so they wait
     // behind at most this many of these.
@@ -67,21 +66,23 @@ class PhoneInternet @Inject constructor(
             owner = connection
             sessions.values.forEach { it.close() }
             sessions.clear()
+            relay.clear()
         }
-        if (info.flags.isClosed && message.payload.isEmpty()) {
-            sessions.remove(channel)?.close()
-            relay.forget(channel)
-            return
-        }
+        if (info.flags.isClosed && message.payload.isEmpty()) return
         when (info.messageType) {
             MT_START -> {
                 sessions.remove(channel)?.close()
                 sessions[channel] = Session(connection, DataXConnection.mirror(channel))
-                log.get().add("Internet: the Display's apps are using the phone's internet")
+                log.add("Internet: the Display's apps are using the phone's internet")
             }
             MT_FRAME -> sessions.getOrPut(channel) { Session(connection, DataXConnection.mirror(channel)) }.inbound(message.payload)
             else -> relay.handle(message, connection)
         }
+    }
+
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        sessions.remove(channelId)?.close()
+        relay.forget(channelId)
     }
 
     /** One tunnel from the Display: its TCP and UDP flows, and the way back. */
@@ -159,7 +160,7 @@ class PhoneInternet @Inject constructor(
         private val mss = if (version == 4) MSS_V4 else MSS_V6
         private val lock = Mutex()
         private val progress = MutableStateFlow(0L)
-        private val logId = requests.start("tcp://${p.dstAddress.hostAddress}:$remotePort", SOURCE_TUNNEL)
+        private val logId = requests.start("tcp://${p.dstAddress.hostAddress}:$remotePort", RequestSource.TUNNEL)
 
         private var socket: Socket? = null
         private var output: OutputStream? = null
@@ -174,7 +175,8 @@ class PhoneInternet @Inject constructor(
         private var finSent = false
         private var named = false
         @Volatile private var finished = false
-        private var bytes = 0L
+        private val bytes = AtomicLong()
+        @Volatile private var pumpJob: Job? = null
         private val job: Job = scope.launch { run() }
 
         private suspend fun run() {
@@ -218,7 +220,7 @@ class PhoneInternet @Inject constructor(
                 peerWindow = seg.window
                 if (!established && diff(seg.ack, iss) > 0) {
                     established = true
-                    scope.launch { pump() }
+                    pumpJob = scope.launch { pump() }
                 }
             }
             progress.value++
@@ -241,7 +243,7 @@ class PhoneInternet @Inject constructor(
                     finish("the server went away", failed = true)
                     return
                 }
-                bytes += seg.data.size
+                bytes.addAndGet(seg.data.size.toLong())
             }
             lock.withLock {
                 rcvNxt = (rcvNxt + seg.data.size) and MASK
@@ -259,7 +261,7 @@ class PhoneInternet @Inject constructor(
             val input: InputStream = socket?.getInputStream() ?: return
             val buffer = ByteArray(mss)
             try {
-                while (scope.isActive) {
+                while (!finished) {
                     val n = runInterruptible { input.read(buffer) }
                     if (n < 0) break
                     if (n == 0) continue
@@ -270,10 +272,11 @@ class PhoneInternet @Inject constructor(
                         pending += data
                         sndNxt = (sndNxt + n) and MASK
                     }
-                    bytes += n
+                    bytes.addAndGet(n.toLong())
                 }
             } catch (_: Exception) {
             }
+            if (finished) return
             waitForWindow(0)
             lock.withLock {
                 if (!finSent) {
@@ -293,10 +296,7 @@ class PhoneInternet @Inject constructor(
             }
         }
 
-        /**
-         * Resend the oldest unacked segment only. Resending the whole window each tick queued up to 48 frames per flow
-         * every 1.5 s behind a link that was already not keeping up, and held this flow's lock while they waited.
-         */
+        /** Resends only the oldest unacked segment, outside the flow's lock. */
         private suspend fun retransmit() {
             val (seq, data) = lock.withLock { sndUna to pending.copyOf(minOf(pending.size, mss)) }
             if (data.isNotEmpty()) send(TcpSegment.ACK or TcpSegment.PSH, seq, data)
@@ -308,16 +308,17 @@ class PhoneInternet @Inject constructor(
         }
 
         private fun finish(outcome: String, failed: Boolean = false) {
-            if (!finished) requests.finish(logId, outcome, failed, bytes)
+            if (!finished) requests.finish(logId, outcome, failed, bytes.get())
             finished = true
             close()
         }
 
         fun close() {
-            if (!finished) requests.finish(logId, "the tunnel ended", failed = false, bytes = bytes)
+            if (!finished) requests.finish(logId, "the tunnel ended", failed = false, bytes = bytes.get())
             finished = true
             s.forget(key)
             runCatching { socket?.close() }
+            pumpJob?.cancel()
             job.cancel()
             inbox.close()
         }
@@ -328,24 +329,29 @@ class PhoneInternet @Inject constructor(
         private val version = p.version
         private val display = p.src
         private val remote = p.dst
-        private val socket = DatagramSocket().apply {
-            connect(InetSocketAddress(p.dstAddress, remotePort))
-            soTimeout = POLL_MS
+        private val socket = DatagramSocket().also { d ->
+            try {
+                d.connect(InetSocketAddress(p.dstAddress, remotePort))
+                d.soTimeout = POLL_MS
+            } catch (e: Exception) {
+                d.close()
+                throw e
+            }
         }
-        private val logId = requests.start("udp://${p.dstAddress.hostAddress}:$remotePort", SOURCE_TUNNEL)
+        private val logId = requests.start("udp://${p.dstAddress.hostAddress}:$remotePort", RequestSource.TUNNEL)
         @Volatile private var lastUsed = System.currentTimeMillis()
-        private var bytes = 0L
+        private val bytes = AtomicLong()
         private val job = scope.launch { receive() }
 
         fun send(data: ByteArray) {
             lastUsed = System.currentTimeMillis()
-            bytes += data.size
+            bytes.addAndGet(data.size.toLong())
             scope.launch { runCatching { socket.send(DatagramPacket(data, data.size)) } }
         }
 
         private suspend fun receive() {
             val buffer = ByteArray(UDP_MAX)
-            while (scope.isActive && System.currentTimeMillis() - lastUsed < UDP_IDLE_MS) {
+            while (System.currentTimeMillis() - lastUsed < UDP_IDLE_MS) {
                 val packet = DatagramPacket(buffer, buffer.size)
                 try {
                     runInterruptible { socket.receive(packet) }
@@ -355,11 +361,11 @@ class PhoneInternet @Inject constructor(
                     break
                 }
                 lastUsed = System.currentTimeMillis()
-                bytes += packet.length
+                bytes.addAndGet(packet.length.toLong())
                 val u = UdpDatagram.build(remotePort, displayPort, buffer.copyOf(packet.length))
                 runCatching { s.deliver(version, remote, display, IpPacket.UDP, u) }
             }
-            requests.finish(logId, "done", failed = false, bytes = bytes)
+            requests.finish(logId, "done", failed = false, bytes = bytes.get())
             close()
         }
 
@@ -398,7 +404,5 @@ class PhoneInternet @Inject constructor(
         private const val POLL_MS = 1_000
         private const val UDP_MAX = 2048
         private const val UDP_IDLE_MS = 60_000L
-        // The request log's "source" for traffic of the tunnel rather than of the data fetcher.
-        private const val SOURCE_TUNNEL = -1
     }
 }

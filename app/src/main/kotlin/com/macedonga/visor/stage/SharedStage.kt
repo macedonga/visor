@@ -9,8 +9,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,10 +49,7 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
-/**
- * Where a screen wants the pair this frame: the stage's box on the window, and the pair with its pool inside it,
- * scaled about [pivotX], [pivotY] (fractions of the stage) and moved down by [shift].
- */
+/** Where a screen wants the pair: the stage's box on the window, the pair scaled about [pivotX], [pivotY] and moved down by [shift]. */
 class StagePlace {
     var top = 0f
     var height = 0f
@@ -90,7 +88,7 @@ class StagePlace {
 class Spot internal constructor(internal val place: StagePlace.() -> Unit) {
     var closed by mutableStateOf(true)
         internal set
-    var liveliness by mutableStateOf(1f)
+    var liveliness by mutableFloatStateOf(1f)
         internal set
 }
 
@@ -100,12 +98,9 @@ class LookRequest internal constructor(look: LightLook) {
         internal set
 }
 
-/**
- * Shows the pair on this screen, placed by [place] every frame. The newest screen to ask has it; the pair travels
- * there from wherever it was, and [StageHolder.shown] says how far, for the screen's own things to follow.
- */
+/** Puts the pair on this screen, placed by [place] every frame; the newest ask has it, and [StageHolder.shown] follows its trip. */
 @Composable
-fun StageSpot(closed: Boolean, liveliness: Float, place: StagePlace.() -> Unit): Spot {
+fun stageSpot(closed: Boolean, liveliness: Float, place: StagePlace.() -> Unit): Spot {
     val stage = LocalStage.current
     val current = rememberUpdatedState(place)
     val spot = remember { Spot { current.value(this) }.also { it.closed = closed; it.liveliness = liveliness } }
@@ -135,17 +130,14 @@ fun StageLight(look: LightLook) {
 /** The pairs a drag on the stage moves between: whether there is one [direction] (1 the next), and going there. */
 class StagePages(val can: (direction: Int) -> Boolean, val go: (direction: Int) -> Unit)
 
-/**
- * Dragging sideways turns the pair, and it springs back to rest. With [pages] it does not turn: it follows the finger
- * sideways, and a long drag or a fling takes it out of the light for the next one.
- */
+/** A sideways drag turns the pair and it springs back; with [pages] the drag slides it out of the light for the next one. */
 @Composable
 fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modifier {
     val stage = LocalStage.current
-    val scope = rememberCoroutineScope()
     val detent = rememberUpdatedState(onDetent)
     val paging = rememberUpdatedState(pages)
     return pointerInput(stage) {
+        val scope = stage.scope
         var lastDetent = 0
         var travel = 0f
         var past = false
@@ -159,6 +151,7 @@ fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modi
             onDragStart = {
                 travel = 0f
                 past = false
+                lastDetent = (stage.yaw.value / DETENT_DEGREES).toInt()
                 tracker.resetTracking()
             },
             onDragEnd = {
@@ -170,7 +163,7 @@ fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modi
                     travel > size.width * PAGE_AT || fling > PAGE_FLING -> -1
                     else -> 0
                 }
-                if (direction != 0 && pages!!.can(direction)) {
+                if (pages != null && direction != 0 && pages.can(direction)) {
                     if (!past) detent.value()
                     scope.launch { stage.page(direction) { pages.go(direction) } }
                 } else {
@@ -195,7 +188,7 @@ fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modi
                 }
                 return@detectHorizontalDragGestures
             }
-            // Free for the first half turn either way, then it resists like a rubber band.
+            // It resists more the further it turns.
             val yaw = stage.yaw.value
             val next = (yaw + dx * DEGREES_PER_PX * (1f - (abs(yaw) / MAX_YAW).coerceIn(0f, 0.9f))).coerceIn(-MAX_YAW, MAX_YAW)
             scope.launch { stage.yaw.snapTo(next) }
@@ -208,24 +201,18 @@ fun Modifier.turnsThePair(pages: StagePages? = null, onDetent: () -> Unit): Modi
     }
 }
 
-/**
- * The one stage: the pair, its pool and its light, made once and kept for the life of the activity under every
- * screen. Screens ask for it with [StageSpot] and leave holes where it shows; it goes where the newest one wants it,
- * so moving between screens never makes a second pair, a second pool or a second light. [shown] is false while the
- * screen on top has no pair: the stage fades out with the screen it was on.
- */
+/** The one pair, pool and light under every screen; it goes where the newest [stageSpot] wants it. */
 @Composable
 fun SharedStage(stage: StageHolder, shown: Boolean) {
+    stage.scope = rememberCoroutineScope()
     val newest = stage.spots.lastOrNull()
-    // The light runs while a screen asks for it; nothing ticks behind one that does not, or under the Live's picture.
-    // While the mark holds the dark it stays down, and comes up as the mark lets go.
+    // The light runs only while a screen asks for it, and stays down while the mark holds the dark.
     val marked by remember { derivedStateOf { stage.intro.holding } }
     if (stage.looks.isNotEmpty()) {
-        val look = stage.looks.lastOrNull()?.look ?: stage.restingLook
+        val look = stage.looks.last().look
         AnimateLight(stage.light, if (marked) look.copy(level = 0f) else look)
     }
-    SideEffect { stage.looks.lastOrNull()?.let { stage.restingLook = it.look } }
-    Hinge(newest?.closed ?: stage.restingClosed, stage.pose, firstVisit = true, arrival = stage.intro::awaitLetGo)
+    Hinge(newest?.closed ?: stage.restingClosed, stage.pose, arrival = stage.intro::awaitLetGo)
     SideEffect { newest?.let { stage.restingClosed = it.closed } }
     LaunchedEffect(stage) {
         snapshotFlow { stage.travelling }.collect {
@@ -239,8 +226,7 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
     LaunchedEffect(stage) { snapshotFlow { stage.slide.value }.collect { stage.pose.slide = it; stage.renderer.invalidate() } }
     // At once, not faded: a page changes while the pair is out of sight, and a fade would show both as it slides in.
     val picture = stage.picture.takeIf { !stage.vacant }
-    val pictured = if (picture != null) 1f else 0f
-    val vacant = if (stage.vacant) 1f else 0f
+    val hidden = picture != null || stage.vacant
     val curtain by animateFloatAsState(if (shown && newest != null) 1f else 0f, if (shown) snap() else tween(CURTAIN_MS), label = "stage")
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -269,14 +255,14 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
                         transformOrigin = TransformOrigin(p.pivotX, p.pivotY)
                         translationY = p.shift
                         alpha = p.alpha
-                        // Nothing is drawn while nothing of it shows: behind another screen, or under the Live's picture.
-                        stage.renderer.paused = curtain == 0f || p.alpha <= 0f
+                        // Nothing is drawn while the model is out of sight: behind another screen, under the Live's picture, Meta's picture or the add page.
+                        stage.renderer.paused = curtain == 0f || p.alpha <= 0f || hidden
                     },
             ) {
                 LightPool(stage.light, Offset(0.5f, POOL_Y), Size(0.21f, 0.058f), Size(0.17f, 0.02f), Modifier.fillMaxSize())
                 GlassesStage(
-                    liveliness = newest?.liveliness ?: 0.25f, active = curtain > 0f,
-                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 1f - maxOf(pictured, vacant) },
+                    liveliness = newest?.liveliness ?: 0.25f, active = curtain > 0f && !hidden,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (hidden) 0f else 1f },
                 )
                 picture?.let { PairPicture(it, stage, Modifier.fillMaxSize()) }
             }
@@ -287,7 +273,7 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
 /** Meta's picture of the pair, front on where the model would stand, sliding with it. */
 @Composable
 private fun PairPicture(picture: ImageBitmap, stage: StageHolder, modifier: Modifier) {
-    BoxWithConstraints(modifier) {
+    Box(modifier) {
         Image(
             picture, null,
             Modifier
@@ -301,8 +287,8 @@ private fun PairPicture(picture: ImageBitmap, stage: StageHolder, modifier: Modi
     }
 }
 
-/** How the pair travels from one screen's place to the next. */
-internal val HANDOVER_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+/** The app's one settling curve: the pair's handover, screens, pages and pills. */
+internal val SETTLE_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 internal const val HANDOVER_NS = 640_000_000L
 private const val CURTAIN_MS = 180
 // As wide as the model looks on the home, and low enough that it ends in the light where the model's temples do.

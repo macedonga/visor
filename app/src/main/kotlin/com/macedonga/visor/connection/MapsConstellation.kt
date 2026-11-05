@@ -1,29 +1,28 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
 import android.location.Location
 import com.github.luben.zstd.EndDirective
 import com.github.luben.zstd.ZstdCompressCtx
 import com.github.luben.zstd.ZstdDecompressCtx
+import com.macedonga.visor.R
 import com.macedonga.visor.core.protocol.Constellation
 import com.macedonga.visor.core.protocol.Constellation.Stamp
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.ByteBuffer
 import java.util.UUID
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.max
-import kotlin.math.roundToLong
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,11 +31,12 @@ import org.json.JSONObject
 /** svc11004, the Display's Maps: location, routes and trips, on one channel; one flushed, never-ended zstd stream per direction. */
 @Singleton
 class MapsConstellation @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val position: PhonePosition,
     private val router: OsrmRouter,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> log.get().add("Maps: failed: $e") })
+    private val scope = responderScope(log, "Maps", Dispatchers.Default)
 
     @Volatile
     private var served: Session? = null
@@ -156,7 +156,7 @@ class MapsConstellation @Inject constructor(
         @Volatile
         private var trip: Trip? = null
         private var following = false
-        private val follower: (Location) -> Unit = { fix -> scope.launch { lock.withLock { if (sharing) send(fix) } } }
+        private val follower: (Location) -> Unit = { fix -> scope.launch { lock.withLock { if (sharing) sendLocation(fix) } } }
         private val guide: (Location) -> Unit = { fix -> scope.launch { lock.withLock { progress(fix) } } }
 
         val guiding: Boolean get() = trip?.arrived == false
@@ -197,7 +197,7 @@ class MapsConstellation @Inject constructor(
             if (ended) return
             ended = true
             linkWatch.cancel()
-            if (sharing) stop()
+            if (sharing) stopSharing()
             endTrip()
             packer.close()
             unpacker.close()
@@ -206,25 +206,25 @@ class MapsConstellation @Inject constructor(
 
         private suspend fun share(on: Boolean?) {
             if (on == null || on == sharing || ended) return
-            if (!on) return stop()
+            if (!on) return stopSharing()
             sharing = true
-            log.get().add("Maps: the Display asked for the location")
+            log.add("Maps: the Display asked for the location")
             val known = position.fix()
             position.follow(follower)
-            known?.let { send(it) }
+            known?.let { sendLocation(it) }
         }
 
-        private fun stop() {
+        private fun stopSharing() {
             sharing = false
             position.unfollow(follower)
-            log.get().add("Maps: stopped sending the location")
+            log.add("Maps: stopped sending the location")
         }
 
         // The route goes from the first waypoint to the last; the routing runs off the lock.
         private suspend fun requestRoute(plain: ByteArray) {
             val req = runCatching { Constellation.routeRequest(plain) }.getOrNull()
             if (req == null) {
-                log.get().add("Maps: a route request Visor could not read")
+                log.add("Maps: a route request Visor could not read")
                 runCatching { Constellation.stampOf(plain) }.getOrNull()?.let { routeResult(it, null) }
                 return
             }
@@ -234,7 +234,7 @@ class MapsConstellation @Inject constructor(
             val to = req.waypoints.last().latLng()
             scope.launch {
                 val planned = runCatching { plan(from, to, req.travelMode, options) }
-                planned.exceptionOrNull()?.let { log.get().add("Maps: no route: ${it.message}") }
+                planned.exceptionOrNull()?.let { log.add("Maps: no route: ${it.message}") }
                 lock.withLock { routeResult(req.stamp, planned.getOrNull()) }
             }
         }
@@ -242,23 +242,23 @@ class MapsConstellation @Inject constructor(
         private suspend fun routeResult(request: Stamp, h: Hosted?) {
             if (h != null) {
                 remember(h)
-                log.get().add("Maps: route, ${h.route.steps.size} maneuvers, ${(h.route.metres / 100).roundToLong() / 10.0} km")
+                log.add("Maps: route, ${h.route.steps.size} maneuvers, ${h.route.km} km")
             }
             send(Constellation.TYPE_ROUTE_RESULT) { clock, stamp ->
-                Constellation.routeResult(clock, stamp, request, h?.record, if (h == null) "No route" else null)
+                Constellation.routeResult(clock, stamp, request, h?.record, if (h == null) context.getString(R.string.nav_err_no_route) else null)
             }
         }
 
         private suspend fun navigate(plain: ByteArray) {
             val req = runCatching { Constellation.navigationRequest(plain) }.getOrNull()
             if (req == null) {
-                log.get().add("Maps: a trip message Visor could not read")
+                log.add("Maps: a trip message Visor could not read")
                 return
             }
             if (!req.start) return stopTrip(req.stamp)
             val h = recall(req.routeId)
             if (h == null) {
-                log.get().add("Maps: a trip asked with no route")
+                log.add("Maps: a trip asked with no route")
                 return stopTrip(req.stamp)
             }
             endTrip()
@@ -269,12 +269,12 @@ class MapsConstellation @Inject constructor(
             state(t, Constellation.ON_ROUTE)
             following = true
             position.follow(guide)
-            log.get().add("Maps: trip started, ${h.route.steps.size} maneuvers")
+            log.add("Maps: trip started, ${h.route.steps.size} maneuvers")
             position.fix()?.takeIf { System.currentTimeMillis() - it.time < FRESH_FIX_MS }?.let { progress(it) }
         }
 
         private suspend fun stopTrip(stamp: Stamp) {
-            if (trip != null) log.get().add("Maps: trip ended")
+            if (trip != null) log.add("Maps: trip ended")
             endTrip()
             send(Constellation.TYPE_NAVIGATOR_STATE) { clock, s -> Constellation.navigatorState(clock, s, stamp, Constellation.STOPPED) }
             send(Constellation.TYPE_ACTIVE_ROUTE) { clock, s -> Constellation.activeRoute(clock, s, stamp, null) }
@@ -298,7 +298,7 @@ class MapsConstellation @Inject constructor(
             val route = t.hosted.route
             val here = LatLng(fix.latitude, fix.longitude)
             val snap = route.snap(here)
-            if (snap.off > OFF_ROUTE_M) {
+            if (snap.offRoute) {
                 t.offFixes++
                 if (t.offFixes == 1) state(t, Constellation.OFF_ROUTE)
                 if (t.offFixes >= REROUTE_FIXES) reroute(t, here)
@@ -309,8 +309,8 @@ class MapsConstellation @Inject constructor(
                 state(t, Constellation.ON_ROUTE)
             }
             val steps = route.steps
-            val arrived = route.metres - snap.along < ARRIVE_M
-            val next = if (arrived) steps.lastIndex else steps.indexOfFirst { snap.along < it.along + PASSED_M }.let { if (it < 0) steps.lastIndex else it }
+            val arrived = route.arrived(snap.along)
+            val next = if (arrived) steps.lastIndex else route.nextStep(snap.along)
             val step = steps[next]
             val legStart = steps.getOrNull(next - 1)?.along ?: 0.0
             val perMetre = route.secondsPerMetre
@@ -334,7 +334,7 @@ class MapsConstellation @Inject constructor(
                 t.arrived = true
                 state(t, Constellation.ARRIVED)
                 stopFollowing()
-                log.get().add("Maps: arrived")
+                log.add("Maps: arrived")
             }
         }
 
@@ -348,19 +348,22 @@ class MapsConstellation @Inject constructor(
                 lock.withLock {
                     if (trip !== t || ended) return@withLock
                     t.rerouting = false
-                    t.offFixes = 0
                     val h = fresh.getOrNull()
                     if (h == null) {
-                        log.get().add("Maps: reroute failed: ${fresh.exceptionOrNull()?.message}")
+                        log.add("Maps: reroute failed: ${fresh.exceptionOrNull()?.message}")
+                        // Still off route: a fix back on it sends ON_ROUTE, more fixes off it reroute again.
+                        t.offFixes = 1
+                        state(t, Constellation.OFF_ROUTE)
                         return@withLock
                     }
+                    t.offFixes = 0
                     remember(h)
                     t.hosted = h
                     // The new route's start is where the wearer already is.
                     t.notified = 0
                     send(Constellation.TYPE_ACTIVE_ROUTE) { clock, stamp -> Constellation.activeRoute(clock, stamp, t.stamp, h.record) }
                     state(t, Constellation.ON_ROUTE)
-                    log.get().add("Maps: rerouted, ${h.route.steps.size} maneuvers")
+                    log.add("Maps: rerouted, ${h.route.steps.size} maneuvers")
                 }
             }
         }
@@ -369,7 +372,7 @@ class MapsConstellation @Inject constructor(
             send(Constellation.TYPE_NAVIGATOR_STATE) { clock, stamp -> Constellation.navigatorState(clock, stamp, t.stamp, state) }
         }
 
-        private suspend fun send(fix: Location) {
+        private suspend fun sendLocation(fix: Location) {
             val f = Constellation.Fix(
                 latitude = fix.latitude,
                 longitude = fix.longitude,
@@ -456,10 +459,7 @@ class MapsConstellation @Inject constructor(
         private const val SLACK = 64
         private const val PIECE = 4096
         private const val KEPT_ROUTES = 8
-        private const val OFF_ROUTE_M = 50.0
         private const val REROUTE_FIXES = 5
-        private const val PASSED_M = 15.0
-        private const val ARRIVE_M = 25.0
         private const val FRESH_FIX_MS = 10_000L
 
         // The Display's ManeuverType for each of Visor's Dir values.

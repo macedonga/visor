@@ -2,6 +2,8 @@ package com.macedonga.visor.core.media
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.MediaStore
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
@@ -9,14 +11,16 @@ import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.connection.SessionHostFactory
 import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
+import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.LinkStateChanged
 import com.macedonga.visor.core.session.ProtocolError
 import com.macedonga.visor.core.session.ServiceData
 import java.io.File
-import java.time.Instant
-import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Collections
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -49,14 +53,40 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-// svc7006 wearables_bug_reporter, from the Meta app's WearableBugReportDataXFeatureClient.
+// svc7006 wearables_bug_reporter.
 private const val SVC_BUG_REPORTER = 7006
 private const val MT_REQUEST_BUG_REPORT = 1
 private const val MT_REQUEST_BUG_REPORT_RESPONSE = 2
 
 /**
+ * Why an import did not bring [handles] over, for a person to read. It belongs to those captures: it goes once they are
+ * saved, and the next import starts without it.
+ */
+data class ImportProblem(val kind: Kind, val handles: Set<String> = emptySet()) {
+    enum class Kind {
+        /** Android's Wi-Fi Direct took no call at all: only turning Wi-Fi off and on brings it back. */
+        WIFI_STUCK,
+        WIFI_FAILED,
+        GLASSES_DID_NOT_JOIN,
+        NO_WIFI_SESSION,
+        WIFI_OFF,
+        NOT_ALLOWED,
+        FAILED,
+
+        /** The glasses went quiet or away halfway: asleep in the closed case, or out of reach. */
+        CUT_OFF,
+
+        /** A file failed its checksum. The glasses count it delivered all the same. */
+        DAMAGED,
+
+        /** Everything came, but the phone's gallery would not take it. */
+        NOT_SAVED,
+    }
+}
+
+/**
  * Lists the captures on the glasses, fetches them over Wi-Fi Direct, and saves them to the gallery.
- * Bluetooth is only the fallback when Wi-Fi Direct fails. Ported from lensbreak's wifi_import.py.
+ * Bluetooth is only the fallback when Wi-Fi Direct fails.
  */
 class MediaImport(
     private val context: Context,
@@ -75,9 +105,6 @@ class MediaImport(
 
     private val _saved = MutableStateFlow(0)
     val saved: StateFlow<Int> = _saved.asStateFlow()
-
-    private val _status = MutableStateFlow("")
-    val status: StateFlow<String> = _status.asStateFlow()
 
     private val _problem = MutableStateFlow<ImportProblem?>(null)
     val problem: StateFlow<ImportProblem?> = _problem.asStateFlow()
@@ -99,7 +126,7 @@ class MediaImport(
     private val queued = LinkedHashSet<String>()
 
     // Captures that are not media, logged once each.
-    private val noticed = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val noticed = Collections.synchronizedSet(HashSet<String>())
 
     // The import running, and when it last said or received anything.
     @Volatile
@@ -114,11 +141,33 @@ class MediaImport(
 
     /** What is on the glasses and not on this phone, nor deleted from it: what "import all new" brings. */
     val fresh: StateFlow<List<Capture>> = combine(captures, index.entries, index.dismissed) { list, kept, dismissed ->
-        list.filter { it.isNew && it.isMedia && it.handle !in kept && it.handle !in dismissed }
+        list.filter { isFresh(it, kept, dismissed) }
     }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    // Per capture in flight: its best fraction so far, and the assets seen on the wire (gone from the transfers, one has arrived).
+    private val best = HashMap<String, Float>()
+    private val seen = HashMap<String, MutableSet<String>>()
+
+    /** Each in-flight capture's import as a fraction that never goes back, by handle; null before it moves. */
+    val progress: StateFlow<Map<String, Float?>> = combine(inFlight, receiver.transfers, captures) { flying, transfers, list ->
+        best.keys.retainAll(flying)
+        seen.keys.retainAll(flying)
+        val byHandle = list.associateBy { it.handle }
+        flying.associateWith { handle ->
+            val capture = byHandle[handle] ?: return@associateWith null
+            val total = capture.wanted.sumOf { it.size }.coerceAtLeast(1)
+            val ids = capture.wanted.map { it.id }.toSet()
+            val moving = transfers.filter { it.uuid in ids }
+            val mine = seen.getOrPut(handle) { HashSet() }.apply { addAll(moving.map { it.uuid }) }
+            if (mine.isEmpty()) return@associateWith null
+            val done = capture.wanted.filter { a -> a.id in mine && moving.none { it.uuid == a.id } }.sumOf { it.size }
+            val fraction = ((done + moving.sumOf { it.received }).toFloat() / total).coerceIn(0f, 1f)
+            maxOf(fraction, best[handle] ?: 0f).also { best[handle] = it }
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
     // Deletes asked for on this Bluetooth session, so a second listing does not ask again.
-    private val deleteAsked = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val deleteAsked = Collections.synchronizedSet(HashSet<String>())
 
     /** Where the phone was when the glasses took something. */
     val places = PlaceLog(context)
@@ -131,6 +180,13 @@ class MediaImport(
     /** Each capture as it lands in the gallery, by handle; [index] says where. */
     val imported: SharedFlow<String> = _imported.asSharedFlow()
 
+    /**
+     * Whether a video this size came out of the glasses' own two-stage stabilization; any other is steadied on the phone.
+     * The app sets it from the glasses' settings; this is their default output.
+     */
+    @Volatile
+    var steadiedOnGlasses: (Int, Int) -> Boolean = { w, h -> minOf(w, h) == 1512 && maxOf(w, h) == 2016 }
+
     private val assembly = Assembly(
         context, albums, index, places, ::say,
         onSaved = { handle ->
@@ -141,14 +197,14 @@ class MediaImport(
             _problem.update { p -> p?.copy(handles = p.handles - handle)?.takeIf { it.handles.isNotEmpty() } }
             deleteFromGlasses(handle)
         },
-        onFailed = { handle, why -> report(handle, ImportProblem.Kind.NOT_SAVED, why) },
+        onFailed = { handle, _ -> report(handle, ImportProblem.Kind.NOT_SAVED) },
         steadiedOnGlasses = { w, h -> steadiedOnGlasses(w, h) },
     )
 
     /** [handle] is no longer coming: it joins the problem on show, or starts one of [kind]. */
-    private fun report(handle: String, kind: ImportProblem.Kind, detail: String = "") {
+    private fun report(handle: String, kind: ImportProblem.Kind) {
         _inFlight.update { it - handle }
-        _problem.update { p -> p?.copy(handles = p.handles + handle) ?: ImportProblem(kind, detail, setOf(handle)) }
+        _problem.update { p -> p?.copy(handles = p.handles + handle) ?: ImportProblem(kind, setOf(handle)) }
     }
 
     private val _previews = MutableStateFlow(
@@ -159,7 +215,7 @@ class MediaImport(
     val previews: StateFlow<Map<String, File>> = _previews.asStateFlow()
 
     // Previews asked for on this Bluetooth session, so a second listing does not ask again.
-    private val previewsAsked = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val previewsAsked = Collections.synchronizedSet(HashSet<String>())
 
     @Volatile
     private var lastAutoRefresh = 0L
@@ -169,10 +225,6 @@ class MediaImport(
     /** Every status line, for the event log. */
     val notes: SharedFlow<String> = _notes.asSharedFlow()
 
-    // The join answer, while one is awaited.
-    @Volatile
-    private var joined: CompletableDeferred<JoinResult>? = null
-
     // The main files asked for over Wi-Fi and not saved yet: once none are left, Wi-Fi is let go at once.
     @Volatile
     private var awaited: Set<String> = emptySet()
@@ -181,25 +233,36 @@ class MediaImport(
     @Volatile
     private var onWifi = false
 
+    // The pair the capture list came from.
+    private var listedFor: String? = null
+
     init {
         receiver.describe = ::describe
         // Pieces left from a transfer that was cut short, for longer than any transfer runs.
-        scope.launch { assembly.finish(olderThanMs = 10 * 60_000L) }
+        scope.launch { assembly.saveStragglers(olderThanMs = 10 * 60_000L) }
         scope.launch { receiver.notes.collect(::say) }
         scope.launch { receiver.received.collect(::keep) }
         scope.launch {
-            connection.serviceData.collect {
-                when (it.serviceId) {
-                    SVC_MEDIA -> onMedia(it)
-                    SVC_BUG_REPORTER -> onBugReporter(it)
-                    SVC_ATC -> if (it.messageType == MT_JOIN_ACCESS_POINT_RESULT) joined?.complete(parseJoinResult(it.payload))
-                }
+            connection.serviceData.collect { data ->
+                runCatching<Unit> {
+                    when (data.serviceId) {
+                        SVC_MEDIA -> onMedia(data)
+                        SVC_BUG_REPORTER -> onBugReporter(data)
+                    }
+                }.onFailure { say("Could not read svc${data.serviceId} type ${data.messageType}: ${it.message}") }
             }
         }
         scope.launch {
             connection.state.map { it.link }.distinctUntilChanged().collect { link ->
                 when (link) {
                     LinkState.READY -> {
+                        // Another pair's captures are not on these glasses.
+                        val serial = connection.state.value.target?.serial
+                        if (serial != listedFor) {
+                            listedFor = serial
+                            _captures.value = emptyList()
+                            following = null
+                        }
                         previewsAsked.clear()
                         deleteAsked.clear()
                         refresh()
@@ -245,13 +308,13 @@ class MediaImport(
     private var following: Set<String>? = null
 
     fun importAllNew() {
-        val fresh = captures.value.filter(::isFresh)
+        val fresh = captures.value.filter { isFresh(it) }
         following = fresh.map { it.handle }.toSet()
         import(fresh)
     }
 
-    private fun isFresh(c: Capture) =
-        c.isNew && c.isMedia && c.handle !in index.entries.value && c.handle !in index.dismissed.value
+    private fun isFresh(c: Capture, kept: Map<String, Kept> = index.entries.value, dismissed: Set<String> = index.dismissed.value) =
+        c.isNew && c.isMedia && c.handle !in kept && c.handle !in dismissed
 
     /**
      * Delete from the glasses what is on this phone, as the Meta app does once it has a capture, and what the person
@@ -286,9 +349,7 @@ class MediaImport(
         synchronized(this) {
             _inFlight.update { it + captures.map { c -> c.handle } }
             val busy = running?.isActive == true
-            // One that has said and received nothing for this long is waiting on an answer that will not come: it
-            // gives way, instead of queueing every later import behind it in silence.
-            // Waiting on Bluetooth is long silences by nature: that one is never taken for stuck.
+            // A silent import gives way after STUCK_MILLIS; one waiting on Bluetooth never does.
             if (busy && (_overBluetooth.value || now() - maxOf(lastProgress, receiver.lastActivity) < STUCK_MILLIS)) {
                 queued += captures.map { it.handle }
                 return
@@ -322,7 +383,7 @@ class MediaImport(
                     _problem.value = ImportProblem(ImportProblem.Kind.NOT_ALLOWED, handles = handles)
                 }
                 else -> if (!overWifi(captures)) {
-                    val missing = handles.filterTo(HashSet()) { it in _inFlight.value && !assembly.waiting(it) }
+                    val missing = handles.filterTo(HashSet()) { it in _inFlight.value && !assembly.hasMain(it) }
                     if (missing.isNotEmpty()) {
                         say("${missing.size} did not come: the glasses went quiet")
                         _problem.update { p -> ImportProblem(ImportProblem.Kind.CUT_OFF, handles = missing + p?.handles.orEmpty()) }
@@ -332,7 +393,7 @@ class MediaImport(
         } catch (unavailable: WifiUnavailable) {
             say("${unavailable.message}. Falling back to Bluetooth, which is slow")
             // Said only if Bluetooth does not bring them either: while it might, the import is still running.
-            val why = ImportProblem(unavailable.kind, unavailable.message.orEmpty(), handles)
+            val why = ImportProblem(unavailable.kind, handles)
             if (!overBluetooth(captures)) {
                 // Glasses that are gone are the thing to fix, whatever Wi-Fi did.
                 val gone = connection.state.value.link != LinkState.READY
@@ -344,26 +405,23 @@ class MediaImport(
             throw cancelled
         } catch (error: Exception) {
             say("Import failed: ${error.message}")
-            _problem.value = ImportProblem(ImportProblem.Kind.FAILED, error.message ?: error.javaClass.simpleName, handles)
+            _problem.value = ImportProblem(ImportProblem.Kind.FAILED, handles)
         } finally {
             _overBluetooth.value = false
-            // What came is put together as it lands; a capture that is still missing a piece a minute and a half
-            // after the transfer is saved with what it has.
+            // After STRAGGLER_MILLIS, a capture still missing a piece is saved with what it has.
             scope.launch {
                 delay(STRAGGLER_MILLIS)
-                assembly.finish(olderThanMs = STRAGGLER_MILLIS / 2)
+                assembly.saveStragglers(olderThanMs = STRAGGLER_MILLIS / 2)
             }
-            // A capture whose photo or video is here stays in flight until it is put together. One without it keeps
-            // its pieces for the next import, but is no longer coming.
-            _inFlight.update { it - captures.map { c -> c.handle }.filterNot(assembly::waiting).toSet() }
-            // One that gave way leaves the flag and the queue to the import that replaced it. Nothing queued, only
-            // what is being put together is still on its way.
+            // A capture with pieces here stays in flight until put together; the rest are no longer coming.
+            _inFlight.update { it - captures.map { c -> c.handle }.filterNot(assembly::hasMain).toSet() }
+            // Only the import still in charge clears the flag and runs the queue.
             val next = synchronized(this) {
                 if (running !== self) return@synchronized emptySet<String>()
                 running = null
                 _importing.value = false
                 val queuedNow = queued.toSet().also { queued.clear() }
-                if (queuedNow.isEmpty()) _inFlight.update { it.filterTo(HashSet(), assembly::waiting) }
+                if (queuedNow.isEmpty()) _inFlight.update { it.filterTo(HashSet(), assembly::hasMain) }
                 queuedNow
             }
             if (next.isNotEmpty()) {
@@ -386,33 +444,26 @@ class MediaImport(
     /** True when everything asked for came. */
     private suspend fun overWifi(captures: List<Capture>): Boolean {
         val target = connection.state.value.target ?: throw WifiUnavailable("no glasses connected")
-        val bundle = withContext(Dispatchers.IO) { store.all().firstOrNull { it.serial == target.serial } }
-            ?: throw WifiUnavailable("these glasses have no key on this phone")
+        val bundle = store.load(target.serial) ?: throw WifiUnavailable("these glasses have no key on this phone")
         val group = PhoneGroup(context, ::say)
-        val answer = CompletableDeferred<JoinResult>()
         try {
             say("Starting Wi-Fi Direct")
             awaited = captures.flatMap { c -> c.wanted.map { it.id } }.toSet()
             group.create()
-            joined = answer
             onWifi = true
-            connection.submit { link ->
-                // Ask first: once on Wi-Fi the glasses leave Bluetooth, and a later request never lands. An asset already
-                // delivered is skipped by the capture request; asked for on its own, it comes over the next Wi-Fi session.
+            say("Asking the glasses to join ${group.ssid}")
+            // Ask before the join: on Wi-Fi the glasses stop reading Bluetooth.
+            val result = joinGlasses(connection, group.ssid, group.passphrase, timeoutMs = JOIN_TIMEOUT_MILLIS) { link ->
                 for (capture in captures) {
+                    // The capture request skips a delivered asset, so that one is asked for by itself.
                     for (asset in capture.wanted) if (asset.delivered) requestAsset(link, capture.handle, asset.id)
                     requestCapture(link, capture.handle, LINK_WIFI)
                 }
-                joinAccessPoint(link, group.ssid, group.passphrase)
-            }
-            say("Asking the glasses to join ${group.ssid}")
-            val result = withTimeoutOrNull(JOIN_TIMEOUT_MILLIS) { answer.await() }
-                ?: throw WifiUnavailable("the glasses did not answer the Wi-Fi join", ImportProblem.Kind.GLASSES_DID_NOT_JOIN)
+            } ?: throw WifiUnavailable("the glasses did not answer the Wi-Fi join", ImportProblem.Kind.GLASSES_DID_NOT_JOIN)
             if (!result.ok) throw WifiUnavailable("the glasses could not join Wi-Fi Direct (${result.statusName})", ImportProblem.Kind.GLASSES_DID_NOT_JOIN)
             say("The glasses joined at ${result.address}")
             return receive(GlassesTarget(GlassesLink.Wifi(checkNotNull(result.address), result.port), target.serial), bundle)
         } finally {
-            joined = null
             awaited = emptySet()
             // Even when cancelled: a group left up or a session left paused would block the next import.
             withContext(NonCancellable) {
@@ -458,8 +509,7 @@ class MediaImport(
             while (!lost) {
                 delay(250)
                 val idle = receiver.transfers.value.isEmpty()
-                // Done the moment every file asked for is saved, or the glasses say their queue is empty;
-                // the long silence is only for what was never asked for by name.
+                // Done once every named file is saved or the glasses report an empty queue.
                 if (idle && expecting && awaited.isEmpty()) break
                 if (idle && !expecting && receiver.queueEmptyAt > readyAt) break
                 val quiet = now() - maxOf(receiver.lastActivity, readyAt)
@@ -522,10 +572,11 @@ class MediaImport(
                 say("Deleted ${handle.take(8)} from the glasses")
             }
             // "<handle>:<reason>"; a capture they no longer have is as good as deleted.
-            MT_DELETE_FAIL -> data.payload.decodeToString().trimEnd('\u0000').split(':').let { parts ->
-                val reason = parts.drop(1).joinToString(":").trim()
-                if (reason.contains("No such capture")) gone(parts[0])
-                else say("The glasses kept ${parts[0].take(8)}: ${reason.ifEmpty { "no reason given" }}")
+            MT_DELETE_FAIL -> data.payload.decodeToString().trimEnd('\u0000').let { text ->
+                val handle = text.substringBefore(':')
+                val reason = text.substringAfter(':', "").trim()
+                if (reason.contains("No such capture")) gone(handle)
+                else say("The glasses kept ${handle.take(8)}: ${reason.ifEmpty { "no reason given" }}")
             }
             MT_ASSET_GONE -> say("The glasses could not send a preview")
             MT_LINK_CHANGE_OK -> say("The glasses queued ${data.payload.decodeToString().take(8)}")
@@ -536,57 +587,43 @@ class MediaImport(
 
     /** Gets each bug report zip before it goes to Download/Visor. */
     @Volatile
-    var bugReportReader: ((java.io.File) -> Unit)? = null
-
-    /**
-     * Whether a video this size came out of the glasses' own two-stage stabilization; any other is steadied on the phone.
-     * The app sets it from the glasses' settings; this is their default output.
-     */
-    @Volatile
-    var steadiedOnGlasses: (Int, Int) -> Boolean = { w, h -> minOf(w, h) == 1512 && maxOf(w, h) == 2016 }
+    var bugReportReader: ((File) -> Unit)? = null
 
     /** [input] steadied or cut as an import would, into [output], with the logs kept for [handle]: for checking by hand. */
-    fun finishAgain(input: java.io.File, handle: String, output: java.io.File, landscape: Boolean, steadiness: Int): String {
+    fun finishAgain(input: File, handle: String, output: File, landscape: Boolean, steadiness: Int): String {
         val logs = index.originals(handle)
-        val done = finishVideo(context, input, output, java.io.File(logs, Assembly.IMU), java.io.File(logs, Assembly.FRAMES), steadiness, landscape, steadiedOnGlasses)
+        val done = finishVideo(context, input, output, File(logs, Assembly.IMU), File(logs, Assembly.FRAMES), steadiness, landscape, steadiedOnGlasses)
         return done?.let { "steadied ${it.steadied}, landscape ${it.landscape}" } ?: "nothing to do"
     }
 
     /**
-     * Ask the glasses for a bug report, the way the Meta app does: svc7006 REQUEST_BUG_REPORT. The zip
-     * comes back over airship in the "bugreport" namespace and goes to Download/Visor.
+     * Asks the glasses for a bug report on svc7006; the zip comes over airship to Download/Visor.
+     * [mode] is BugReportParams.mode (field 6.1), null for the glasses' default.
      */
-    /** [mode] is BugReportParams.mode (field 6.1), which the Meta app never sends; null leaves the glasses' default. */
     fun requestBugReport(mode: Int? = null) {
-        val id = java.util.UUID.randomUUID().toString()
-        fun entry(key: String, value: String) = ProtoWriter().string(1, key).string(2, value).build()
-        val request = ProtoWriter()
-            .string(1, "Meta AI")
-            .varint(2, 1)
-            .string(3, "")
-            .string(4, id)
-            .bytes(5, entry("bug_category_label", "visor"))
-            .bytes(5, entry("is_constellation", "false"))
-            .bytes(5, entry("bug_report_id", id))
-            .apply { if (mode != null) bytes(6, ProtoWriter().varint(1, mode.toLong()).build()) }
-            .build()
+        val id = UUID.randomUUID().toString()
+        fun text(field: Int, value: String) = Wire.fieldString(field, value)
+        fun entry(key: String, value: String) = Wire.fieldBytes(5, text(1, key) + text(2, value))
+        val request = text(1, "Meta AI") + Wire.fieldVarintNonZero(2, 1) + text(3, "") + text(4, id) +
+            entry("bug_category_label", "visor") + entry("is_constellation", "false") + entry("bug_report_id", id) +
+            (mode?.let { Wire.fieldBytes(6, Wire.fieldVarintNonZero(1, it.toLong())) } ?: ByteArray(0))
         connection.submit { it.sendOnService(SVC_BUG_REPORTER, MT_REQUEST_BUG_REPORT, request) }
         say("Asked the glasses for a bug report. It comes over airship: minutes over Bluetooth, seconds over Wi-Fi.")
     }
 
     private fun onBugReporter(data: ServiceData) {
-        val f = fields(data.payload)
+        val f = Wire.parse(data.payload)
         when (data.messageType) {
             // RequestBugReportResponse: 1 status (0 success, 1 failure), 2 error message.
             MT_REQUEST_BUG_REPORT_RESPONSE -> say(
-                if (f.long(1) == 0L) "The glasses are making a bug report" else "The glasses refused the bug report: ${f.bytes(2).decodeToString()}",
+                if (f.varint(1) == 0L) "The glasses are making a bug report" else "The glasses refused the bug report: ${f.bytes(2).decodeToString()}",
             )
-            else -> say("Bug reporter: type ${data.messageType}, ${data.payload.size} bytes " + data.payload.take(24).joinToString("") { "%02x".format(it) })
+            else -> say("Bug reporter: type ${data.messageType}, ${data.payload.size} bytes " + data.payload.toHexString(0, minOf(24, data.payload.size)))
         }
     }
 
     private fun keepBugReport(received: Received) {
-        val name = "Visor_bugreport_" + NAME.format(Instant.now()) + ".zip"
+        val name = "Visor_bugreport_" + NAME.format(ZonedDateTime.now()) + ".zip"
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
@@ -596,8 +633,13 @@ class MediaImport(
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
             ?: error("Downloads would not take it")
-        checkNotNull(resolver.openOutputStream(uri)).use { out -> received.file.inputStream().use { it.copyTo(out) } }
-        resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        try {
+            checkNotNull(resolver.openOutputStream(uri)).use { out -> received.file.inputStream().use { it.copyTo(out) } }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        } catch (error: Exception) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
         say("Saved the glasses' bug report, ${sizeWords(received.offer.size)}, to Download/Visor/$name" + if (received.verified) "" else " (checksum did not match)")
     }
 
@@ -642,7 +684,7 @@ class MediaImport(
                 capture != null -> Unit
                 // Not in the list: the full still is always HEIC and the video MP4, the thumbnail JPEG.
                 ext == "heic" || ext == "mp4" -> {
-                    val where = save(received.file, ext, null)
+                    val where = assembly.saveLoose(received.file, video = ext == "mp4")
                     _saved.update { it + 1 }
                     say(if (ext == "mp4") "Saved a video: $where" else "Saved a photo: $where")
                 }
@@ -666,34 +708,7 @@ class MediaImport(
     private fun markDelivered(handle: String, assetId: String) = _captures.update { list ->
         list.map { c ->
             if (c.handle != handle) c
-            else c.copy(assets = c.assets.map { if (it.id == assetId) it.copy(typeCode = it.typeCode or 0x100000L) else it })
-        }
-    }
-
-    private fun save(file: File, ext: String, capture: Capture?): String {
-        val video = ext == "mp4"
-        val taken = capture?.takenAtMillis ?: System.currentTimeMillis()
-        val album = albums.path(video)
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "Visor_" + NAME.format(Instant.ofEpochMilli(taken)) + "." + ext)
-            put(MediaStore.MediaColumns.MIME_TYPE, MIME.getValue(ext))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, album)
-            put(MediaStore.MediaColumns.DATE_TAKEN, taken)
-            put(MediaStore.MediaColumns.IS_PENDING, 1)
-        }
-        val collection = if (video) {
-            MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        } else {
-            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(collection, values) ?: error("the gallery would not take it")
-        try {
-            checkNotNull(resolver.openOutputStream(uri)).use { out -> file.inputStream().use { it.copyTo(out) } }
-            return publish(resolver, uri).also { albums.follow(uri, album, video) }
-        } catch (error: Exception) {
-            resolver.delete(uri, null, null)
-            throw error
+            else c.copy(assets = c.assets.map { if (it.id == assetId) it.asDelivered() else it })
         }
     }
 
@@ -701,18 +716,16 @@ class MediaImport(
     private fun permissionLine(): String {
         val wanted = listOf(
             "NEARBY_WIFI_DEVICES", "ACCESS_LOCAL_NETWORK", "ACCESS_FINE_LOCATION", "BLUETOOTH_CONNECT",
-            "ACCESS_WIFI_STATE", "CHANGE_WIFI_STATE", "INTERNET",
         )
         val states = wanted.joinToString(", ") { name ->
-            val granted = context.checkSelfPermission("android.permission.$name") == android.content.pm.PackageManager.PERMISSION_GRANTED
+            val granted = context.checkSelfPermission("android.permission.$name") == PackageManager.PERMISSION_GRANTED
             "$name ${if (granted) "yes" else "NO"}"
         }
-        return "Android ${android.os.Build.VERSION.SDK_INT}, Wi-Fi ${if (wifiIsOn(context)) "on" else "off"}: $states"
+        return "Android ${Build.VERSION.SDK_INT}, Wi-Fi ${if (wifiIsOn(context)) "on" else "off"}: $states"
     }
 
     private fun say(text: String) {
         lastProgress = now()
-        _status.value = text
         _notes.tryEmit(text)
     }
 
@@ -731,8 +744,7 @@ class MediaImport(
 
         fun now() = System.nanoTime() / 1_000_000
 
-        val NAME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss").withZone(ZoneId.systemDefault())
-        val MIME = mapOf("jpg" to "image/jpeg", "heic" to "image/heic", "mp4" to "video/mp4")
+        val NAME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")
         val HEIF_BRANDS = setOf("heic", "heix", "hevc", "mif1", "msf1", "heim", "heis")
 
         /** jpg, heic or mp4 from the first bytes, or null for anything else (the sensor logs). */

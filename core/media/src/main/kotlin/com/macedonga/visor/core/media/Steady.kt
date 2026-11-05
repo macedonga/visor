@@ -41,18 +41,11 @@ internal class Warps(
     }
 }
 
-/**
- * Stabilization on the phone, for videos the glasses leave shaking (3K, which firmware 7238 does not steady, or any video
- * with two-stage stabilization off), as the Meta app does when it brings one over. The motion log gives the head's
- * rotation at each frame; the path is smoothed and each frame turned by the difference, inside a crop margin.
- *
- * Measured on the Gen 2 against a shaky 1080p walk: the IMU's axes are Android's (x right, y up, z toward the wearer),
- * a frame's moment is its mid-exposure plus 10 ms, and the focal length is 0.78 of the video's width. Within the margin,
- * shake fell by 40 to 60 percent, roll by a third. Rolling shutter is left alone: modelling it, along either axis, made
- * no measurable difference.
- */
+/** Stabilization on the phone from the motion log: the head's path smoothed, each frame turned by the difference inside a crop margin. */
 internal object Steady {
+    // Focal length as a share of the video's width.
     private const val FOCAL_SHARE = 0.78125
+    // A frame's moment is its mid-exposure plus this.
     private const val LAG_NS = 10_000_000L
     private const val ROUNDS = 8
 
@@ -66,7 +59,7 @@ internal object Steady {
         ptsUs: LongArray,
         imu: List<ImuSample>?,
         frames: List<FrameRecord>?,
-        strength: Int,
+        steadiness: Int,
         steady: Boolean,
         landscape: Boolean,
     ): Warps? {
@@ -76,7 +69,7 @@ internal object Steady {
             null
         }
         if (path == null && !landscape) return null
-        val (keep, sigmaSeconds) = if (path != null) feel(strength) else 1.0 to 0.0
+        val (keep, sigmaSeconds) = if (path != null) cropAndSmoothing(steadiness) else 1.0 to 0.0
         val ow = even(width * keep)
         val oh = if (landscape) even(ow * 3.0 / 4.0) else even(height * keep)
         val f = FOCAL_SHARE * width
@@ -85,12 +78,8 @@ internal object Steady {
         return Warps(width, height, ow, oh, ptsUs, turns.map(geometry::matrix), steadied = path != null)
     }
 
-    /**
-     * The share of each side kept, and the seconds of smoothing, for the capture's stabilization: 1 High, 2 Medium,
-     * 3 Low, 0 Auto-select. On the walk they were measured against, any of them took out about half the shake; more
-     * margin buys steadier sway, not less shake.
-     */
-    private fun feel(strength: Int) = when (strength) {
+    /** The share of each side kept and the seconds of smoothing, for 1 High, 2 Medium, 3 Low, 0 Auto-select. */
+    private fun cropAndSmoothing(steadiness: Int) = when (steadiness) {
         1 -> 0.8 to 0.3
         3 -> 0.9 to 0.12
         else -> 0.85 to 0.2
@@ -144,6 +133,7 @@ internal object Steady {
                 val dt = (imu[k].timeNs - imu[k - 1].timeNs) / 1e9
                 val a = imu[k - 1]
                 val b = imu[k]
+                // The IMU's axes are Android's: x right, y up, z toward the wearer.
                 val step = doubleArrayOf((a.gx + b.gx) / 2.0 * dt, -(a.gy + b.gy) / 2.0 * dt, -(a.gz + b.gz) / 2.0 * dt)
                 q += normalize(multiply(q[k - 1], quaternionOf(step)))
             }
@@ -158,11 +148,7 @@ internal object Steady {
             fps = (frames.size - 1) / (span / 1e9)
         }
 
-        /**
-         * Per frame, the turn from where the head was to the smoothed path. Where a frame would leave the margin, the path
-         * is drawn toward the head there and smoothed again, a few times over: the slow sway is followed, and the fast
-         * shake still goes. Scaling each turn down instead kept a fraction of the shake with it.
-         */
+        /** Per frame, the turn onto the smoothed path; where it would leave the crop, the path is pulled toward the head and smoothed again. */
         fun corrections(sigmaSeconds: Double, geometry: Geometry): List<DoubleArray> {
             val sigma = (sigmaSeconds * fps).coerceAtLeast(1.0)
             var path = smooth(at, sigma)

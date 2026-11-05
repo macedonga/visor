@@ -13,31 +13,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
 
-/** A video file, or the [length] bytes at the end of one: a Motion Photo's clip. */
+/** A video file, or the [clipBytes] at the end of one: a Motion Photo's clip. */
 data class ClipSource(val uri: Uri, val clipBytes: Long = 0)
 
-/** One MediaPlayer, as Compose state: whether it is ready and playing, where it is, how big the picture is. */
+/** One MediaPlayer, as Compose state: whether it is ready and playing, and where it is. */
 class Playback internal constructor() {
     var ready by mutableStateOf(false)
         internal set
     var playing by mutableStateOf(false)
         internal set
-    /** True once a frame has been drawn since the last start, so whatever stood in for the video can go. */
+    /** True once the first frame is drawn. */
     var showing by mutableStateOf(false)
         internal set
     var durationMs by mutableLongStateOf(0L)
         internal set
     var positionMs by mutableLongStateOf(0L)
-        internal set
-    var size by mutableStateOf(IntSize.Zero)
         internal set
 
     internal var player: MediaPlayer? = null
@@ -62,28 +58,21 @@ class Playback internal constructor() {
     }
 }
 
-/**
- * A player for [source], released when it leaves. [autoplay] starts it once prepared; [loop] plays it round;
- * [onEnd] hears when it stops at the end.
- */
+/** A player for [source], released when it leaves; [autoplay] starts it once prepared. */
 @Composable
-fun rememberPlayback(source: ClipSource?, autoplay: Boolean, loop: Boolean = false, muted: Boolean = false, onEnd: () -> Unit = {}): Playback {
+fun rememberPlayback(source: ClipSource?, autoplay: Boolean): Playback {
     val context = LocalContext.current
     val playback = remember(source) { Playback() }
-    val ended by rememberUpdatedState(onEnd)
     DisposableEffect(source) {
         val player = source?.let { open(context, it) }
         if (player != null) {
             playback.player = player
             playback.surface?.let { runCatching { player.setSurface(it) } }
-            player.isLooping = loop
-            if (muted) player.setVolume(0f, 0f)
             player.setOnPreparedListener {
                 playback.ready = true
                 playback.durationMs = it.duration.toLong()
                 if (autoplay) playback.play()
             }
-            player.setOnVideoSizeChangedListener { _, w, h -> playback.size = IntSize(w, h) }
             player.setOnInfoListener { _, what, _ ->
                 if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) playback.showing = true
                 false
@@ -91,7 +80,6 @@ fun rememberPlayback(source: ClipSource?, autoplay: Boolean, loop: Boolean = fal
             player.setOnCompletionListener {
                 playback.playing = false
                 playback.positionMs = playback.durationMs
-                ended()
             }
             runCatching { player.prepareAsync() }
         }
@@ -111,19 +99,21 @@ fun rememberPlayback(source: ClipSource?, autoplay: Boolean, loop: Boolean = fal
     return playback
 }
 
-private fun open(context: Context, source: ClipSource): MediaPlayer? = runCatching {
+private fun open(context: Context, source: ClipSource): MediaPlayer? {
     val player = MediaPlayer()
-    if (source.clipBytes > 0) {
-        // A Motion Photo: the MP4 is the last clipBytes of the file.
-        context.contentResolver.openAssetFileDescriptor(source.uri, "r")!!.use { afd ->
-            val total = afd.parcelFileDescriptor.statSize
-            player.setDataSource(afd.fileDescriptor, total - source.clipBytes, source.clipBytes)
+    return runCatching {
+        if (source.clipBytes > 0) {
+            // A Motion Photo: the MP4 is the last clipBytes of the file.
+            context.contentResolver.openAssetFileDescriptor(source.uri, "r")!!.use { afd ->
+                val total = afd.parcelFileDescriptor.statSize
+                player.setDataSource(afd.fileDescriptor, total - source.clipBytes, source.clipBytes)
+            }
+        } else {
+            player.setDataSource(context, source.uri)
         }
-    } else {
-        player.setDataSource(context, source.uri)
-    }
-    player
-}.getOrNull()
+        player
+    }.onFailure { player.release() }.getOrNull()
+}
 
 /** Where [playback] draws. */
 @Composable

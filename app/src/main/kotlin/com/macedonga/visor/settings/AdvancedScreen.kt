@@ -1,16 +1,18 @@
 package com.macedonga.visor.settings
 
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
-import android.os.PersistableBundle
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -21,44 +23,43 @@ import com.macedonga.visor.EventLogKey
 import com.macedonga.visor.FlagsKey
 import com.macedonga.visor.R
 import com.macedonga.visor.SettingsGroupKey
-import com.macedonga.visor.gallery.RoundIcon
+import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.core.settings.GROUPS
+import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.copy
 
-/**
- * Every setting the glasses keep, by the firmware's own groups, and the tools for the link. The groups for glasses
- * with a display come last and dimmed, unless the glasses connected have one.
- */
+/** Every setting by firmware group, other models' groups last and dimmed, then the tools. */
 @Composable
 fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
     val developer by model.developer.on.collectAsStateWithLifecycle()
     val tokenRequired by model.developer.tokenRequired.collectAsStateWithLifecycle()
-    val display = hasDisplay(glasses.info?.build)
-    val all = allKeys(model.settings, state)
-    val changed = all.count { state.changed(it, model.settings.catalogue[it]) }
-    val byGroup = all.groupBy { specOf(model.settings, it).group }
+    val display = isDisplayProduct(rememberProduct(model.settings, model.lastSeen))
+    val byGroup = allKeys(model.settings, state).groupBy { specOf(model.settings, it).group }
     val (own, others) = ALL_GROUPS.filter { byGroup[it] != null }.partition { display || it !in DISPLAY_GROUPS }
 
     SettingsPage(
         stringResource(R.string.advanced_title),
-        stringResource(R.string.advanced_lede, all.size, changed) + " " + (state.readAt?.let { stringResource(R.string.advanced_read_at, timeWords(it)) } ?: ""),
         light = 0.3f,
         actions = {
             if (state.reading) Spinner(Modifier.padding(horizontal = 13.dp))
-            else RoundIcon(VisorIcons.Refresh, stringResource(R.string.advanced_read_again), { model.settings.read(full = true) })
+            else if (glasses.link == LinkState.READY) RoundIcon(VisorIcons.Refresh, stringResource(R.string.advanced_read_again), { model.settings.read(full = true) })
         },
     ) {
         item(key = "groups") {
-            Rows(*own.map { group -> @Composable { GroupRow(group, byGroup[group].orEmpty(), state, model, open) } }.toTypedArray())
+            Rows(own) { group -> GroupRow(group, byGroup[group].orEmpty(), state, model, open) }
         }
         if (others.isNotEmpty()) {
             item(key = "others") {
                 Column {
                     SectionLabel(stringResource(R.string.advanced_other_models))
-                    Rows(*others.map { group -> @Composable { GroupRow(group, byGroup[group].orEmpty(), state, model, open, dim = true) } }.toTypedArray())
-                    Footnote(stringResource(R.string.advanced_other_models_note))
+                    Rows(others) { group -> GroupRow(group, byGroup[group].orEmpty(), state, model, open, dim = true) }
                 }
             }
         }
@@ -66,76 +67,102 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
             Column {
                 SectionLabel(stringResource(R.string.advanced_tools))
                 Rows(
-                    { NavRow(VisorIcons.Flag, stringResource(R.string.settings_flags), stringResource(R.string.settings_flags_sub), onClick = { open(FlagsKey) }, onCard = true) },
-                    { NavRow(VisorIcons.Pulse, stringResource(R.string.settings_diagnostics), stringResource(R.string.settings_diagnostics_sub), onClick = { open(DeviceKey) }, onCard = true) },
-                    { NavRow(VisorIcons.Lines, stringResource(R.string.settings_event_log), stringResource(R.string.settings_event_log_sub), onClick = { open(EventLogKey) }, onCard = true) },
-                    if (display && classicBondOffered) ({ ClassicBondRows() }) else null,
-                    { ToggleRow(stringResource(R.string.settings_developer), developer, { model.developer.set(it) }, sub = stringResource(R.string.settings_developer_sub)) },
-                    if (developer) ({ TokenRow(model.developer) }) else null,
-                    if (developer) ({ ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) }) else null,
+                    { NavRow(VisorIcons.Flag, stringResource(R.string.settings_flags), null, onClick = { open(FlagsKey) }, onCard = true) },
+                    { NavRow(VisorIcons.Pulse, stringResource(R.string.settings_diagnostics), null, onClick = { open(DeviceKey) }, onCard = true) },
+                    { NavRow(VisorIcons.Lines, stringResource(R.string.settings_event_log), null, onClick = { open(EventLogKey) }, onCard = true) },
+                )
+                Spacer(Modifier.height(12.dp))
+                Rows(
+                    // The bond needs a Display connected now.
+                    if (isDisplayBuild(glasses.info?.build) && classicBondOffered) row { ClassicBondRows() } else null,
+                    { ToggleRow(stringResource(R.string.settings_developer), developer, { model.developer.set(it) }) },
+                    if (developer) row { TokenRow(model.developer) } else null,
+                    if (developer) row { ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) } else null,
                 )
             }
         }
     }
 }
 
-/** Developer mode's token: a tap copies it, the arrow makes a new one. */
+/** Developer mode's token: copy it, or replace it after a confirm. */
 @Composable
 private fun TokenRow(developer: DeveloperMode) {
     val token by developer.token.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val host = LocalHost.current
     val copied = stringResource(R.string.mcp_copied)
-    RowFrame(
-        stringResource(R.string.settings_developer_token),
-        onClick = {
-            val clip = ClipData.newPlainText("token", token)
-            clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
-            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
-            host.notice.show(copied)
-        },
-        keyLine = token,
-    ) {
-        RoundIcon(VisorIcons.Refresh, stringResource(R.string.settings_developer_token_new), { developer.renewToken() }, size = 40.dp)
+    var renewing by remember { mutableStateOf(false) }
+    val copyToken = {
+        copy(context, token, "token", sensitive = true)
+        host.notice.show(copied)
+    }
+    RowFrame(stringResource(R.string.settings_developer_token), onClick = copyToken, keyLine = token) {
+        RoundIcon(VisorIcons.Copy, stringResource(R.string.meta_ai_copy), copyToken, size = 40.dp)
+        RoundIcon(VisorIcons.Refresh, stringResource(R.string.settings_developer_token_new), { renewing = true }, size = 40.dp)
+    }
+    if (renewing) {
+        ConfirmSheet(
+            stringResource(R.string.settings_developer_token_new_title), null, stringResource(R.string.settings_developer_token_new),
+            onConfirm = developer::renewToken, onDismiss = { renewing = false },
+        )
     }
 }
 
 @Composable
-private fun GroupRow(group: String, keys: List<String>, state: com.macedonga.visor.core.settings.SettingsState, model: SettingsViewModel, open: (NavKey) -> Unit, dim: Boolean = false) {
+private fun GroupRow(group: String, keys: List<String>, state: SettingsState, model: SettingsViewModel, open: (NavKey) -> Unit, dim: Boolean = false) {
     val changed = keys.count { state.changed(it, model.settings.catalogue[it]) }
     NavRow(
-        null, group,
-        if (changed > 0) stringResource(R.string.advanced_group_sum_changed, keys.size, changed) else stringResource(R.string.advanced_group_sum, keys.size),
+        null, groupTitle(group),
+        if (changed > 0) pluralStringResource(R.plurals.advanced_group_sum_changed, keys.size, keys.size, changed) else pluralStringResource(R.plurals.advanced_group_sum, keys.size, keys.size),
         onClick = { open(SettingsGroupKey(group)) }, dim = dim, onCard = true,
     )
 }
 
-/** One firmware group, every key in it: what the Meta app shows first, its internal knobs after. */
+/** One firmware group, every key in it. */
 @Composable
 fun SettingsGroupScreen(group: String, model: SettingsViewModel = hiltViewModel()) {
-    val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
-    val dim = group in DISPLAY_GROUPS && !hasDisplay(glasses.info?.build)
+    val dim = group in DISPLAY_GROUPS && !isDisplayProduct(rememberProduct(model.settings, model.lastSeen))
     val keys = groupKeys(model.settings, state, group).sortedBy { specOf(model.settings, it).label }
-    val (shown, internal) = keys.partition { specOf(model.settings, it).userFacing }
 
-    SettingsPage(group, if (dim) stringResource(R.string.advanced_other_models_note) else null, light = 0.3f) {
-        if (shown.isNotEmpty()) {
-            item(key = "shown") {
-                Column(Modifier.alpha(if (dim) 0.55f else 1f)) {
-                    SectionLabel(stringResource(R.string.advanced_in_meta_app), Modifier.padding(top = 0.dp))
-                    Rows(*shown.map { key -> @Composable { GlassesRow(key, engineering = true) } }.toTypedArray())
-                }
-            }
-        }
-        if (internal.isNotEmpty()) {
-            item(key = "internal") {
-                Column(Modifier.alpha(if (dim) 0.55f else 1f)) {
-                    SectionLabel(stringResource(R.string.advanced_internal))
-                    Rows(*internal.map { key -> @Composable { GlassesRow(key, engineering = true) } }.toTypedArray())
-                    Footnote(stringResource(R.string.advanced_internal_note))
-                }
+    SettingsPage(groupTitle(group), light = 0.3f, engineering = true) {
+        item(key = "keys") {
+            Column(Modifier.alpha(if (dim) 0.55f else 1f)) {
+                Rows(keys) { GlassesRow(it) }
             }
         }
     }
 }
+
+/** All of a firmware group's keys. */
+internal fun groupKeys(settings: GlassesSettings, state: SettingsState, group: String): List<String> =
+    allKeys(settings, state).filter { specOf(settings, it).group == group }
+
+internal val ALL_GROUPS = GROUPS + OTHER
+
+// The catalogue's English group names stay the ids.
+private val GROUP_TITLES = mapOf(
+    "Glasses" to R.string.group_glasses,
+    "Sound" to R.string.group_sound,
+    "Touch and gestures" to R.string.group_touch,
+    "Camera" to R.string.group_camera,
+    "Video and live" to R.string.group_video,
+    "Meta AI" to R.string.group_meta_ai,
+    "Live AI and translation" to R.string.group_live_ai,
+    "Calls and messages" to R.string.group_calls,
+    "Notifications" to R.string.group_notifications,
+    "Music and media" to R.string.group_media,
+    "Connectivity" to R.string.group_connectivity,
+    "Health and fitness" to R.string.group_health,
+    "Accessibility" to R.string.group_accessibility,
+    "Privacy and data" to R.string.group_privacy,
+    "Updates and system" to R.string.group_updates,
+    "Display" to R.string.group_display,
+    "Neural band gestures" to R.string.group_band,
+    "Developer and tests" to R.string.group_developer,
+    OTHER to R.string.group_other,
+)
+
+/** A group's name in the phone's language. */
+@Composable
+internal fun groupTitle(group: String): String = GROUP_TITLES[group]?.let { stringResource(it) } ?: group

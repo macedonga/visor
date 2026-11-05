@@ -46,9 +46,12 @@ class MetaAiModel @Inject constructor(
     val turns: StateFlow<List<TurnRecord>> = diary.turns
     val memories: StateFlow<List<Memory>> = diary.memories
 
-    val days: StateFlow<List<DiaryDay>> = combine(diary.turns, diary.lines, ::daysOf)
-        .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, daysOf(diary.turns.value, diary.lines.value))
+    // Built only for the screen that reads it.
+    val days: StateFlow<List<DiaryDay>> by lazy {
+        combine(diary.turns, diary.lines, ::daysOf)
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, daysOf(diary.turns.value, diary.lines.value))
+    }
 
     private val _deleted = MutableStateFlow<List<TurnRecord>>(emptyList())
     /** What was just deleted, while it can still be brought back. */
@@ -59,11 +62,18 @@ class MetaAiModel @Inject constructor(
     val forgotten: StateFlow<Memory?> = _forgotten.asStateFlow()
     private var forgetting: Job? = null
 
+    private val _asking = MutableStateFlow<Set<String>>(emptySet())
+    /** Turns asked again from this page, waiting for their new answer however old they are. */
+    val asking: StateFlow<Set<String>> = _asking.asStateFlow()
+
     // A Display asks it as its own turn; other glasses, or none, leave it to the app.
     fun ask(question: String, conversation: String?) =
         assistant.askOnDisplay(question, conversation) ?: assistant.askFromPhone(question, conversation)
 
-    fun askAgain(id: String) = assistant.askAgain(id)
+    fun askAgain(id: String) {
+        _asking.value += id
+        assistant.askAgain(id)
+    }
 
     fun writeLines(date: LocalDate) = assistant.writeLines(date)
 

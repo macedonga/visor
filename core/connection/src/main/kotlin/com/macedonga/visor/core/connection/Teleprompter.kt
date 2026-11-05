@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.connection
 
+import com.macedonga.visor.core.protocol.SVC_TRANSLATION
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.LinkState
 import java.util.UUID
@@ -49,18 +50,18 @@ class Teleprompter(private val connection: GlassesConnection) {
                     wait?.cancel()
                     _state.value = PrompterState()
                 }
-                if (data.serviceId != SVC_COMPANION) return@collect
-                val code = runCatching { Wire.parse(data.payload).varint(1) }.getOrDefault(0L)
+                if (data.serviceId != SVC_STATUS) return@collect
                 when (data.messageType) {
                     // Other apps' starts are answered here too; only the one being waited for counts.
-                    MT_START_APP_RESPONSE -> if (_state.value.phase == PrompterPhase.STARTING) {
+                    SnApp.MT_START_APP_RESPONSE -> if (_state.value.phase == PrompterPhase.STARTING) {
+                        val code = runCatching { Wire.parse(data.payload).varint(1) }.getOrDefault(0L)
                         wait?.cancel()
                         _state.update {
-                            if (code == SNAPP_SUCCESS || code == SNAPP_ALREADY_STARTED) it.copy(phase = PrompterPhase.SHOWING, refusal = null)
+                            if (SnApp.started(code)) it.copy(phase = PrompterPhase.SHOWING, refusal = null)
                             else PrompterState(refusal = code)
                         }
                     }
-                    MT_STOP_APP_RESPONSE -> if (_state.value.phase == PrompterPhase.CLOSING) {
+                    SnApp.MT_STOP_APP_RESPONSE -> if (_state.value.phase == PrompterPhase.CLOSING) {
                         wait?.cancel()
                         _state.value = PrompterState()
                     }
@@ -75,12 +76,14 @@ class Teleprompter(private val connection: GlassesConnection) {
     /** Put [text] on the glasses, or replace what they show. */
     fun show(text: String, look: PrompterLook) {
         if (connection.state.value.link != LinkState.READY) return
-        val data = intent("text", text) + intent("layout_type", if (look.paged) LAYOUT_PAGED else LAYOUT_SCROLL) +
-            intent("text_size_sp", look.sizeSp) + intent("scroll_speed", look.speed) +
-            intent("session_id", UUID.randomUUID().toString()) + intent("app_type", APP_TYPE_NATIVE) +
-            (if (look.followVoice) intent("asr_enabled", 1) else ByteArray(0))
+        val data = listOfNotNull(
+            SnApp.data("text", text), SnApp.data("layout_type", if (look.paged) LAYOUT_PAGED else LAYOUT_SCROLL),
+            SnApp.data("text_size_sp", look.sizeSp), SnApp.data("scroll_speed", look.speed),
+            SnApp.data("session_id", UUID.randomUUID().toString()), SnApp.data("app_type", APP_TYPE_NATIVE),
+            if (look.followVoice) SnApp.data("asr_enabled", 1) else null,
+        )
         _state.update { it.copy(phase = PrompterPhase.STARTING, refusal = null, shown = text, look = look) }
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_START_APP, Wire.fieldVarint(1, APP_TELEPROMPTER) + data) }
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_START_APP, SnApp.app(APP_TELEPROMPTER, data)) }
         // No answer: the start went out, and the glasses may still be drawing it.
         settleAfter { if (it.phase == PrompterPhase.STARTING) it.copy(phase = PrompterPhase.SHOWING) else it }
     }
@@ -88,7 +91,7 @@ class Teleprompter(private val connection: GlassesConnection) {
     fun close() {
         if (_state.value.phase == PrompterPhase.IDLE) return
         _state.update { it.copy(phase = PrompterPhase.CLOSING) }
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_STOP_APP, Wire.fieldVarint(1, APP_TELEPROMPTER)) }
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_STOP_APP, SnApp.app(APP_TELEPROMPTER)) }
         settleAfter { if (it.phase == PrompterPhase.CLOSING) PrompterState() else it }
     }
 
@@ -100,32 +103,12 @@ class Teleprompter(private val connection: GlassesConnection) {
         }
     }
 
-    /** One SNIntentData: the key, then the value in its type's field (3 int, 4 double, 5 bytes). */
-    private fun intent(key: String, value: Int): ByteArray = entry(key, Wire.fieldVarint(3, value.toLong()))
-
-    private fun intent(key: String, value: Double): ByteArray = entry(key, Wire.fieldDouble(4, value))
-
-    private fun intent(key: String, value: String): ByteArray = entry(key, Wire.fieldBytes(5, value.encodeToByteArray()))
-
-    private fun entry(key: String, value: ByteArray): ByteArray = Wire.fieldBytes(3, Wire.fieldBytes(1, key.encodeToByteArray()) + value)
-
-    companion object {
-        const val SNAPP_SUCCESS = 1L
-        const val SNAPP_NOT_ENOUGH_BATTERY = 6L
-        const val SNAPP_THERMAL_THROTTLING = 7L
-        const val SNAPP_ALREADY_STARTED = 12L
-        const val SNAPP_DENIED_BY_PEAK_POWER = 15L
-        private const val SVC_COMPANION = 28
-        private const val SVC_TRANSLATION = 72
-        private const val MT_INVITE_TO_JOIN = 2
-        private const val MT_START_APP = 2000
-        private const val MT_START_APP_RESPONSE = 2001
-        private const val MT_STOP_APP = 2002
-        private const val MT_STOP_APP_RESPONSE = 2003
-        private const val APP_TELEPROMPTER = 35L
-        private const val LAYOUT_SCROLL = 0
-        private const val LAYOUT_PAGED = 1
-        private const val APP_TYPE_NATIVE = 0
-        private const val ANSWER_MS = 7_000L
+    private companion object {
+        const val MT_INVITE_TO_JOIN = 2
+        const val APP_TELEPROMPTER = 35L
+        const val LAYOUT_SCROLL = 0
+        const val LAYOUT_PAGED = 1
+        const val APP_TYPE_NATIVE = 0
+        const val ANSWER_MS = 7_000L
     }
 }

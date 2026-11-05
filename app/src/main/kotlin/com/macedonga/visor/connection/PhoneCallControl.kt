@@ -1,12 +1,11 @@
 package com.macedonga.visor.connection
 
 import android.Manifest
-import android.app.ActivityManager
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -18,10 +17,11 @@ import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.log.EventLog
-import com.macedonga.visor.phone.companionAssociated
+import com.macedonga.visor.notify.GlassesNotification
+import com.macedonga.visor.phone.mayOpenApps
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 
 /**
@@ -35,7 +35,7 @@ import javax.inject.Singleton
 class PhoneCallControl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) {
     suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         if (message.info.flags.isClosed) return
@@ -55,7 +55,7 @@ class PhoneCallControl @Inject constructor(
     /** CallState on the phone's own line: ringing in as RINGING_INBOUND, a call under way as ACTIVE, else none. */
     @Suppress("DEPRECATION")
     private suspend fun callState(reply: Int, mux: DataXConnection) {
-        if (!allowed(Manifest.permission.READ_PHONE_STATE)) {
+        if (!context.allows(Manifest.permission.READ_PHONE_STATE)) {
             return send(STATE_URL, reply, mux, MT_CALL_STATE_RESPONSE, ByteArray(0), "phone state not allowed", failed = true)
         }
         val state = runCatching { context.getSystemService(TelephonyManager::class.java)?.callState }.getOrNull()
@@ -66,27 +66,28 @@ class PhoneCallControl @Inject constructor(
         }
         // CallState {1 call id, 2 provider, 3 state}, in GetCallStatesResponse {1}.
         val body = if (entry == null) ByteArray(0) else
-            Wire.fieldBytes(1, Wire.fieldBytes(1, CELLULAR_CALL_ID.encodeToByteArray()) + Wire.fieldVarint(2, NATIVE) + Wire.fieldVarint(3, entry))
+            Wire.fieldBytes(1, Wire.fieldString(1, CELLULAR_CALL_ID) + Wire.fieldVarint(2, GlassesNotification.PROVIDER_NATIVE.toLong()) + Wire.fieldVarint(3, entry))
         send(STATE_URL, reply, mux, MT_CALL_STATE_RESPONSE, body, if (entry == null) "no call" else "call state $entry")
     }
 
     /** OutgoingCallRequest {1 provider, 2 callee, 7 request id}. */
     private suspend fun outgoing(request: Wire.Fields, reply: Int, mux: DataXConnection) {
-        val provider = request.varint(1)
+        val provider = request.varint(1).toInt()
         val callee = request.bytes(2).decodeToString()
         val (result, error) = when (provider) {
-            NATIVE -> placeCall(callee)
-            WHATSAPP_PROVIDER -> startWhatsApp(callee)
+            GlassesNotification.PROVIDER_NATIVE -> placeCall(callee)
+            GlassesNotification.PROVIDER_WHATSAPP -> startWhatsApp(callee)
             else -> RESULT_UNKNOWN to "Calls on this provider are not supported"
         }
         val body = Wire.fieldBytes(1, request.bytes(7)) + Wire.fieldVarint(2, result) +
-            (error?.let { Wire.fieldBytes(3, it.encodeToByteArray()) } ?: ByteArray(0))
+            (error?.let { Wire.fieldString(3, it) } ?: ByteArray(0))
         send("calls://outgoing/$provider", reply, mux, MT_OUTGOING_CALL_RESPONSE, body, error ?: "call started", failed = result != RESULT_OK)
     }
 
     /** Telecom takes the call; the call itself rides HFP to the glasses. */
+    @SuppressLint("MissingPermission") // checked with allows(), and a refusal is caught
     private fun placeCall(number: String): Pair<Long, String?> {
-        if (!allowed(Manifest.permission.CALL_PHONE)) return ERROR_PERMISSION to "Call permission is not allowed in Visor"
+        if (!context.allows(Manifest.permission.CALL_PHONE)) return ERROR_PERMISSION to "Call permission is not allowed in Visor"
         if (number.isBlank()) return RESULT_UNKNOWN to "No number to call"
         return try {
             requireNotNull(context.getSystemService(TelecomManager::class.java)).placeCall(Uri.fromParts("tel", number, null), Bundle())
@@ -98,8 +99,8 @@ class PhoneCallControl @Inject constructor(
 
     /** Android has no call API for WhatsApp, so this opens the contact's WhatsApp call row, which starts the call. */
     private fun startWhatsApp(number: String): Pair<Long, String?> {
-        if (!allowed(Manifest.permission.READ_CONTACTS)) return ERROR_PERMISSION to "Contacts permission is not allowed in Visor"
-        if (!startable()) return RESULT_UNKNOWN to "Visor cannot open WhatsApp from the background"
+        if (!context.allows(Manifest.permission.READ_CONTACTS)) return ERROR_PERMISSION to "Contacts permission is not allowed in Visor"
+        if (!mayOpenApps(context)) return RESULT_UNKNOWN to "Visor cannot open WhatsApp from the background"
         val row = whatsAppRow(number) ?: return RESULT_UNKNOWN to "No WhatsApp call for this number"
         val intent = Intent(Intent.ACTION_VIEW, ContentUris.withAppendedId(ContactsContract.Data.CONTENT_URI, row)).setPackage(WHATSAPP_PACKAGE)
         return try {
@@ -128,11 +129,12 @@ class PhoneCallControl @Inject constructor(
 
     /** AnswerIncomingCallRequest {1 provider, 2 request id, 3 call id}: the ringing cellular call is taken. */
     @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission") // checked with allows(), and a refusal is caught
     private suspend fun answer(request: Wire.Fields, reply: Int, mux: DataXConnection) {
-        val provider = request.varint(1)
+        val provider = request.varint(1).toInt()
         val error = when {
-            provider != NATIVE -> "Answering on this provider is not supported"
-            !allowed(Manifest.permission.ANSWER_PHONE_CALLS) || !allowed(Manifest.permission.READ_PHONE_STATE) ->
+            provider != GlassesNotification.PROVIDER_NATIVE -> "Answering on this provider is not supported"
+            !context.allows(Manifest.permission.ANSWER_PHONE_CALLS) || !context.allows(Manifest.permission.READ_PHONE_STATE) ->
                 "Call permission is not allowed in Visor"
             !ringing() -> "No ringing call"
             else -> try {
@@ -142,7 +144,7 @@ class PhoneCallControl @Inject constructor(
                 e.message ?: e.toString()
             }
         }
-        val body = Wire.fieldBytes(1, request.bytes(2)) + Wire.fieldVarint(2, if (error == null) RESULT_OK else 0L)
+        val body = Wire.fieldBytes(1, request.bytes(2)) + Wire.fieldVarint(2, if (error == null) 1L else 0L)
         send("calls://answer/$provider", reply, mux, MT_ANSWER_INCOMING_CALL_RESPONSE, body, error ?: "call answered", failed = error != null)
     }
 
@@ -170,27 +172,22 @@ class PhoneCallControl @Inject constructor(
 
     private fun bluetoothOn(): Boolean = context.getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
 
-    /** Android lets an app start an activity from the screen or as the glasses' companion, as PhoneMedia does. */
-    private fun startable(): Boolean = onScreen() || companionAssociated(context)
-
-    private fun onScreen(): Boolean = ActivityManager.RunningAppProcessInfo()
-        .also(ActivityManager::getMyMemoryState).importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-
-    private fun allowed(permission: String) = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-
     private suspend fun send(url: String, reply: Int, mux: DataXConnection, type: Int, body: ByteArray, outcome: String, failed: Boolean = false) {
-        val id = requests.start(url, SOURCE_CALLS)
+        val id = requests.start(url, RequestSource.CALLS)
         // The glasses may have closed the channel by now; the answer is theirs to miss.
         runCatching { mux.send(reply, body, messageType = type) }
         requests.finish(id, outcome, failed, bytes = body.size.toLong())
-        log.get().add("Calls: $outcome")
+        if (failed || type == MT_OUTGOING_CALL_RESPONSE || type == MT_ANSWER_INCOMING_CALL_RESPONSE) log.add("Calls: $outcome")
     }
 
     private fun signal(value: Long) = if (value == SIGNAL_PASS) "pass" else "fail"
 
     companion object {
         /** The types this class answers. PhoneMessages hands them here before its own checks. */
-        val TYPES = setOf(3, 4, 6, 13, 22, 38, 59)
+        val TYPES = setOf(
+            MT_CALL_STATE_REQUEST, MT_OUTGOING_CALL_REQUEST, MT_CALL_ENGINE_SUBSCRIPTION, MT_OUTGOING_ERROR_LISTENER,
+            MT_CALLING_SVC_SUBSCRIBE, MT_ANSWER_INCOMING_CALL_REQUEST, MT_COMMS_HEALTH_REQUEST,
+        )
         private const val MT_CALL_STATE_REQUEST = 3
         private const val MT_OUTGOING_CALL_REQUEST = 4
         private const val MT_CALL_ENGINE_SUBSCRIPTION = 6
@@ -210,14 +207,11 @@ class PhoneCallControl @Inject constructor(
         private const val RESULT_UNKNOWN = 12L
         private const val WHATSAPP_PACKAGE = "com.whatsapp"
         private const val WHATSAPP_CALL = "vnd.android.cursor.item/vnd.com.whatsapp.voip.call"
-        private const val NATIVE = 3L
-        private const val WHATSAPP_PROVIDER = 2L
         private const val STATE_RINGING_INBOUND = 1L
         private const val STATE_ACTIVE = 3L
         private const val CELLULAR_CALL_ID = "cellular"
         private const val STATE_URL = "calls://state"
         private const val SIGNAL_PASS = 1L
         private const val SIGNAL_FAIL = 2L
-        private const val SOURCE_CALLS = -5
     }
 }

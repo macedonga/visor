@@ -1,11 +1,12 @@
 package com.macedonga.visor.core.assistant
 
+import com.macedonga.visor.core.connection.SnApp
 import com.macedonga.visor.core.protocol.Thrift
 import com.macedonga.visor.core.protocol.ThriftWriter
-import com.macedonga.visor.core.protocol.Wire
+import java.util.UUID
 import java.util.zip.Inflater
 
-/** svc15, Oxide: the assistant. From lensbreak/services/assistant.py and docs/protocol/assistant.md. */
+/** svc15, Oxide: the assistant. */
 const val SVC_ASSISTANT = 15
 
 internal const val MT_PAIRED_DEVICE_ANDROID = 11
@@ -16,12 +17,17 @@ internal const val MT_SEGMENTED_HEADER = 1002
 internal const val MT_SEGMENTED_BUFFER = 1003
 internal const val MT_NET_EVENT = 1010
 internal const val MT_DEVICE_ACTIVE = 1016
+internal const val MT_START_INTERACTION = 1023
 internal const val MT_RUNNING_LOCALE = 1026
 // The glasses' notice that a notification reached their assistant, once per session: {1 its hashCode as text}.
 internal const val MT_INCOMING_NOTIFICATION_RESPONSE = 1027
+internal const val MT_TIME_STRETCH_ENABLED = 1028
 internal const val MT_NUM_OF_DEVICES_PAIRED = 1029
 internal const val MT_AIR_RESOURCES_UNAVAILABLE = 1031
 internal const val MT_AIR_RESOURCES_AVAILABLE = 1032
+internal const val MT_TTS_BUFFER_CONFIG = 1033
+internal const val MT_MMAI_ENABLED = 1036
+internal const val MT_ASSISTANT_READY = 1037
 internal const val MT_LIVE_MODE_AIR_RESOURCES_UNAVAILABLE = 1038
 internal const val MT_LIVE_MODE_AIR_RESOURCES_AVAILABLE = 1039
 internal const val MT_INIT_STREAM_REQUEST = 5000
@@ -30,17 +36,15 @@ internal const val MT_STREAM_HEADER = 5002
 internal const val MT_STREAM_AUDIO = 5003
 internal const val MT_STREAM_STATUS = 5005
 internal const val MT_STREAM_END = 6000
-internal const val MT_START_INTERACTION = 1023
+internal const val MT_STREAM_CONSUMED = 6001
 internal const val MT_ENVELOPE = 9000
 internal const val MT_ENVELOPE_ACK = 9001
 
-// NetEvent ids, named from the glasses' own EventId table (libassistantruntime.so, the value-to-index
-// table beside the names; all 206 are in events.tsv). Several are not what lensbreak called them,
-// but every send below is byte for byte the one the glasses accepted from it.
+// NetEvent ids, as the glasses' EventId table names them (events.tsv).
 internal const val EV_FINAL_TRANSCRIPTION = 52
 internal const val EV_VOICE_ACTION_RESPONSE = 53
-internal const val EV_FULFILLMENT_REQUEST = 57
 internal const val EV_ACTION_FULFILLMENT_REQUEST = 55
+internal const val EV_FULFILLMENT_REQUEST = 57
 internal const val EV_MWA_VOICE_INTERACTION_CLOSE_REQUEST = 59
 internal const val EV_MWA_VOICE_INTERACTION_COMPLETE = 60
 internal const val EV_PARTIAL_VOICE_INTERACTION_FULFILLMENT_RESPONSE = 61
@@ -54,16 +58,16 @@ internal const val EV_LIVE_AI_STREAM_INITIATION_ACK = 261
 internal const val EV_LIVE_AI_CLIENT_RECEIVED_FIRST_FRAME = 262
 internal const val EV_SERVER_CONNECTION_STATUS = 263
 internal const val EV_MWA_INTERACTION_CREATION_SUCCESS = 265
-internal const val EV_LIVE_AI_STATE_UPDATE = 264
 internal const val EV_SESSION_MODE_UPDATE_RESPONSE = 289
 internal const val EV_FRAME_KEEP_ALIVE = 302
 internal const val EV_FRAME_KEEP_ALIVE_RESPONSE = 304
-internal const val EV_REMOTE_INTERACTION_COMPLETE = 360
 internal const val EV_DEVICE_VOICE_STATE = 307
+internal const val EV_WW_VERIFICATION_COMPLETE = 323
 internal const val EV_SESSION_STATE_BROADCAST = 333
 internal const val EV_START_REMOTE_INTERACTION = 337
 internal const val EV_SESSION_STATE_UPDATE = 339
 internal const val EV_ON_PHONE_UNDERSTANDING = 342
+internal const val EV_REMOTE_INTERACTION_COMPLETE = 360
 internal const val EV_TTS_START_INFO = 388
 internal const val EV_TTS_END_INFO = 389
 internal const val EV_KEEP_AIR_SESSION_ALIVE = 392
@@ -84,7 +88,7 @@ internal fun eventName(id: Int): String = EVENT_NAMES[id] ?: "event $id"
 private val EVENT_NAMES: Map<Int, String> by lazy {
     val stream = Assistant::class.java.getResourceAsStream("events.tsv") ?: return@lazy emptyMap()
     stream.bufferedReader().useLines { lines ->
-        lines.mapNotNull { line -> line.split('	').takeIf { it.size == 2 }?.let { it[0].toInt() to it[1] } }.toMap()
+        lines.mapNotNull { line -> line.split('\t').takeIf { it.size == 2 }?.let { it[0].toInt() to it[1] } }.toMap()
     }
 }
 
@@ -94,9 +98,7 @@ internal const val REPLY_INTENT = "IN:GET_WEATHER"
  * svc28 SNIntent (2300) for the Display's typed-question receiver in SystemUI: {1 action, 2 {1 "text_query", 5 text}}.
  * svc28 sends an action it does not name on as a broadcast, the data as its extras.
  */
-internal fun textQueryIntent(text: String): ByteArray =
-    Wire.fieldBytes(1, TEXT_QUERY_ACTION.encodeToByteArray()) +
-        Wire.fieldBytes(2, Wire.fieldBytes(1, TEXT_QUERY_KEY.encodeToByteArray()) + Wire.fieldBytes(5, text.encodeToByteArray()))
+internal fun textQueryIntent(text: String): ByteArray = SnApp.intent(TEXT_QUERY_ACTION, listOf(SnApp.data(TEXT_QUERY_KEY, text)))
 
 private const val TEXT_QUERY_ACTION = "com.meta.smartglass.app.systemui.assistant.ACTION_TEXT_QUERY_OVERLAY"
 private const val TEXT_QUERY_KEY = "text_query"
@@ -107,6 +109,17 @@ private const val TEXT_QUERY_KEY = "text_query"
  */
 internal fun netEvent(eventId: Int, body: ByteArray): ByteArray =
     ThriftWriter().i32(1, eventId).str(2, body).bool(3, false).i64(4, body.size.toLong()).bool(11, false).done()
+
+internal const val SERVER_HOST = "prod.facebookvirtualassistant.com"
+
+/** How the server answers a new interaction: created, then connected twice. */
+internal fun serverHello(id: String): List<Pair<Int, ByteArray>> = listOf(
+    EV_MWA_INTERACTION_CREATION_SUCCESS to ThriftWriter().str(1, id).bool(2, true).bool(3, false)
+        .str(4, UUID.randomUUID().toString().uppercase()).str(5, SERVER_HOST)
+        .str(6, "ble").str(10, "${System.currentTimeMillis()}-${UUID.randomUUID()}").bool(11, false).bool(13, true).bool(14, false).done(),
+    EV_SERVER_CONNECTION_STATUS to ThriftWriter().str(1, id).bool(2, false).bool(3, false).i32(4, 1).bool(7, false).done(),
+    EV_SERVER_CONNECTION_STATUS to ThriftWriter().str(1, id).bool(2, true).bool(3, false).i32(4, 2).done(),
+)
 
 internal class NetEvent(val id: Int, val body: ByteArray)
 
@@ -141,12 +154,15 @@ private fun inflate(data: ByteArray): ByteArray {
     inflater.setInput(data)
     val out = java.io.ByteArrayOutputStream()
     val buffer = ByteArray(8192)
-    while (!inflater.finished()) {
-        val n = inflater.inflate(buffer)
-        if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
-        out.write(buffer, 0, n)
+    try {
+        while (!inflater.finished()) {
+            val n = inflater.inflate(buffer)
+            if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
+            out.write(buffer, 0, n)
+        }
+    } finally {
+        inflater.end()
     }
-    inflater.end()
     return out.toByteArray()
 }
 

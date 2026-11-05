@@ -2,6 +2,7 @@ package com.macedonga.visor.core.settings
 
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.LinkState
@@ -41,27 +42,24 @@ data class SettingInfo(
     val kind: Kind,
     val default: String?,
     val namespace: String?,
-    // This firmware's settingsservice names it. A write to one it does not is acked and may do nothing.
+    // This firmware's settingsservice names it.
     val parsed: Boolean,
 ) {
-    // No svc31 field, or one this firmware's settingsservice does not name (it acks and drops those):
-    // written into the glasses' RLDrive store instead, where every key lives.
+    // No svc31 field, or one this firmware acks and drops: written into RLDrive, where every key lives.
     val viaDrive: Boolean get() = this.field == null || !parsed
 
     /** The RLDrive namespace a write goes to: the schema's, else the one the glasses file unknown keys under. */
     val driveNamespace: String get() = namespace ?: "individual_device_settings"
-    val writable: Boolean get() = kind in WRITABLE && (this.field != null || viaDrive) && key !in PROTECTED
+    val writable: Boolean get() = kind in WRITABLE && key !in PROTECTED
 }
 
 private val WRITABLE = setOf(Kind.BOOL, Kind.INT, Kind.STR, Kind.FLOAT)
 
 // The one key Visor never writes: the skin-temperature controller uses it to shut hot glasses down.
-private val PROTECTED = mapOf(
-    "sg_disable_thermal_shutdown" to "It turns off the shutdown that stops the glasses getting hot enough to burn skin.",
-)
+private val PROTECTED = setOf("sg_disable_thermal_shutdown")
 
-/** Why Visor will not write [key], or null when it will. */
-fun protectedReason(key: String): String? = PROTECTED[key]
+/** Visor will not write [key]. */
+fun isProtected(key: String): Boolean = key in PROTECTED
 
 data class SettingsState(
     // Key to raw text, for every setting someone has set. Anything else is at its default.
@@ -72,25 +70,21 @@ data class SettingsState(
     val pending: Map<String, String> = emptyMap(),
     // Written, read back, and still the old value.
     val kept: Set<String> = emptySet(),
-    // Written to tidy up, not asked for on screen: how the glasses answer is not shown.
+    // Written by writeQuietly: how the glasses answer is not shown.
     val quiet: Set<String> = emptySet(),
-    val problem: String = "",
     // The Meta product id of the glasses last connected (266 for Ray-Ban Meta Gen 2), for what the catalogue offers.
     val product: Int? = null,
     // The serial of the pair these are, so a reader never takes them for another's.
     val pair: String? = null,
 )
 
-/**
- * Reads the glasses' settings over RLDrive and writes them on svc31. A full read at every connect,
- * then a delta (what moved since the versions last seen) after each write.
- */
+/** The glasses' settings: read over RLDrive (in full at connect, a delta after each write), written on svc31 or into RLDrive. */
 class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveResponder) {
 
-    val catalogue: Map<String, SettingInfo> = loadCatalogue()
+    val catalogue: Map<String, SettingInfo> by lazy { loadCatalogue() }
 
     /** Label, group and control for each key, from settings_ui.json. */
-    val specs: Map<String, SettingSpec> = loadSpecs()
+    val specs: Map<String, SettingSpec> by lazy { loadSpecs() }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -131,8 +125,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
 
     private class Sync(
         val waiting: MutableMap<String, String>,
-        val push: Map<String, Map<String, String>> = emptyMap(),
-        val pushObjects: Map<String, List<PushObject>> = emptyMap(),
+        val push: Map<String, List<PushObject>> = emptyMap(),
     ) {
         val objects = ConcurrentHashMap<String, MutableList<DriveObject>>()
         val versions = ConcurrentHashMap<String, Versions>()
@@ -140,6 +133,8 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
     }
 
     init {
+        // The catalogue parses off the main thread.
+        scope.launch { catalogue.size + specs.size }
         drive.handler = ::onReply
         // Another pair's settings are not these: what was read goes, and the next read is a full one.
         scope.launch {
@@ -152,7 +147,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
                     retried.clear()
                     writtenAt.clear()
                     peers.clear()
-                    _state.value = SettingsState(pair = serial)
+                    _state.value = SettingsState(pair = serial, product = productId(connection.state.value.takeIf { it.target?.serial == serial }?.info?.build))
                 }
             }
         }
@@ -193,7 +188,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         retried.remove(key)
         _state.update { it.copy(pending = it.pending + (key to value), kept = it.kept - key, quiet = it.quiet - key) }
         connection.submit { it.sendOnService(SVC_SETTINGS, MT_SYNC_DATA, payload) }
-        say("Wrote $key = $value")
+        say("Wrote $key = ${shown(key, value)}")
         // The ack starts a read too; this one settles the write if the ack never comes.
         scope.launch {
             delay(SETTLE_MILLIS + 500)
@@ -202,7 +197,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         return true
     }
 
-    /** A write to tidy up what an old build left behind, whose answer nobody needs to see. */
+    /** A write whose outcome the screens do not show. */
     fun writeQuietly(key: String, value: String): Boolean =
         write(key, value).also { sent -> if (sent) _state.update { it.copy(quiet = it.quiet + key) } }
 
@@ -212,15 +207,16 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
      * namespace is not known.
      */
     fun writeDrive(key: String, value: String, namespaceName: String? = null): Boolean {
+        if (key in PROTECTED) return false
         val base = namespaceName ?: catalogue[key]?.driveNamespace ?: return false
         val uuid = connection.state.value.info?.deviceUuid.orEmpty()
         if (connection.state.value.link != LinkState.READY) return false
         val namespace = if (base in SCOPED_NAMESPACES && uuid.isNotEmpty()) "$uuid@$base" else base
         writtenAt[key] = System.currentTimeMillis()
         _state.update { it.copy(pending = it.pending + (key to value), kept = it.kept - key, quiet = it.quiet - key) }
-        say("Writing $key = $value into $namespace")
+        say("Writing $key = ${shown(key, value)} into $namespace")
         scope.launch {
-            reads.withLock { readNow(full = false, push = mapOf(namespace to mapOf(key to value))) }
+            reads.withLock { readNow(full = false, push = mapOf(namespace to listOf(PushObject(key, TYPE_KV, value.toByteArray())))) }
             delay(1_000)
             read()
         }
@@ -229,29 +225,26 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
 
     /**
      * Every object the glasses hold in [namespace], read once, handing them [objects] on the way as
-     * another replica would; for namespaces beyond the settings ones (contacts).
+     * another replica would; for namespaces beyond the settings ones (contacts). Null when the glasses do not answer.
      */
-    suspend fun readNamespace(namespace: String, objects: List<PushObject> = emptyList()): List<DriveObject> = reads.withLock {
-        if (connection.state.value.link != LinkState.READY) return emptyList()
+    suspend fun readNamespace(namespace: String, objects: List<PushObject> = emptyList()): List<DriveObject>? = reads.withLock {
+        if (connection.state.value.link != LinkState.READY) return null
         val id = UUID.randomUUID().toString()
-        val s = Sync(ConcurrentHashMap(mapOf(id to namespace)), pushObjects = mapOf(namespace to objects))
+        val s = Sync(ConcurrentHashMap(mapOf(id to namespace)), push = mapOf(namespace to objects))
         sync = s
-        connection.submit { it.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, buildSync(namespace, id, 0, types = listOf(TYPE_KV, "contact", "contact_ranks", "sync_metadata"))) }
-        withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() }
+        connection.submit { it.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, buildSync(namespace, id, 0, types = listOf(TYPE_KV, TYPE_CONTACT, "contact_ranks", "sync_metadata"))) }
+        val finished = withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() } != null
         sync = null
+        // Round 1 holds every object; without it what they hold is not known.
+        if (!finished && !s.versions.containsKey(namespace)) return null
         s.objects[namespace]?.toList().orEmpty()
     }
 
-    private suspend fun readNow(full: Boolean, push: Map<String, Map<String, String>> = emptyMap()) {
+    private suspend fun readNow(full: Boolean, push: Map<String, List<PushObject>> = emptyMap()) {
         val glasses = connection.state.value
         if (glasses.link != LinkState.READY) return
         val uuid = glasses.info?.deviceUuid.orEmpty()
-        // Two namespaces are named after the device. Asking for one that does not exist creates it.
-        val namespaces = if (uuid.isEmpty()) {
-            DEVICE_NAMESPACES
-        } else {
-            SCOPED_NAMESPACES.map { "$uuid@$it" } + DEVICE_NAMESPACES
-        }
+        val namespaces = namespacesOf(uuid)
         val known = if (full) emptyMap() else versions
         val requests = namespaces.associateBy { UUID.randomUUID().toString() }
         val s = Sync(ConcurrentHashMap(requests), push)
@@ -269,15 +262,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val now = System.currentTimeMillis()
         val objects = s.objects.mapValues { (_, list) -> synchronized(list) { list.toList() } }
         val stored = merge(objects, s.versions, full) {
-            it.copy(
-                reading = false,
-                readAt = if (finished || changed > 0) now else it.readAt,
-                problem = when {
-                    !finished && s.objects.isEmpty() -> "The glasses did not answer the settings read."
-                    uuid.isEmpty() -> "The glasses did not give their device id, so most settings show their defaults."
-                    else -> ""
-                },
-            )
+            it.copy(reading = false, readAt = if (finished || changed > 0) now else it.readAt)
         }
         say(
             (if (full) "Read" else "Re-read") + " settings: $changed objects from ${s.objects.size} of ${namespaces.size} namespaces" +
@@ -286,13 +271,12 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         // The glasses leave the factory with Meta AI off and nothing in RLDrive; the Meta app's setup turns it on.
         if (full && finished && uuid.isNotEmpty() && ASSISTANT_ENABLED !in stored) {
             say("Meta AI was never turned on on these glasses; turning it on")
-            scope.launch { writeDrive(ASSISTANT_ENABLED, "true") }
+            writeDrive(ASSISTANT_ENABLED, "true")
         }
         // The Meta app turns two-stage stabilization on at every connect for these models; off, video is not stabilized.
-        val twoStage = stored[TWO_STAGE_EIS] ?: catalogue[TWO_STAGE_EIS]?.default
-        if (full && finished && _state.value.product in TWO_STAGE_EIS_PRODUCTS && !same(Kind.BOOL, twoStage, "true")) {
+        if (full && finished && _state.value.product in TWO_STAGE_EIS_PRODUCTS && !asBool(value(TWO_STAGE_EIS))) {
             say("Turning on two-stage video stabilization, as the Meta app does")
-            scope.launch { writeQuietly(TWO_STAGE_EIS, "true") }
+            writeQuietly(TWO_STAGE_EIS, "true")
         }
     }
 
@@ -325,22 +309,21 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val pending = _state.value.pending
         val settled = pending.filter { (key, want) -> same(catalogue[key]?.kind, stored[key] ?: catalogue[key]?.default, want) }
         val kept = pending.keys.filter { it !in settled && now - (writtenAt[it] ?: now) > SETTLE_MILLIS }
-        settled.forEach { (key, want) -> say("$key is now $want") }
-        kept.forEach { key -> say("The glasses kept $key at ${stored[key] ?: catalogue[key]?.default}") }
+        settled.forEach { (key, want) -> say("$key is now ${shown(key, want)}") }
+        kept.forEach { key -> say("The glasses kept $key at ${shown(key, stored[key] ?: catalogue[key]?.default)}") }
         // An svc31 write the settings service took and did not apply goes once more straight into the store.
         val retry = kept.filter { key -> catalogue[key]?.viaDrive == false && retried.add(key) }.associateWith { pending.getValue(it) }
         _state.update {
             more(it.copy(stored = stored, pending = it.pending - settled.keys - kept.toSet(), kept = it.kept + kept))
         }
-        retry.forEach { (key, want) -> scope.launch { writeDrive(key, want) } }
+        retry.forEach { (key, want) -> writeDrive(key, want) }
         return stored
     }
 
-    private fun tracked(namespace: String): Boolean {
-        val uuid = connection.state.value.info?.deviceUuid.orEmpty()
-        return namespace in DEVICE_NAMESPACES ||
-            (uuid.isNotEmpty() && SCOPED_NAMESPACES.any { namespace == "$uuid@$it" })
-    }
+    // Two namespaces are named after the device. Asking for one that does not exist creates it.
+    private fun namespacesOf(uuid: String) = SCOPED_NAMESPACES.takeIf { uuid.isNotEmpty() }.orEmpty().map { "$uuid@$it" } + DEVICE_NAMESPACES
+
+    private fun tracked(namespace: String) = namespace in namespacesOf(connection.state.value.info?.deviceUuid.orEmpty())
 
     /** Round 0 of a sync the Display started: claim what Visor last saw, so round 2 brings what changed since. */
     private suspend fun answerPeer(round0: SyncReply, link: DataXConnection) {
@@ -378,7 +361,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val now = System.currentTimeMillis()
         val stored = merge(mapOf(namespace to round2.objects), seen, full = false) { it.copy(readAt = now) }
         for (key in round2.objects.filter { it.type == TYPE_KV }.map { it.uri }.distinct()) {
-            if (stored[key] != before[key]) say("Glasses changed $key = ${stored[key] ?: catalogue[key]?.default}")
+            if (stored[key] != before[key]) say("Glasses changed $key = ${shown(key, stored[key] ?: catalogue[key]?.default)}")
         }
     }
 
@@ -398,7 +381,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
             // Round 2 echoes their versions back. Stopping at round 1 leaves the sync open on their side.
             val round2 = buildSync(
                 namespace, reply.requestId, 2, reply.versions, (reply.versions.keys + TYPE_KV).distinct(),
-                s.push[namespace].orEmpty(), s.pushObjects[namespace].orEmpty(),
+                objects = s.push[namespace].orEmpty(),
             )
             chunks(round2).forEach { link.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, it) }
         } else if (reply.terminated && reply.versions.isNotEmpty()) {
@@ -413,6 +396,9 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
     private fun say(text: String) {
         _notes.tryEmit(text)
     }
+
+    // Passwords stay out of the event log.
+    private fun shown(key: String, value: String?) = if ((specs[key]?.control as? Control.Text)?.what == "password") "***" else value
 
     companion object {
         private const val READ_TIMEOUT_MILLIS = 8_000L
@@ -447,12 +433,9 @@ fun encodeWrite(info: SettingInfo, value: String): ByteArray? {
         Kind.BOOL -> Wire.fieldVarint(field, if (asBool(value)) 1 else 0)
         // Unsigned, so a negative int goes out as protobuf's ten-byte two's complement.
         Kind.INT -> value.trim().toLongOrNull()?.let { Wire.fieldVarintUnsigned(field, it) }
-        Kind.STR -> Wire.fieldBytes(field, value.toByteArray())
+        Kind.STR -> Wire.fieldString(field, value)
         // SettingsSyncData keeps these as double: fixed64, wire type 1.
-        Kind.FLOAT -> value.trim().toDoubleOrNull()?.let {
-            Wire.encodeVarint((field.toLong() shl 3) or 1) +
-                java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putDouble(it).array()
-        }
+        Kind.FLOAT -> value.trim().toDoubleOrNull()?.let { Wire.fieldDouble(field, it) }
         else -> null
     }
 }

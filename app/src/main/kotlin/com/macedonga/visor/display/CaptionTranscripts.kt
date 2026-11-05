@@ -3,6 +3,7 @@ package com.macedonga.visor.display
 import android.content.Context
 import com.macedonga.visor.core.connection.CaptionLine
 import com.macedonga.visor.core.connection.Captions
+import com.macedonga.visor.core.connection.objects
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -48,13 +49,10 @@ class CaptionTranscripts @Inject constructor(@ApplicationContext context: Contex
 
     private fun read(): List<SavedCaptions> = runCatching {
         val sessions = JSONArray(file.readText())
-        (0 until sessions.length()).map { i ->
-            val s = sessions.getJSONObject(i)
-            val turns = s.getJSONArray("lines")
+        sessions.objects().map { s ->
             SavedCaptions(
                 s.getLong("session"),
-                (0 until turns.length()).map { j ->
-                    val t = turns.getJSONObject(j)
+                s.getJSONArray("lines").objects().map { t ->
                     CaptionLine(t.getString("id"), t.getString("text"), if (t.has("source")) t.getString("source") else null, true, t.getLong("time"))
                 },
             )
@@ -78,7 +76,7 @@ class CaptionTranscripts @Inject constructor(@ApplicationContext context: Contex
     }
 
     private companion object {
-        const val SESSIONS = 10
+        const val SESSIONS = 2
         const val WRITE_EVERY_MS = 3_000L
     }
 }

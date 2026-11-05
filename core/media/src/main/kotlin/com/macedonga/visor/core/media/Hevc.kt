@@ -22,13 +22,28 @@ fun annexBUnits(data: ByteArray): List<ByteArray> {
     return starts.indices.map { data.copyOfRange(starts[it], ends[it]) }.filter { it.size >= 2 }
 }
 
+/** The HEVC NAL unit types in an Annex-B buffer. */
+fun nalTypes(data: ByteArray): List<Int> {
+    val out = ArrayList<Int>()
+    var i = 0
+    while (i + 3 < data.size) {
+        if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() && data[i + 2] == 1.toByte()) {
+            out += (data[i + 3].toInt() shr 1) and 0x3F
+            i += 3
+        } else {
+            i++
+        }
+    }
+    return out
+}
+
 fun hevcNalType(unit: ByteArray): Int = (unit[0].toInt() shr 1) and 0x3F
 
 /** Annex-B to four-byte length prefixes, as MP4 and RTMP carry HEVC. Parameter sets are left out with [dropParameterSets]. */
 fun annexBToLengthPrefixed(data: ByteArray, dropParameterSets: Boolean = false): ByteArray {
     val out = ByteArrayOutputStream(data.size + 16)
     for (unit in annexBUnits(data)) {
-        if (dropParameterSets && hevcNalType(unit) in 32..34) continue
+        if (dropParameterSets && VideoCodec.HEVC.isParameterSet(unit)) continue
         out.write(unit.size ushr 24)
         out.write(unit.size ushr 16)
         out.write(unit.size ushr 8)
@@ -56,13 +71,13 @@ fun parseHevcSps(unit: ByteArray): HevcSps? = runCatching {
     r.bits(1) // temporal_id_nesting
     val ptl = ByteArray(12) { r.bits(8).toByte() }
     // Sub-layer flags and their profile/level data, skipped.
-    val present = BooleanArray(subLayersMinus1) { false }
-    val levelPresent = BooleanArray(subLayersMinus1) { false }
+    val present = BooleanArray(subLayersMinus1)
+    val levelPresent = BooleanArray(subLayersMinus1)
     for (i in 0 until subLayersMinus1) {
         present[i] = r.bits(1) == 1
         levelPresent[i] = r.bits(1) == 1
     }
-    if (subLayersMinus1 > 0) for (i in subLayersMinus1 until 8) r.bits(2)
+    if (subLayersMinus1 > 0) r.skip(2 * (8 - subLayersMinus1))
     for (i in 0 until subLayersMinus1) {
         if (present[i]) r.skip(88)
         if (levelPresent[i]) r.skip(8)
@@ -90,7 +105,7 @@ fun parseHevcSps(unit: ByteArray): HevcSps? = runCatching {
 
 /** The parameter sets in [config] (Annex-B), by type: 32 VPS, 33 SPS, 34 PPS. */
 fun hevcParameterSets(config: ByteArray): Map<Int, List<ByteArray>> =
-    annexBUnits(config).filter { hevcNalType(it) in 32..34 }.groupBy(::hevcNalType)
+    annexBUnits(config).filter { VideoCodec.HEVC.isParameterSet(it) }.groupBy(::hevcNalType)
 
 /** An HEVCDecoderConfigurationRecord (ISO/IEC 14496-15), as an MP4 hvcC box and enhanced RTMP carry it. */
 fun hvcC(config: ByteArray): ByteArray? {

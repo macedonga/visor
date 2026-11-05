@@ -28,19 +28,21 @@ fun configCodec(config: ByteArray): VideoCodec = detectVideoCodec(config) ?: Vid
 /** Width and height from the first SPS in [config], whichever codec it is in. */
 fun videoSize(config: ByteArray): Pair<Int, Int>? = when (configCodec(config)) {
     VideoCodec.HEVC -> hevcParameterSets(config)[33]?.firstOrNull()?.let(::parseHevcSps)?.let { it.width to it.height }
-    VideoCodec.AVC -> annexBUnits(config).firstOrNull { (it[0].toInt() and 0x1F) == 7 }?.let(::parseAvcSps)
+    VideoCodec.AVC -> annexBUnits(config).firstOrNull { avcNalType(it) == 7 }?.let(::parseAvcSps)
 }
+
+private fun avcNalType(unit: ByteArray): Int = unit[0].toInt() and 0x1F
 
 /** Parameter sets: HEVC VPS, SPS, PPS (32 to 34); H.264 SPS and PPS (7, 8). */
 fun VideoCodec.isParameterSet(unit: ByteArray): Boolean = when (this) {
     VideoCodec.HEVC -> hevcNalType(unit) in 32..34
-    VideoCodec.AVC -> (unit[0].toInt() and 0x1F) in 7..8
+    VideoCodec.AVC -> avcNalType(unit) in 7..8
 }
 
 /** A keyframe: HEVC IRAP units (16 to 21), H.264 IDR slices (5). */
 fun VideoCodec.isKeyFrame(data: ByteArray): Boolean = when (this) {
     VideoCodec.HEVC -> nalTypes(data).any { it in 16..21 }
-    VideoCodec.AVC -> annexBUnits(data).any { (it[0].toInt() and 0x1F) == 5 }
+    VideoCodec.AVC -> annexBUnits(data).any { avcNalType(it) == 5 }
 }
 
 private val HIGH_PROFILES = setOf(100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135)

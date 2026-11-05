@@ -3,13 +3,12 @@ package com.macedonga.visor.connection
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.os.Build
 import android.os.CancellationSignal
 import android.os.Looper
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.inject.Inject
@@ -19,7 +18,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The phone's position for navigation, place search and the Display's Maps, from the provider [LocationShare] uses.
+ * The phone's position for navigation, place search and the Display's Maps.
  * Updates run only while guidance or Maps does; otherwise the system's last known fix answers.
  */
 @Singleton
@@ -35,7 +34,7 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
     private var last: Location? = null
     private var users = 0
 
-    // Off while a user holds on without the permission; the next user, once it is granted, asks.
+    // True while updates are requested; a use() without the permission leaves it false.
     @Volatile
     private var requesting = false
 
@@ -83,7 +82,7 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
     /** A fix taken now, for when none is known yet; null without one in [timeoutMs]. */
     @SuppressLint("MissingPermission")
     suspend fun fresh(timeoutMs: Long = FRESH_MS): LatLng? {
-        if (manager == null || !granted() || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        if (manager == null || !granted()) return null
         return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val cancel = CancellationSignal()
@@ -97,12 +96,12 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
 
     private fun granted(): Boolean =
         listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-            .any { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+            .any { context.allows(it) }
 
     private fun provider(m: LocationManager): String = when {
         m.allProviders.contains(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
         m.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-        else -> LocationManager.NETWORK_PROVIDER
+        else -> LocationManager.NETWORK_PROVIDER.takeIf { it in m.allProviders } ?: LocationManager.PASSIVE_PROVIDER
     }
 
     private companion object {

@@ -22,7 +22,7 @@ data class AssistantConfig(
     val voicePhotos: Boolean = false,
     // Answers in the glasses' own voice, the one that reads notifications; off, the phone's voice streamed to them.
     val glassesVoice: Boolean = true,
-    // No spoken answer when every tool the model used did what was asked, such as music that now plays (#48).
+    // No spoken answer when every tool the model used did what was asked, such as music that now plays.
     val quietAfterActions: Boolean = false,
     // The language the wearer speaks, as a BCP 47 tag, when the glasses have no pack for it; empty, the glasses' own.
     // The phone then hears every question, the model answers in it, and the phone's voice speaks.
@@ -32,9 +32,12 @@ data class AssistantConfig(
     val memoryMinutes: Int = 10,
     // How long the glasses wait for an answer before they give up, written to them on connect.
     val answerWaitSeconds: Int = 45,
-)
+) {
+    /** A model can answer: Claude needs a key, an OpenAI-compatible server may not. */
+    val hasModel: Boolean get() = apiKey.isNotBlank() || provider == Provider.OPENAI_COMPATIBLE
+}
 
-/** Languages the wearer can speak that the glasses have no pack for, heard and spoken by the phone (issue #38). */
+/** Languages the wearer can speak that the glasses have no pack for, heard and spoken by the phone. */
 val SPEECH_LANGUAGES = listOf(
     "ru-RU", "uk-UA", "pl-PL", "cs-CZ", "ro-RO", "hu-HU", "el-GR", "sv-SE", "da-DK", "nb-NO", "fi-FI",
     "he-IL", "ar-SA", "vi-VN", "id-ID", "th-TH",
@@ -43,19 +46,20 @@ val SPEECH_LANGUAGES = listOf(
 /** The waits offered: 20 is the glasses' own; their watchdog ends a turn still processing at 60. */
 val ANSWER_WAITS = listOf(20, 30, 45, 55)
 
-class AssistantConfigStore(context: Context) : FieldBook {
+class AssistantConfigStore(context: Context) {
 
     private val prefs = context.getSharedPreferences("assistant", Context.MODE_PRIVATE)
 
     private val _config = MutableStateFlow(load())
     val config: StateFlow<AssistantConfig> = _config.asStateFlow()
 
-    override fun fields(key: String): Fields? = runCatching {
+    /** The [Fields] found for an address and model, kept until either changes. */
+    fun fields(key: String): Fields? = runCatching {
         JSONObject(prefs.getString(FIELDS, null) ?: return null).optJSONObject(key)
             ?.let { Fields(it.getBoolean("reasoning_off"), it.getBoolean("completion_tokens"), it.optBoolean("thinks")) }
     }.getOrNull()
 
-    override fun keep(key: String, fields: Fields) {
+    fun keep(key: String, fields: Fields) {
         val all = runCatching { JSONObject(prefs.getString(FIELDS, null) ?: "{}") }.getOrDefault(JSONObject())
         all.put(key, JSONObject().put("reasoning_off", fields.reasoningOff).put("completion_tokens", fields.completionTokens).put("thinks", fields.thinks))
         prefs.edit().putString(FIELDS, all.toString()).apply()

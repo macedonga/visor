@@ -7,9 +7,9 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -19,24 +19,24 @@ import kotlinx.coroutines.withContext
  */
 @SuppressLint("MissingPermission")
 internal suspend fun headsetTake(context: Context, address: String?, ms: Long, say: (String) -> Unit, peak: (Int) -> Unit): ByteArray? = withContext(Dispatchers.IO) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || address == null) return@withContext null
+    if (address == null) return@withContext null
     val am = context.getSystemService(AudioManager::class.java)
     val glasses = am.availableCommunicationDevices.firstOrNull { it.isHeadset() && it.address.equals(address, ignoreCase = true) }
     if (glasses == null) {
-        say("Custom wake word: the glasses are no Bluetooth headset to this phone (${am.availableCommunicationDevices.joinToString { "${it.type}:${it.productName}" }})")
+        say("the glasses are no Bluetooth headset to this phone (${am.availableCommunicationDevices.joinToString { "${it.type}:${it.productName}" }})")
         return@withContext null
     }
     val mode = am.mode
     am.mode = AudioManager.MODE_IN_COMMUNICATION
     try {
         if (!am.setCommunicationDevice(glasses)) {
-            say("Custom wake word: could not route the call mic to ${glasses.productName}")
+            say("could not route the call mic to ${glasses.productName}")
             return@withContext null
         }
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = runCatching {
             AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE * 2))
-        }.getOrElse { say("Custom wake word: no headset recorder: ${it.message}"); return@withContext null }
+        }.getOrElse { say("no headset recorder: ${it.message}"); return@withContext null }
         try {
             rec.setPreferredDevice(am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == glasses.type && it.address.equals(address, ignoreCase = true) })
             rec.startRecording()
@@ -47,6 +47,7 @@ internal suspend fun headsetTake(context: Context, address: String?, ms: Long, s
             val opened = System.currentTimeMillis()
             var waited = -1L
             while (System.currentTimeMillis() - opened < LIVE_WAIT_MS) {
+                ensureActive()
                 val n = rec.read(buf, 0, buf.size)
                 if (n < 0) break
                 if ((0 until n).any { buf[it].toInt() != 0 }) {
@@ -56,17 +57,18 @@ internal suspend fun headsetTake(context: Context, address: String?, ms: Long, s
                 }
             }
             if (waited < 0) {
-                say("Custom wake word: headset from ${glasses.productName} stayed silent for $LIVE_WAIT_MS ms")
+                say("headset from ${glasses.productName} stayed silent for $LIVE_WAIT_MS ms")
                 return@withContext null
             }
             val routed = rec.routedDevice
             if (routed == null || !routed.isHeadset()) {
-                say("Custom wake word: the call mic went to ${routed?.productName ?: "nothing"}, not the glasses")
+                say("the call mic went to ${routed?.productName ?: "nothing"}, not the glasses")
                 return@withContext null
             }
             var loudest = peakOf(buf, out.size())
             val end = System.currentTimeMillis() + ms
             while (System.currentTimeMillis() < end) {
+                ensureActive()
                 val n = rec.read(buf, 0, buf.size)
                 if (n < 0) break
                 if (n == 0) continue
@@ -76,7 +78,7 @@ internal suspend fun headsetTake(context: Context, address: String?, ms: Long, s
                 loudest = maxOf(loudest, p)
             }
             val pcm = out.toByteArray()
-            say("Custom wake word: headset take from ${glasses.productName} (type ${glasses.type}, routed to ${routed.productName}): ${pcm.size / 32} ms, peak $loudest, live after $waited ms")
+            say("headset take from ${glasses.productName} (type ${glasses.type}, routed to ${routed.productName}): ${pcm.size / CustomWakeWord.BYTES_PER_MS} ms, peak $loudest, live after $waited ms")
             pcm
         } finally {
             runCatching { rec.stop() }

@@ -1,4 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="navigation_requests_maps">mappe</string>
+    <string name="nav_start">Parti</string>
+    <string name="nav_start_on">Parti su %1$s</string>
+    <string name="nav_left">Svolta a sinistra</string>
+    <string name="nav_left_onto">Svolta a sinistra in %1$s</string>
+    <string name="nav_right">Svolta a destra</string>
+    <string name="nav_right_onto">Svolta a destra in %1$s</string>
+    <string name="nav_slight_left">Svolta leggermente a sinistra</string>
+    <string name="nav_slight_left_onto">Svolta leggermente a sinistra in %1$s</string>
+    <string name="nav_slight_right">Svolta leggermente a destra</string>
+    <string name="nav_slight_right_onto">Svolta leggermente a destra in %1$s</string>
+    <string name="nav_sharp_left">Svolta nettamente a sinistra</string>
+    <string name="nav_sharp_left_onto">Svolta nettamente a sinistra in %1$s</string>
+    <string name="nav_sharp_right">Svolta nettamente a destra</string>
+    <string name="nav_sharp_right_onto">Svolta nettamente a destra in %1$s</string>
+    <string name="nav_keep_left">Mantieni la sinistra</string>
+    <string name="nav_keep_left_onto">Mantieni la sinistra su %1$s</string>
+    <string name="nav_keep_right">Mantieni la destra</string>
+    <string name="nav_keep_right_onto">Mantieni la destra su %1$s</string>
+    <string name="nav_u_turn">Fai inversione a U</string>
+    <string name="nav_junction">Attraversa l\'incrocio</string>
+    <string name="nav_junction_onto">Attraversa l\'incrocio verso %1$s</string>
+    <string name="nav_continue">Prosegui dritto</string>
+    <string name="nav_continue_on">Prosegui su %1$s</string>
+    <string name="nav_arrived">Sei arrivato</string>
+    <string name="nav_arrived_left">Sei arrivato, sulla sinistra</string>
+    <string name="nav_arrived_right">Sei arrivato, sulla destra</string>
+    <string name="nav_err_no_position">Nessuna posizione del telefono o destinazione</string>
+    <string name="nav_err_no_route">Nessun percorso trovato</string>
 </resources>

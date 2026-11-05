@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="finish_accounts_facebook_messenger">Facebook e Messenger</string>
-    <string name="finish_accounts_threads">Threads</string>
-    <string name="finish_accounts_needs_internet">Agli occhiali serve internet</string>
-    <string name="finish_accounts_fw_downloading">Download, %1$d di %2$d MB</string>
-    <string name="finish_accounts_fw_sending">Invio agli occhiali, %1$d di %2$d MB</string>
-</resources>

@@ -15,14 +15,7 @@ object Wire {
 
     fun encodeVarint(value: Long): ByteArray {
         require(value >= 0) { "varint must be non-negative, got $value" }
-        val out = ArrayList<Byte>(10)
-        var remaining = value
-        while (true) {
-            val b = (remaining and 0x7F).toInt()
-            remaining = remaining ushr 7
-            out.add((b or if (remaining != 0L) 0x80 else 0).toByte())
-            if (remaining == 0L) return out.toByteArray()
-        }
+        return encodeVarintUnsigned(value)
     }
 
     private fun tag(fieldNumber: Int, wireType: Int): ByteArray =
@@ -33,13 +26,14 @@ object Wire {
      * more rather than a negative number.
      */
     fun encodeVarintUnsigned(value: Long): ByteArray {
-        val out = ArrayList<Byte>(10)
+        val out = ByteArray(10)
+        var n = 0
         var remaining = value
         while (true) {
             val b = (remaining and 0x7F).toInt()
             remaining = remaining ushr 7
-            out.add((b or if (remaining != 0L) 0x80 else 0).toByte())
-            if (remaining == 0L) return out.toByteArray()
+            out[n++] = (b or if (remaining != 0L) 0x80 else 0).toByte()
+            if (remaining == 0L) return out.copyOf(n)
         }
     }
 
@@ -50,18 +44,25 @@ object Wire {
     fun fieldVarintUnsigned(fieldNumber: Int, value: Long): ByteArray =
         tag(fieldNumber, 0) + encodeVarintUnsigned(value)
 
+    /** As [fieldVarintUnsigned], but nothing for 0, as the firmware writes it. */
+    fun fieldVarintNonZero(fieldNumber: Int, value: Long): ByteArray =
+        if (value == 0L) EMPTY else fieldVarintUnsigned(fieldNumber, value)
+
     fun fieldBytes(fieldNumber: Int, value: ByteArray): ByteArray =
         tag(fieldNumber, 2) + encodeVarint(value.size.toLong()) + value
 
+    /** A string field, UTF-8. */
+    fun fieldString(fieldNumber: Int, value: String): ByteArray = fieldBytes(fieldNumber, value.encodeToByteArray())
+
     /** A float as protobuf writes it: fixed32, little-endian. */
     fun fieldFloat(fieldNumber: Int, value: Float): ByteArray {
-        val bits = java.lang.Float.floatToRawIntBits(value)
+        val bits = value.toRawBits()
         return tag(fieldNumber, 5) + ByteArray(4) { i -> (bits ushr (8 * i)).toByte() }
     }
 
     /** A double as protobuf writes it: fixed64, little-endian. */
     fun fieldDouble(fieldNumber: Int, value: Double): ByteArray {
-        val bits = java.lang.Double.doubleToRawLongBits(value)
+        val bits = value.toRawBits()
         return tag(fieldNumber, 1) + ByteArray(8) { i -> (bits ushr (8 * i)).toByte() }
     }
 
@@ -70,10 +71,7 @@ object Wire {
     /** A varint and the offset just past it. */
     data class VarintResult(val value: Long, val offset: Int)
 
-    /**
-     * DIVERGENCE: Python integers are arbitrary precision, so `decode_varint` reads a varint of any
-     * width exactly.
-     */
+    /** A varint and the offset just past it; at most 64 bits. */
     fun decodeVarint(data: ByteArray, offset: Int): VarintResult {
         var result = 0L
         var shift = 0
@@ -85,6 +83,7 @@ object Wire {
             result = result or ((b and 0x7F).toLong() shl shift)
             if (b and 0x80 == 0) return VarintResult(result, at)
             shift += 7
+            if (shift >= 64) throw ProtocolFormatException("varint too long")
         }
     }
 
@@ -137,7 +136,7 @@ object Wire {
 
         fun has(fn: Int): Boolean = byField.containsKey(fn)
 
-        /** Sorted, which is what the reference returns, not wire order. */
+        /** Field numbers, sorted. */
         fun fieldNumbers(): List<Int> = byField.keys.sorted()
     }
 
@@ -157,7 +156,6 @@ object Wire {
             offset = key.offset
             val fieldNumberLong = key.value ushr 3
             if (fieldNumberLong > Int.MAX_VALUE) {
-                // DIVERGENCE: Python carries an arbitrarily large field number.
                 throw ProtocolFormatException("field number $fieldNumberLong out of range")
             }
             val fieldNumber = fieldNumberLong.toInt()
@@ -171,9 +169,7 @@ object Wire {
                 2 -> {
                     val length = decodeVarint(data, offset)
                     offset = length.offset
-                    // Python slices with an arbitrary-precision length: one that runs past the end
-                    // yields the bytes that are there, and the cursor lands past the end so the
-                    // loop stops.
+                    // A length past the end takes what is there and ends the parse.
                     val remaining = (n - offset).toLong()
                     val fits = length.value in 0..remaining
                     val take = if (fits) length.value.toInt() else remaining.toInt()
@@ -196,7 +192,4 @@ object Wire {
         }
         return fields
     }
-
-    // `wire.py` also has `iter_fields`, a debugging helper that reaches into Fields' private
-    // storage to print a capture in the Python REPL.
 }

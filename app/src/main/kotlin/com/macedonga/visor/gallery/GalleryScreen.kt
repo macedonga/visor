@@ -1,24 +1,19 @@
 package com.macedonga.visor.gallery
 
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,12 +29,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -55,40 +51,33 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
@@ -96,6 +85,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -111,67 +101,68 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.CaptureType
-import com.macedonga.visor.core.media.Transfer
+import com.macedonga.visor.core.media.ImportProblem
+import com.macedonga.visor.home.countWords
+import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.BAR
+import com.macedonga.visor.settings.Card
+import com.macedonga.visor.settings.Hairline
+import com.macedonga.visor.settings.LocalBack
+import com.macedonga.visor.settings.ProgressRing
+import com.macedonga.visor.settings.RoundIcon
+import com.macedonga.visor.settings.UndoPill
+import com.macedonga.visor.stage.SHEET_RADIUS
+import com.macedonga.visor.stage.sheetShape
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.asHeading
 import com.macedonga.visor.ui.rememberHaptics
 import com.macedonga.visor.ui.rememberTrailingFold
-import com.macedonga.visor.ui.asHeading
 import java.io.File
 import kotlin.math.max
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/**
- * The gallery: the newest moment, or the one picked, large on a stage and lit by its own colours; under it, on a
- * sheet that rides up over the stage, everything by day, what is still on the glasses included.
- */
+/** The stage over a day-by-day sheet of what is on the phone and the glasses. */
 @Composable
 fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
     val context = LocalContext.current
     val colors = Visor.colors
     val haptics = rememberHaptics()
     val gate = rememberImportGate()
-    val items by model.items.collectAsStateWithLifecycle()
+    val listed by model.items.collectAsStateWithLifecycle()
+    val loaded = listed != null
+    val items = listed.orEmpty()
     val previews by model.previews.collectAsStateWithLifecycle()
     val inFlight by model.inFlight.collectAsStateWithLifecycle()
     val problem by model.problem.collectAsStateWithLifecycle()
     val overBluetooth by model.overBluetooth.collectAsStateWithLifecycle()
-    val transfers by model.transfers.collectAsStateWithLifecycle()
+    val progress by model.progress.collectAsStateWithLifecycle()
+    val ready by model.ready.collectAsStateWithLifecycle()
 
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
+    val anyFavorite = remember(items) { items.any { it.favorite } }
     val shown = remember(items, favoritesOnly) { if (favoritesOnly) items.filter { it.favorite } else items }
     val days = remember(shown) { GalleryModel.days(shown) }
     var stagedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val staged = shown.firstOrNull { it.key == stagedKey } ?: shown.firstOrNull()
     var selection by remember { mutableStateOf(emptySet<String>()) }
-    val selecting = selection.isNotEmpty()
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    val selecting = choosing || selection.isNotEmpty()
     var openKey by rememberSaveable { mutableStateOf<String?>(null) }
     var editKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var deleted by remember { mutableIntStateOf(0) }
-    var deletedAt by remember { mutableLongStateOf(0L) }
-    val bounds = remember { mutableStateMapOf<String, Rect>() }
-    val progress = rememberProgress(inFlight, transfers, items)
+    val deleted by model.undoable.collectAsStateWithLifecycle()
+    val bounds = remember { HashMap<String, Rect>() }
 
-    BackHandler(enabled = selecting && openKey == null) { selection = emptySet() }
+    fun endSelection() {
+        selection = emptySet()
+        choosing = false
+    }
+
+    BackHandler(enabled = selecting && openKey == null) { endSelection() }
 
     // Places: asked for once, from the sheet, until given or put off.
-    val prefs = remember { context.getSharedPreferences("gallery", android.content.Context.MODE_PRIVATE) }
-    var placesOk by remember { mutableStateOf(placesAllowed(context)) }
-    var placesPutOff by remember { mutableStateOf(prefs.getBoolean("places_put_off", false)) }
-    LifecycleResumeEffect(Unit) {
-        placesOk = placesAllowed(context)
-        onPauseOrDispose { }
-    }
-    val askBackground = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { placesOk = placesAllowed(context) }
-    val askPlaces = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        placesOk = placesAllowed(context)
-        // The background permission is a second question, and only after the first was granted.
-        if (!placesOk && context.allows(android.Manifest.permission.ACCESS_FINE_LOCATION)) askBackground.launch(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-    }
-    LaunchedEffect(deletedAt) {
-        if (deletedAt == 0L) return@LaunchedEffect
-        delay(PhoneLibrary.UNDO_MS)
-        deleted = 0
-    }
+    val prefs = remember { context.getSharedPreferences("gallery", Context.MODE_PRIVATE) }
+    val (placesOk, allowPlaces) = rememberPlacesAsk()
+    var placesPutOff by remember { mutableStateOf(prefs.getBoolean(PLACES_PUT_OFF, false)) }
 
     val grid = rememberLazyGridState()
     // Each item's place in the grid: the stage, the sheet's head, then each day's header and its tiles.
@@ -185,26 +176,27 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
         map
     }
     val flat = remember(days) { days.flatMap { it.items } }
+    val order by rememberUpdatedState(flat)
 
     fun delete(chosen: Collection<GalleryItem>) {
         val onPhone = chosen.filter { it.phone != null }
         if (onPhone.isEmpty()) return
         haptics.toggle()
         model.delete(onPhone)
-        deleted = onPhone.size
-        deletedAt = System.currentTimeMillis()
+    }
+
+    fun importOne(item: GalleryItem) {
+        stagedKey = item.key
+        if (ready && item.key !in inFlight) {
+            haptics.toggle()
+            gate { model.import(listOf(item)) }
+        }
     }
 
     fun tap(item: GalleryItem, stageOpen: Boolean) {
         when {
             selecting -> selection = if (item.key in selection) selection - item.key else selection + item.key
-            item.onGlassesOnly -> {
-                stagedKey = item.key
-                if (item.key !in inFlight) {
-                    haptics.toggle()
-                    gate { model.import(listOf(item)) }
-                }
-            }
+            item.onGlassesOnly && ready -> importOne(item)
             stageOpen && staged?.key != item.key -> {
                 haptics.tick(0.4f)
                 stagedKey = item.key
@@ -226,10 +218,10 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
         }
         val sheetTop = remember {
             derivedStateOf {
-                grid.layoutInfo.visibleItemsInfo.firstOrNull { it.key == STAGE }?.let { (it.offset.y + it.size.height).toFloat() } ?: Float.NEGATIVE_INFINITY
+                grid.layoutInfo.visibleItemsInfo.firstOrNull { it.key == STAGE_KEY }?.let { (it.offset.y + it.size.height).toFloat() } ?: Float.NEGATIVE_INFINITY
             }
         }
-        val stageOpen = fold < 0.5f
+        val stageOpen by remember { derivedStateOf { fold < 0.5f } }
         // Where the sheet's top edge is: on the stage's own spacer while it shows, else where the fold has the stage.
         val edge = { max(sheetTop.value, fullPx - fold * (fullPx - stripPx)).coerceIn(stripPx, fullPx) }
         val screenLong = with(density) { maxOf(maxWidth, maxHeight).roundToPx() }
@@ -251,10 +243,10 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
                         selection = selection + key
                     },
                     onExtend = { from, to, base ->
-                        val a = flat.indexOfFirst { it.key == from }
-                        val b = flat.indexOfFirst { it.key == to }
+                        val a = order.indexOfFirst { it.key == from }
+                        val b = order.indexOfFirst { it.key == to }
                         if (a >= 0 && b >= 0) {
-                            val range = flat.subList(minOf(a, b), maxOf(a, b) + 1).map { it.key }
+                            val range = order.subList(minOf(a, b), maxOf(a, b) + 1).map { it.key }
                             val next = base + range
                             if (next != selection) haptics.tick(0.3f)
                             selection = next
@@ -266,7 +258,7 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
             horizontalArrangement = Arrangement.spacedBy(GAP),
             verticalArrangement = Arrangement.spacedBy(GAP),
         ) {
-            item(key = STAGE, span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.fillMaxWidth().height(stageHeight)) }
+            item(key = STAGE_KEY, span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.fillMaxWidth().height(stageHeight)) }
             val island: @Composable () -> Unit = {
                 Island(
                     // What the problem names stays offered, though the glasses count it delivered.
@@ -274,30 +266,19 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
                     arriving = inFlight.size,
                     problem = problem,
                     overBluetooth = overBluetooth,
+                    started = progress.values.any { (it ?: 0f) >= 0.01f },
+                    canImport = ready,
                     askPlaces = !placesOk && !placesPutOff,
-                    onPlaces = {
-                        if (context.allows(android.Manifest.permission.ACCESS_FINE_LOCATION)) askBackground.launch(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-                        else askPlaces.launch(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION))
-                    },
+                    onPlaces = allowPlaces,
                     onPlacesLater = {
                         placesPutOff = true
-                        prefs.edit().putBoolean("places_put_off", true).apply()
+                        prefs.edit().putBoolean(PLACES_PUT_OFF, true).apply()
                     },
                     onImport = { haptics.toggle(); gate { model.import(it) } },
                 )
             }
-            if (days.isEmpty()) {
+            if (days.isEmpty() && loaded) {
                 item(key = ISLAND, span = { GridItemSpan(maxLineSpan) }) { Column(Modifier.animateItem().padding(top = 16.dp)) { island() } }
-                if (favoritesOnly) {
-                    item(key = "none", span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            stringResource(R.string.gallery_empty_favorites),
-                            style = Visor.type.body,
-                            color = colors.textSecondary,
-                            modifier = Modifier.animateItem().padding(24.dp),
-                        )
-                    }
-                }
             }
             for ((index, day) in days.withIndex()) {
                 item(key = "day:${day.date}", span = { GridItemSpan(maxLineSpan) }, contentType = "day") { DayHeader(day, first = index == 0, Modifier.animateItem()) }
@@ -333,18 +314,28 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
                 .background(colors.canvas),
         ) {
             Stage(
-                staged, previews, edge(), stageHeight, strip,
+                staged, previews, edge, stageHeight, strip,
                 progress = progress[staged?.capture?.handle],
                 arriving = staged?.capture?.handle in inFlight,
-                onOpen = { staged?.let { openKey = it.key } },
-                onImport = { staged?.let { tap(it, true) } },
-                onBounds = { bounds[STAGE] = it },
+                canImport = ready,
+                favoritesOnly = favoritesOnly,
+                loaded = loaded,
+                selecting = selecting,
+                onOpen = { staged?.let { if (selecting) tap(it, false) else openKey = it.key } },
+                onImport = { staged?.let { importOne(it) } },
+                onBounds = { bounds[STAGE_KEY] = it },
             )
             TopBar(
                 selecting = selecting,
                 count = selection.size,
                 favoritesOnly = favoritesOnly,
-                onClear = { selection = emptySet() },
+                showFavorites = favoritesOnly || anyFavorite,
+                canSelect = shown.isNotEmpty(),
+                onClear = { endSelection() },
+                onSelect = {
+                    haptics.tick(0.4f)
+                    choosing = true
+                },
                 onFavorites = {
                     haptics.toggle()
                     favoritesOnly = !favoritesOnly
@@ -353,35 +344,45 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
         }
 
         val chosen = shown.filter { it.key in selection }
+        // What the bar last showed, kept while it fades out.
+        val lastChosen = remember { mutableStateOf(emptyList<GalleryItem>()) }
+        SideEffect { if (chosen.isNotEmpty()) lastChosen.value = chosen }
         AnimatedVisibility(
-            visible = selecting && openKey == null,
+            visible = selection.isNotEmpty() && openKey == null,
             modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 20.dp),
             enter = fadeIn(tween(180)) + slideInVertically(spring(dampingRatio = 0.8f, stiffness = 500f)) { it / 2 },
             exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 },
         ) {
             SelectionBar(
-                chosen,
+                chosen.ifEmpty { lastChosen.value },
+                canImport = ready,
                 onImport = {
-                    val picked = chosen
-                    gate { model.import(picked) }
-                    selection = emptySet()
+                    gate { model.import(chosen) }
+                    endSelection()
                 },
                 onShare = { model.shareIntent(chosen)?.let(context::startActivity) },
                 onFavorite = { on -> haptics.toggle(); model.favorite(chosen, on) },
-                onDelete = { delete(chosen); selection = emptySet() },
+                onDelete = { delete(chosen); endSelection() },
             )
         }
 
+        // Frozen while open: a favourite turned off in the favourites view stays where it is.
+        val viewerKeys = remember(openKey != null) { shown.map { it.key } }
+        val viewerItems = remember(viewerKeys, items) {
+            val byKey = items.associateBy { it.key }
+            viewerKeys.mapNotNull(byKey::get)
+        }
         openKey?.let { key ->
             Viewer(
-                items = shown,
+                items = viewerItems,
                 startKey = key,
                 previews = previews,
                 progress = { progress[it.capture?.handle] },
                 arriving = { it.capture?.handle in inFlight },
-                origin = { k -> if (k == STAGE) bounds[STAGE] else if (k == staged?.key && fold < 0.2f) bounds[STAGE] else bounds[k] },
+                canImport = ready,
+                origin = { k -> if (k == STAGE_KEY) bounds[STAGE_KEY] else if (k == staged?.key && fold < 0.2f) bounds[STAGE_KEY] else bounds[k] },
                 // From the phone's own index: the glasses need not be near for the details.
-                originals = { (it.kept?.handle ?: it.capture?.handle)?.let(model.media.index::originals)?.takeIf(File::isDirectory) },
+                originals = { (it.kept?.handle ?: it.capture?.handle)?.let(model.media.index::originals) },
                 onPage = { item ->
                     stagedKey = item.key
                     // Bring the tile into view under the viewer, so closing has somewhere to land.
@@ -391,7 +392,7 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
                 onFavorite = { haptics.toggle(); model.favorite(listOf(it), !it.favorite) },
                 onShare = { model.shareIntent(listOf(it))?.let(context::startActivity) },
                 onDelete = { delete(listOf(it)) },
-                onImport = { tap(it, false) },
+                onImport = { importOne(it) },
                 onEdit = { editKey = it.key },
             )
         }
@@ -406,7 +407,7 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
             Editor(
                 kept = kept,
                 darkroom = model.media.darkroom,
-                originals = model.media.index.originals(kept.handle).takeIf(File::isDirectory),
+                originals = model.media.index.originals(kept.handle),
                 shown = Images.cached(Images.pictureKey(item, screenLong)),
                 onSaved = {
                     Images.forget(item)
@@ -417,23 +418,31 @@ fun GalleryScreen(model: GalleryModel = hiltViewModel()) {
             )
         }
 
-        AnimatedVisibility(
-            visible = deleted > 0,
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (selecting) 96.dp else 20.dp),
-            enter = fadeIn(tween(180)) + slideInVertically(spring(dampingRatio = 0.8f, stiffness = 500f)) { it / 2 },
-            exit = fadeOut(tween(160)),
-        ) {
-            UndoPill(deleted) {
-                haptics.toggle()
-                model.undoDelete()
-                deleted = 0
-            }
-        }
+        UndoPill(
+            if (deleted > 0) pluralStringResource(R.plurals.gallery_deleted, deleted, deleted) else null,
+            { haptics.toggle(); model.undoDelete() },
+            Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(
+                bottom = when {
+                    openKey != null -> CHROME_BOTTOM
+                    selection.isNotEmpty() -> 96.dp
+                    else -> 20.dp
+                },
+            ),
+        )
     }
 }
 
 @Composable
-private fun TopBar(selecting: Boolean, count: Int, favoritesOnly: Boolean, onClear: () -> Unit, onFavorites: () -> Unit) {
+private fun TopBar(
+    selecting: Boolean,
+    count: Int,
+    favoritesOnly: Boolean,
+    showFavorites: Boolean,
+    canSelect: Boolean,
+    onClear: () -> Unit,
+    onSelect: () -> Unit,
+    onFavorites: () -> Unit,
+) {
     val colors = Visor.colors
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().height(BAR).padding(horizontal = 12.dp),
@@ -442,47 +451,57 @@ private fun TopBar(selecting: Boolean, count: Int, favoritesOnly: Boolean, onCle
         Crossfade(selecting, Modifier.weight(1f), label = "bar") { choosing ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (choosing) {
-                    RoundIcon(VisorIcons.Close, stringResource(R.string.gallery_close), onClear)
-                    Text(pluralStringResource(R.plurals.gallery_selected, count, count), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
+                    RoundIcon(VisorIcons.Close, stringResource(R.string.close), onClear)
+                    Text(
+                        if (count == 0) stringResource(R.string.gallery_select) else pluralStringResource(R.plurals.gallery_selected, count, count),
+                        style = Visor.type.heading,
+                        color = colors.textPrimary,
+                        modifier = Modifier.asHeading(),
+                    )
                 } else {
-                    Text(stringResource(R.string.gallery_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading().padding(start = 12.dp))
+                    RoundIcon(VisorIcons.ChevronLeft, stringResource(R.string.settings_back), LocalBack.current)
+                    Text(stringResource(R.string.gallery_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading().padding(start = 4.dp))
                 }
             }
         }
-        if (!selecting) {
+        if (!selecting && canSelect) RoundIcon(VisorIcons.Check, stringResource(R.string.gallery_select), onSelect)
+        if (!selecting && showFavorites) {
             val pop = remember { Animatable(1f) }
-            LaunchedEffect(favoritesOnly) {
-                pop.snapTo(0.8f)
-                pop.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f))
-            }
+            val scope = rememberCoroutineScope()
             val wash by animateColorAsState(if (favoritesOnly) colors.control else Color.Transparent, tween(200), label = "wash")
             Box(Modifier.graphicsLayer { scaleX = pop.value; scaleY = pop.value }) {
-                Crossfade(favoritesOnly, animationSpec = tween(160), label = "heart") { on ->
-                    RoundIcon(
-                        if (on) VisorIcons.HeartFilled else VisorIcons.Heart,
-                        stringResource(R.string.gallery_favorites),
-                        onFavorites,
-                        background = wash,
-                    )
-                }
+                RoundIcon(
+                    if (favoritesOnly) VisorIcons.HeartFilled else VisorIcons.Heart,
+                    stringResource(R.string.gallery_favorites),
+                    {
+                        onFavorites()
+                        scope.launch {
+                            pop.snapTo(0.8f)
+                            pop.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f))
+                        }
+                    },
+                    background = wash,
+                    selected = favoritesOnly,
+                )
             }
         }
     }
 }
 
-/**
- * The picked moment, as large as the stage allows under the bar, lit from behind by its own colours, with when it
- * was under it. As the sheet rides up the picture shrinks towards the bar with the stage, and goes only at the end.
- */
+/** The staged capture, lit by its colours, shrinking as the sheet rides up. */
 @Composable
 private fun Stage(
     item: GalleryItem?,
     previews: Map<String, File>,
-    edgePx: Float,
+    edge: () -> Float,
     height: Dp,
     strip: Dp,
     progress: Float?,
     arriving: Boolean,
+    canImport: Boolean,
+    favoritesOnly: Boolean,
+    loaded: Boolean,
+    selecting: Boolean,
     onOpen: () -> Unit,
     onImport: () -> Unit,
     onBounds: (Rect) -> Unit,
@@ -490,6 +509,7 @@ private fun Stage(
     val colors = Visor.colors
     val density = LocalDensity.current
     val picture by rememberPicture(item, previews, STAGE_PX)
+    val glow by rememberThumb(item, previews)
     val described = item?.let { spoken(it) }
     // The picture's room at rest: from under the bar to above the caption.
     val region = height - strip - PHOTO_TOP - CAPTION - STAGE_FOOT
@@ -497,25 +517,25 @@ private fun Stage(
     val stripPx = with(density) { strip.toPx() }
     val regionPx = with(density) { region.toPx() }
     val restPx = with(density) { (PHOTO_TOP + CAPTION + STAGE_FOOT).toPx() }
-    val shownPx = edgePx
-    val fold = ((fullPx - shownPx) / (fullPx - stripPx)).coerceIn(0f, 1f)
+    val edgePx = edge()
+    val fold = ((fullPx - edgePx) / (fullPx - stripPx)).coerceIn(0f, 1f)
     // What is left for it now, the caption and the air giving way first.
-    val scale = ((shownPx - stripPx - restPx * (1f - fold)) / regionPx).coerceIn(0f, 1f)
+    val scale = ((edgePx - stripPx - restPx * (1f - fold)) / regionPx).coerceIn(0f, 1f)
     // It fades as it shrinks, gone just as it reaches the bar.
     val photoAlpha = ((scale - 0.08f) / 0.92f).coerceIn(0f, 1f)
     val topPx = with(density) { (strip + PHOTO_TOP).toPx() }
     // Laid out at full height whatever the folding box around it allows: the picture's own scale does the shrinking.
     Box(Modifier.fillMaxWidth().wrapContentHeight(Alignment.Top, unbounded = true).height(height)) {
         PhotoLight(
-            picture,
+            glow,
             Modifier.fillMaxSize().graphicsLayer { alpha = photoAlpha * (0.4f + 0.6f * scale) },
             level = 0.62f,
             center = Offset(0.5f, (topPx + regionPx * scale / 2f) / fullPx),
             radius = 0.62f * (0.35f + 0.65f * scale),
         )
         if (item == null) {
-            Text(
-                stringResource(R.string.gallery_empty),
+            if (loaded) Text(
+                stringResource(if (favoritesOnly) R.string.gallery_empty_favorites else R.string.gallery_empty),
                 style = Visor.type.body,
                 color = colors.textSecondary,
                 textAlign = TextAlign.Center,
@@ -544,16 +564,16 @@ private fun Stage(
                     .clip(RoundedCornerShape(PHOTO_RADIUS))
                     .background(colors.raised)
                     .semantics { described?.let { contentDescription = it } }
-                    .clickable(onClick = if (item.onGlassesOnly) onImport else onOpen),
+                    .clickable(onClick = if (item.onGlassesOnly && !selecting && canImport) onImport else onOpen),
             ) {
                 Crossfade(item.key to picture, label = "stage") { (_, image) ->
                     image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                 }
                 if (item.onGlassesOnly) {
-                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = GLASSES_VEIL)))
                     Box(Modifier.align(Alignment.Center)) {
                         if (arriving) ProgressRing(progress, Modifier.size(44.dp))
-                        else Pill(stringResource(R.string.gallery_import), onImport)
+                        else if (!selecting) ActionPill(stringResource(R.string.gallery_import), onImport, enabled = canImport)
                     }
                 }
             }
@@ -579,8 +599,10 @@ private fun Stage(
 private fun Island(
     waiting: List<GalleryItem>,
     arriving: Int,
-    problem: com.macedonga.visor.core.media.ImportProblem?,
+    problem: ImportProblem?,
     overBluetooth: Boolean,
+    started: Boolean,
+    canImport: Boolean,
     askPlaces: Boolean,
     onPlaces: () -> Unit,
     onPlacesLater: () -> Unit,
@@ -591,7 +613,8 @@ private fun Island(
         when {
             arriving > 0 -> add {
                 IslandRow(
-                    if (overBluetooth) stringResource(R.string.import_over_bluetooth) else pluralStringResource(R.plurals.gallery_arriving, arriving, arriving),
+                    pluralStringResource(R.plurals.gallery_arriving, arriving, arriving) +
+                        (if (overBluetooth) " · " + stringResource(if (started) R.string.import_over_bluetooth else R.string.import_over_bluetooth_wait) else ""),
                     lead = { ProgressRing(null, Modifier.size(18.dp)) },
                 )
             }
@@ -599,38 +622,32 @@ private fun Island(
                 IslandRow(
                     importProblemText(problem),
                     lead = { Box(Modifier.size(8.dp).clip(CircleShape).background(colors.signal)) },
-                ) { Pill(stringResource(R.string.import_retry), { onImport(waiting) }, small = true) }
+                ) { ActionPill(stringResource(R.string.try_again), { onImport(waiting) }, enabled = canImport) }
             }
             waiting.isNotEmpty() -> add {
                 IslandRow(
                     pluralStringResource(R.plurals.gallery_waiting, waiting.size, waiting.size),
                     lead = { Icon(VisorIcons.Glasses, null, Modifier.size(20.dp), tint = colors.textPrimary) },
-                ) { Pill(stringResource(R.string.gallery_import_all), { onImport(waiting) }, small = true) }
+                ) { ActionPill(stringResource(R.string.gallery_import_all), { onImport(waiting) }, enabled = canImport) }
             }
         }
         if (askPlaces) add {
-            IslandRow(stringResource(R.string.gallery_places), lead = { Icon(VisorIcons.Pin, null, Modifier.size(20.dp), tint = colors.textPrimary) }) {
+            IslandRow(stringResource(R.string.places_title), lead = { Icon(VisorIcons.Pin, null, Modifier.size(20.dp), tint = colors.textPrimary) }) {
                 Text(
                     stringResource(R.string.gallery_not_now),
                     style = Visor.type.label,
                     color = colors.textSecondary,
-                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onPlacesLater).padding(horizontal = 10.dp, vertical = 8.dp),
+                    modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onPlacesLater).heightIn(min = 48.dp).wrapContentHeight().padding(horizontal = 10.dp),
                 )
-                Pill(stringResource(R.string.gallery_allow), onPlaces, small = true)
+                ActionPill(stringResource(R.string.allow), onPlaces)
             }
         }
     }
     Column(Modifier.fillMaxWidth().animateContentSize(spring(dampingRatio = 0.9f, stiffness = 400f))) {
         if (rows.isEmpty()) return@Column
-        Column(
-            Modifier
-                .padding(start = 12.dp, end = 12.dp, bottom = 14.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(ISLAND_RADIUS))
-                .background(colors.raised),
-        ) {
+        Card(Modifier.padding(bottom = 14.dp)) {
             rows.forEachIndexed { i, row ->
-                if (i > 0) Box(Modifier.padding(start = 52.dp).fillMaxWidth().height(1.dp).background(colors.hairline))
+                if (i > 0) Hairline()
                 row()
             }
         }
@@ -642,7 +659,7 @@ private fun IslandRow(text: String, lead: @Composable () -> Unit, actions: @Comp
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) { lead() }
         Spacer(Modifier.width(12.dp))
-        Text(text, style = Visor.type.label, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
+        Text(text, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { actions() }
     }
 }
@@ -658,18 +675,14 @@ private fun DayHeader(day: Day, first: Boolean, modifier: Modifier) {
         day.items.mapNotNull { i -> i.kept?.lat?.let { lat -> i.kept.lon?.let { lon -> lat to lon } } }
             .groupBy { (lat, lon) -> (lat * 100).toLong() to (lon * 100).toLong() }.maxByOrNull { it.value.size }?.value?.first()
     }
-    val place by androidx.compose.runtime.produceState(spot?.let { PlaceNames.cached(it.first, it.second) }, spot) {
+    val place by produceState(spot?.let { PlaceNames.cached(it.first, it.second) }, spot) {
         if (spot != null && value == null) value = PlaceNames.of(context, spot.first, spot.second)
     }
     // The first day opens the sheet; the others follow the tiles above them closely.
     Column(modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = if (first) 26.dp else 14.dp, bottom = 12.dp)) {
         Text(dayTitle(day.date), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
         Text(
-            listOfNotNull(
-                place,
-                photos.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.home_photos, it, it) },
-                videos.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.home_videos, it, it) },
-            ).joinToString(" · "),
+            (listOfNotNull(place) + countWords(LocalResources.current, photos, videos)).joinToString(" · "),
             style = Visor.type.label,
             color = colors.textSecondary,
             modifier = Modifier.padding(top = 2.dp),
@@ -677,10 +690,7 @@ private fun DayHeader(day: Day, first: Boolean, modifier: Modifier) {
     }
 }
 
-/**
- * One square of the grid. On the glasses only: the glasses' small preview under a veil, with their mark. A video
- * says how long it runs; a live photo and a favourite carry their marks. Choosing, a picked tile draws in.
- */
+/** One grid square with its type, favourite and glasses marks. */
 @Composable
 private fun Tile(
     modifier: Modifier,
@@ -720,7 +730,7 @@ private fun Tile(
             },
         ) {
             thumb?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-            if (item.onGlassesOnly) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+            if (item.onGlassesOnly) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = GLASSES_VEIL)))
             if (item.type == CaptureType.VIDEO || item.favorite) {
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.4f).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.45f)))))
             }
@@ -731,8 +741,11 @@ private fun Tile(
             }
             if (item.type == CaptureType.LIVE) Icon(VisorIcons.LivePhoto, null, mark.align(Alignment.TopEnd), tint = Color.White.copy(alpha = 0.9f))
             if (item.type == CaptureType.VIDEO) {
-                item.phone?.durationMs?.takeIf { it > 0 }?.let {
-                    Text(duration(it), style = Visor.type.label, color = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(horizontal = 7.dp, vertical = 5.dp))
+                val length = item.phone?.durationMs?.takeIf { it > 0 }
+                if (length != null) {
+                    Text(duration(length), style = Visor.type.label, color = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(horizontal = 7.dp, vertical = 5.dp))
+                } else {
+                    Icon(VisorIcons.Play, null, mark.align(Alignment.BottomEnd), tint = Color.White)
                 }
             }
             if (arriving) ProgressRing(progress, Modifier.align(Alignment.Center).size(26.dp))
@@ -758,6 +771,7 @@ private fun Tile(
 @Composable
 private fun SelectionBar(
     chosen: List<GalleryItem>,
+    canImport: Boolean,
     onImport: () -> Unit,
     onShare: () -> Unit,
     onFavorite: (Boolean) -> Unit,
@@ -771,105 +785,11 @@ private fun SelectionBar(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (chosen.any { it.onGlassesOnly }) Pill(stringResource(R.string.gallery_import), onImport, small = true, modifier = Modifier.padding(horizontal = 4.dp))
+        if (chosen.any { it.onGlassesOnly }) ActionPill(stringResource(R.string.gallery_import), onImport, Modifier.padding(horizontal = 4.dp), enabled = canImport)
         if (onPhone.isNotEmpty()) {
             RoundIcon(VisorIcons.Share, stringResource(R.string.gallery_share), onShare, size = 48.dp)
-            RoundIcon(if (allFavorite) VisorIcons.HeartFilled else VisorIcons.Heart, stringResource(R.string.gallery_favorite), { onFavorite(!allFavorite) }, size = 48.dp)
+            RoundIcon(if (allFavorite) VisorIcons.HeartFilled else VisorIcons.Heart, stringResource(R.string.gallery_favorite), { onFavorite(!allFavorite) }, size = 48.dp, selected = allFavorite)
             RoundIcon(VisorIcons.Trash, stringResource(R.string.gallery_delete), onDelete, size = 48.dp)
-        }
-    }
-}
-
-@Composable
-private fun UndoPill(count: Int, onUndo: () -> Unit) {
-    val colors = Visor.colors
-    Row(
-        Modifier.clip(RoundedCornerShape(50)).background(colors.raised).padding(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(pluralStringResource(R.plurals.gallery_deleted, count, count), style = Visor.type.label, color = colors.textSecondary)
-        Spacer(Modifier.width(12.dp))
-        Text(
-            stringResource(R.string.gallery_undo),
-            style = Visor.type.label,
-            color = colors.textPrimary,
-            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onUndo).padding(horizontal = 14.dp, vertical = 10.dp),
-        )
-    }
-}
-
-/** A white pill: the one kind of button that asks for something. */
-@Composable
-fun Pill(text: String, onClick: () -> Unit, small: Boolean = false, modifier: Modifier = Modifier) {
-    Text(
-        text,
-        style = Visor.type.label,
-        color = Color.Black,
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(Color.White)
-            .clickable(onClick = onClick)
-            .padding(horizontal = if (small) 14.dp else 20.dp, vertical = if (small) 8.dp else 12.dp),
-    )
-}
-
-@Composable
-fun RoundIcon(
-    icon: ImageVector,
-    description: String?,
-    onClick: () -> Unit,
-    size: Dp = 48.dp,
-    background: Color = Color.Transparent,
-    tint: Color = Visor.colors.textPrimary,
-) {
-    Box(
-        Modifier.size(size).clip(CircleShape).background(background).clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(icon, description, Modifier.size(22.dp), tint = tint)
-    }
-}
-
-/** How far an import has come, or a turning arc while it has not started moving. */
-@Composable
-fun ProgressRing(progress: Float?, modifier: Modifier = Modifier, color: Color = Color.White) {
-    val spin = rememberInfiniteTransition(label = "spin")
-    val turn by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "turn")
-    val shown by animateFloatAsState(progress ?: 0f, tween(300), label = "progress")
-    Canvas(modifier) {
-        val stroke = size.minDimension * 0.09f
-        drawCircle(color.copy(alpha = 0.25f), radius = size.minDimension / 2 - stroke, style = Stroke(stroke))
-        if (progress == null || progress <= 0f) {
-            drawArc(color, turn, 80f, false, topLeft = Offset(stroke, stroke), size = androidx.compose.ui.geometry.Size(size.width - 2 * stroke, size.height - 2 * stroke), style = Stroke(stroke, cap = StrokeCap.Round))
-        } else {
-            drawArc(color, -90f, 360f * shown, false, topLeft = Offset(stroke, stroke), size = androidx.compose.ui.geometry.Size(size.width - 2 * stroke, size.height - 2 * stroke), style = Stroke(stroke, cap = StrokeCap.Round))
-        }
-    }
-}
-
-/**
- * Each capture's import as a fraction, from its assets on the wire, never going back when a finished asset leaves
- * the list of transfers. Null for what is not being imported.
- */
-@Composable
-private fun rememberProgress(inFlight: Set<String>, transfers: List<Transfer>, items: List<GalleryItem>): Map<String, Float?> {
-    val best = remember { HashMap<String, Float>() }
-    // Assets seen on the wire: once one leaves the list of transfers, it has arrived.
-    val seen = remember { HashMap<String, MutableSet<String>>() }
-    val captures = remember(items) { items.mapNotNull { it.capture }.associateBy { it.handle } }
-    return remember(inFlight, transfers, captures) {
-        best.keys.retainAll(inFlight)
-        seen.keys.retainAll(inFlight)
-        inFlight.associateWith { handle ->
-            val capture = captures[handle] ?: return@associateWith null
-            val total = capture.wanted.sumOf { it.size }.coerceAtLeast(1)
-            val ids = capture.wanted.map { it.id }.toSet()
-            val moving = transfers.filter { it.uuid in ids }
-            val mine = seen.getOrPut(handle) { HashSet() }.apply { addAll(moving.map { it.uuid }) }
-            if (mine.isEmpty()) return@associateWith null
-            val done = capture.wanted.filter { a -> a.id in mine && moving.none { it.uuid == a.id } }.sumOf { it.size }
-            val now = ((done + moving.sumOf { it.received }).toFloat() / total).coerceIn(0f, 1f)
-            maxOf(now, best[handle] ?: 0f).also { best[handle] = it }
         }
     }
 }
@@ -903,24 +823,17 @@ private fun Modifier.dragToSelect(
 private fun LazyGridState.tileAt(at: Offset): String? =
     layoutInfo.visibleItemsInfo.firstOrNull { it.contentType == "tile" && IntRect(it.offset, it.size).contains(at.round()) }?.key as? String
 
-private fun sheetShape(top: Float, radius: Float) = GenericShape { size, _ ->
-    addRoundRect(
-        RoundRect(0f, top, size.width, size.height + radius, topLeftCornerRadius = CornerRadius(radius), topRightCornerRadius = CornerRadius(radius)),
-    )
-}
-
-private const val STAGE = STAGE_KEY
 private const val ISLAND = "island"
+private const val PLACES_PUT_OFF = "places_put_off"
 private const val COLUMNS = 4
 private val GAP = 2.dp
-private val BAR = 56.dp
+/** Black over what is still only on the glasses. */
+internal const val GLASSES_VEIL = 0.38f
 /** The stage is this many widths tall. */
 private const val STAGE_RATIO = 1.3f
 private const val STAGE_PX = 1600
-private val SHEET_RADIUS = 28.dp
-private val PHOTO_RADIUS = 14.dp
+internal val PHOTO_RADIUS = 14.dp
 /** Air between the bar and the stage's picture, its caption, and under them. */
 private val PHOTO_TOP = 28.dp
 private val CAPTION = 29.dp
 private val STAGE_FOOT = 24.dp
-private val ISLAND_RADIUS = 18.dp

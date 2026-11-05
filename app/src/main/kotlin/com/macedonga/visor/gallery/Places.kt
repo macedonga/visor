@@ -3,15 +3,28 @@ package com.macedonga.visor.gallery
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
+import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.macedonga.visor.core.connection.CAMERA_PHOTO_STARTED
+import com.macedonga.visor.core.connection.CAMERA_VIDEO_STARTED
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.media.Place
 import com.macedonga.visor.core.media.PlaceLog
+import com.macedonga.visor.settings.Need
+import com.macedonga.visor.settings.openAppPage
+import com.macedonga.visor.settings.rememberOnResume
+import com.macedonga.visor.ui.allows
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -25,19 +38,37 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Whether the phone may say where it is, now and from the background, where the glasses' captures happen. */
-fun placesAllowed(context: Context): Boolean = context.allows(Manifest.permission.ACCESS_FINE_LOCATION) &&
-    (Build.VERSION.SDK_INT < 29 || context.allows(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+fun placesAllowed(context: Context): Boolean =
+    context.allows(Manifest.permission.ACCESS_FINE_LOCATION) && context.allows(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
 
-fun Context.allows(permission: String) = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+/** Whether places are allowed, and the ask: location first, then background; refused for good, Visor's page in Android's settings. */
+@Composable
+fun rememberPlacesAsk(): Pair<Boolean, () -> Unit> {
+    val context = LocalContext.current
+    val activity = LocalActivity.current
+    var allowed by rememberOnResume { placesAllowed(context) }
+    fun refusedForGood(permissions: Collection<String>) = permissions.all { activity?.shouldShowRequestPermissionRationale(it) == false }
+    val askBackground = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        allowed = placesAllowed(context)
+        if (!granted && refusedForGood(listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))) openAppPage(context)
+    }
+    val askFine = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { answers ->
+        allowed = placesAllowed(context)
+        // The background permission is a second question, and only after the first was granted.
+        if (!allowed && context.allows(Manifest.permission.ACCESS_FINE_LOCATION)) askBackground.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        else if (answers.values.none { it } && refusedForGood(answers.keys)) openAppPage(context)
+    }
+    return allowed to {
+        if (context.allows(Manifest.permission.ACCESS_FINE_LOCATION)) askBackground.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        else askFine.launch(Need.LOCATION.ask(context))
+    }
+}
 
-/**
- * Notes where the phone is each time the glasses start a photo or a video, so the import can put the place on
- * it later. Runs in the glasses' service, for as long as the connection does.
- */
+/** Logs the phone's position each time the glasses start a capture. */
 fun notePlaces(context: Context, scope: CoroutineScope, connection: GlassesConnection, log: PlaceLog) {
     scope.launch {
         connection.state.map { it.device?.camera }.distinctUntilChanged().collect { camera ->
-            if (camera != "CAPTURE_PHOTO_STARTED" && camera != "CAPTURE_VIDEO_STARTED") return@collect
+            if (camera != CAMERA_PHOTO_STARTED && camera != CAMERA_VIDEO_STARTED) return@collect
             val at = System.currentTimeMillis()
             here(context)?.let { log.record(Place(at, it.latitude, it.longitude, it.accuracy)) }
         }
@@ -50,13 +81,12 @@ private suspend fun here(context: Context): Location? {
     if (!context.allows(Manifest.permission.ACCESS_FINE_LOCATION) && !context.allows(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
     val manager = context.getSystemService(LocationManager::class.java) ?: return null
     val provider = when {
-        Build.VERSION.SDK_INT >= 31 && manager.hasProvider(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
+        manager.hasProvider(LocationManager.FUSED_PROVIDER) -> LocationManager.FUSED_PROVIDER
         manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
         else -> LocationManager.NETWORK_PROVIDER
     }
     val last = runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
     if (last != null && System.currentTimeMillis() - last.time < FRESH_MS && last.accuracy < 100f) return last
-    if (Build.VERSION.SDK_INT < 30) return last
     return withTimeoutOrNull(FIX_TIMEOUT_MS) {
         suspendCancellableCoroutine { done ->
             val cancel = CancellationSignal()
@@ -85,7 +115,7 @@ object PlaceNames {
             withTimeoutOrNull(FIX_TIMEOUT_MS) {
                 suspendCancellableCoroutine { done ->
                     geocoder.getFromLocation(lat, lon, 1, object : Geocoder.GeocodeListener {
-                        override fun onGeocode(addresses: MutableList<android.location.Address>) { if (done.isActive) done.resume(addresses.firstOrNull()) }
+                        override fun onGeocode(addresses: MutableList<Address>) { if (done.isActive) done.resume(addresses.firstOrNull()) }
                         override fun onError(errorMessage: String?) { if (done.isActive) done.resume(null) }
                     })
                 }

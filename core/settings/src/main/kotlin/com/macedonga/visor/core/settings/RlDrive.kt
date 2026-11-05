@@ -5,7 +5,7 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 
-/** svc33, RLDrive: the replicated store the glasses keep their settings in. Port of rldrive.py. */
+/** svc33, RLDrive: the replicated store the glasses keep their settings in. */
 const val SVC_RLDRIVE = 33
 const val MT_SYNC_MESSAGE = 1
 
@@ -49,43 +49,40 @@ fun buildSync(
     round: Long,
     known: Versions = emptyMap(),
     types: Collection<String> = (ALL_TYPES + known.keys).distinct(),
-    // kv objects to hand the glasses, as another replica of the namespace would in round 2.
-    push: Map<String, String> = emptyMap(),
-    // Objects of any type, the same way.
+    // Objects to hand the glasses in round 2, as another replica of the namespace would.
     objects: List<PushObject> = emptyList(),
     terminated: Boolean = false,
     usecaseTag: String = "",
 ): ByteArray {
-    val all = push.map { (uri, data) -> PushObject(uri, TYPE_KV, data.toByteArray()) } + objects
     var sync = ByteArray(0)
-    for (type in (types + all.map { it.type }).distinct()) {
+    for (type in (types + objects.map { it.type }).distinct()) {
         val theirs = known[type].orEmpty()
         val base = theirs[LOCAL_WRITER] ?: 0L
-        val mine = if (round == 0L) emptyList() else all.filter { it.type == type }
+        val mine = if (round == 0L) emptyList() else objects.filter { it.type == type }
         // Each object we add is one step of our writer's counter.
         val own = base + mine.size
         val writers = theirs + (LOCAL_WRITER to (if (round == 0L) 0L else own))
         var typeData = ByteArray(0)
         for ((writer, version) in writers) {
-            typeData += Wire.fieldBytes(11, Wire.fieldBytes(1, writer.toByteArray()) + Wire.fieldVarint(2, version))
+            typeData += Wire.fieldBytes(11, Wire.fieldString(1, writer) + Wire.fieldVarint(2, version))
         }
-        typeData += Wire.fieldBytes(12, type.toByteArray())
+        typeData += Wire.fieldString(12, type)
         mine.forEachIndexed { i, o ->
-            val obj = Wire.fieldBytes(1, o.uri.toByteArray()) + Wire.fieldBytes(2, o.type.toByteArray()) + Wire.fieldBytes(3, o.data) +
+            val obj = Wire.fieldString(1, o.uri) + Wire.fieldString(2, o.type) + Wire.fieldBytes(3, o.data) +
                 (if (o.deleted) Wire.fieldVarint(8, 1) else ByteArray(0))
-            val version = Wire.fieldBytes(1, LOCAL_WRITER.toByteArray()) + Wire.fieldVarint(2, base + i + 1)
+            val version = Wire.fieldString(1, LOCAL_WRITER) + Wire.fieldVarint(2, base + i + 1)
             typeData += Wire.fieldBytes(13, Wire.fieldBytes(6, obj) + Wire.fieldBytes(7, version))
         }
         sync += Wire.fieldBytes(16, typeData)
     }
     sync += Wire.fieldVarint(17, round) +
-        Wire.fieldBytes(18, requestId.toByteArray()) +
+        Wire.fieldString(18, requestId) +
         Wire.fieldVarint(19, API_VERSION) +
-        Wire.fieldBytes(20, namespace.toByteArray()) +
-        Wire.fieldBytes(21, LOCAL_WRITER.toByteArray()) +
+        Wire.fieldString(20, namespace) +
+        Wire.fieldString(21, LOCAL_WRITER) +
         (if (terminated) Wire.fieldVarint(22, 1) else ByteArray(0)) +
-        (if (usecaseTag.isNotEmpty()) Wire.fieldBytes(31, usecaseTag.toByteArray()) else ByteArray(0))
-    return Wire.fieldVarint(1, TYPE_SYNC_MESSAGE) + Wire.fieldBytes(2, sync) + Wire.fieldBytes(6, namespace.toByteArray())
+        (if (usecaseTag.isNotEmpty()) Wire.fieldString(31, usecaseTag) else ByteArray(0))
+    return Wire.fieldVarint(1, TYPE_SYNC_MESSAGE) + Wire.fieldBytes(2, sync) + Wire.fieldString(6, namespace)
 }
 
 /**
@@ -96,10 +93,10 @@ fun chunks(message: ByteArray, max: Int = 1024): List<ByteArray> {
     val outer = Wire.parse(message)
     val data = outer.bytes(2)
     if (data.size <= max) return listOf(message)
-    val id = java.util.UUID.randomUUID().toString().toByteArray()
+    val id = java.util.UUID.randomUUID().toString()
     val slices = (data.indices step max).map { data.copyOfRange(it, minOf(it + max, data.size)) }
     return slices.mapIndexed { i, slice ->
-        Wire.fieldVarint(1, TYPE_CHUNKED_SYNC_MESSAGE) + Wire.fieldBytes(2, slice) + Wire.fieldBytes(5, id) +
+        Wire.fieldVarint(1, TYPE_CHUNKED_SYNC_MESSAGE) + Wire.fieldBytes(2, slice) + Wire.fieldString(5, id) +
             Wire.fieldBytes(6, outer.bytes(6)) + Wire.fieldVarint(7, slices.size.toLong()) + Wire.fieldVarint(8, i.toLong())
     }
 }

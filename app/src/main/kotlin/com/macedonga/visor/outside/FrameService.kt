@@ -14,15 +14,17 @@ import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.DeveloperIntents as I
 import dagger.hilt.android.AndroidEntryPoint
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
@@ -38,17 +40,36 @@ class FrameService : Service() {
     private class Subscriber(val who: String, val token: String, val gapMs: Long, var sentAt: Long = 0)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val subscribers = ConcurrentHashMap<IBinder, Pair<Messenger, Subscriber>>()
-    private var pump: Job? = null
+    private val subscribers = MutableStateFlow<Map<IBinder, Pair<Messenger, Subscriber>>>(emptyMap())
     private var tooBig = false
 
     private val inbox = Messenger(Handler(Looper.getMainLooper()) { msg -> take(msg); true })
 
     override fun onBind(intent: Intent): IBinder = inbox.binder
 
+    override fun onCreate() {
+        super.onCreate()
+        scope.launch {
+            while (true) {
+                combine(live.running, subscribers) { running, subs -> running && subs.isNotEmpty() }.first { it }
+                val began = SystemClock.elapsedRealtime()
+                val jpeg = runCatching { live.frameNow() }.getOrNull()
+                if (jpeg != null && jpeg.size > MAX_BYTES) {
+                    // Past what one Binder call carries.
+                    if (!tooBig) log.add("Developer mode: a Live frame of ${jpeg.size / 1000} KB is too big to hand over")
+                    tooBig = true
+                } else if (jpeg != null) {
+                    serve(jpeg)
+                }
+                val gap = subscribers.value.values.minOfOrNull { it.second.gapMs } ?: continue
+                delay((gap - (SystemClock.elapsedRealtime() - began)).coerceAtLeast(MIN_PAUSE_MS))
+            }
+        }
+    }
+
     override fun onDestroy() {
         scope.cancel()
-        subscribers.clear()
+        subscribers.value = emptyMap()
         super.onDestroy()
     }
 
@@ -70,41 +91,22 @@ class FrameService : Service() {
                     return
                 }
                 val gap = (runCatching { data?.getLong(I.EXTRA_INTERVAL_MS) }.getOrNull()?.takeIf { it > 0 } ?: DEFAULT_GAP_MS).coerceAtLeast(MIN_GAP_MS)
-                subscribers[client.binder] = client to Subscriber(who, token!!, gap)
+                val sub = Subscriber(who, token!!, gap)
+                subscribers.update { it + (client.binder to (client to sub)) }
                 log.add("Developer mode: Live frames for $who every $gap ms")
-                start()
             }
-            I.FRAMES_UNSUBSCRIBE -> subscribers.remove(client.binder)?.let { log.add("Developer mode: no more Live frames for ${it.second.who}") }
-        }
-    }
-
-    private fun start() {
-        if (pump?.isActive == true) return
-        pump = scope.launch {
-            while (subscribers.isNotEmpty()) {
-                live.running.first { it }
-                val began = SystemClock.elapsedRealtime()
-                val jpeg = runCatching { live.frameNow() }.getOrNull()
-                if (jpeg != null && jpeg.size > MAX_BYTES) {
-                    // Past what one Binder call carries.
-                    if (!tooBig) log.add("Developer mode: a Live frame of ${jpeg.size / 1000} KB is too big to hand over")
-                    tooBig = true
-                } else if (jpeg != null) {
-                    serve(jpeg)
-                }
-                val gap = subscribers.values.minOfOrNull { it.second.gapMs } ?: break
-                delay((gap - (SystemClock.elapsedRealtime() - began)).coerceAtLeast(MIN_PAUSE_MS))
-            }
+            I.FRAMES_UNSUBSCRIBE ->
+                subscribers.getAndUpdate { it - client.binder }[client.binder]?.let { log.add("Developer mode: no more Live frames for ${it.second.who}") }
         }
     }
 
     private fun serve(jpeg: ByteArray) {
         val now = SystemClock.elapsedRealtime()
-        for ((key, entry) in subscribers) {
+        for ((key, entry) in subscribers.value) {
             val (client, sub) = entry
             // The mode turned off or the token renewed since it subscribed.
             if (!developer.on.value || !developer.holds(sub.token)) {
-                subscribers.remove(key)
+                subscribers.update { it - key }
                 log.add("Developer mode: no more Live frames for ${sub.who}")
                 send(client, I.FRAMES_REFUSED, Bundle().apply { putString(I.EXTRA_REASON, if (developer.on.value) TOKEN else OFF) })
                 continue
@@ -115,7 +117,7 @@ class FrameService : Service() {
                 putByteArray(I.EXTRA_JPEG, jpeg)
                 putLong(I.EXTRA_TIME, System.currentTimeMillis())
             }
-            if (send(client, I.FRAMES_FRAME, frame)) sub.sentAt = now else subscribers.remove(key)
+            if (send(client, I.FRAMES_FRAME, frame)) sub.sentAt = now else subscribers.update { it - key }
         }
     }
 

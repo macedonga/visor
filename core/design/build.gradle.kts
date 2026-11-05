@@ -8,7 +8,6 @@ android {
 }
 
 dependencies {
-    // Material 3 components are used. Its colour and shape defaults are not: the theme
-    // below replaces both, per the project rule.
+    // MaterialTheme, fed Visor's colours and type in Theme.kt.
     implementation(libs.androidx.compose.material3)
 }

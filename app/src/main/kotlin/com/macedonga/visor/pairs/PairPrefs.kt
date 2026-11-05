@@ -3,10 +3,7 @@ package com.macedonga.visor.pairs
 import android.content.Context
 import android.content.SharedPreferences
 
-/**
- * Visor's own notes about one pair, in a preferences file of its own (`<name>_<serial>`). The first pair to ask takes
- * what the shared file held from before Visor kept pairs apart; with no pair known yet, the shared file it is.
- */
+/** Visor's notes on one pair, in `<name>_<serial>`; the first pair to ask takes the shared file's keys, a null serial gets the shared file. */
 fun pairPrefs(context: Context, name: String, serial: String?): SharedPreferences {
     val shared = context.getSharedPreferences(name, Context.MODE_PRIVATE)
     serial ?: return shared

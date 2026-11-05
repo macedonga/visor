@@ -1,6 +1,6 @@
 package com.macedonga.visor.core.identity
 
-/** Why the services went quiet. */
+/** What one trust check says about the key. */
 enum class Diagnosis {
     /** Trust completed and the canary answered. Nothing is wrong. */
     HEALTHY,
@@ -18,8 +18,8 @@ enum class Diagnosis {
     UNKNOWN,
 }
 
-/** `diagnose`. */
-fun diagnose(trustOk: Boolean, canaryAnswered: Boolean, credentialReceived: Boolean = false): Diagnosis {
+/** The verdict from trust, the canary and the glasses' own credential. */
+fun diagnose(trustOk: Boolean, canaryAnswered: Boolean, credentialReceived: Boolean): Diagnosis {
     if (!canaryAnswered) {
         // Glasses that refuse the key also withhold their EndLinkSetup, so the canary is never asked. Their own
         // credential arriving is the answer then: identity is working, and ours is what it turned down.

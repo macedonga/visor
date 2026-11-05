@@ -2,6 +2,7 @@ package com.macedonga.visor.media
 
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
+import android.util.Size
 import android.view.Surface
 import android.view.TextureView
 import androidx.compose.runtime.Composable
@@ -19,11 +20,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-/**
- * The stream's picture, drawn into a TextureView so it can be scaled, clipped and read back like any other view.
- * [onShown] runs on the main thread for every frame that reaches the screen.
- */
+/** The stream's picture in a TextureView; [onShown] runs on the main thread for each frame shown. */
 class LiveVideo(private val live: LiveStream) {
     private var view: TextureView? = null
     private var feeder: Feeder? = null
@@ -58,17 +57,17 @@ class LiveVideo(private val live: LiveStream) {
     /** The picture shrunk to [w]×[h], for its colours. Main thread. */
     fun sample(w: Int, h: Int): Bitmap? = view?.takeIf { it.isAvailable }?.getBitmap(w, h)
 
-    /** The picture at the size it was decoded, as a JPEG. Null when nothing is showing. Main thread for the read. */
-    fun grab(onJpeg: (ByteArray?) -> Unit) {
-        val size = live.decodedSize.value?.split('x')?.mapNotNull { it.toIntOrNull() }
+    /** The picture at the size it was decoded, as a JPEG. Null when nothing is showing. Call on the main thread. */
+    suspend fun grab(): ByteArray? {
+        val size = live.decodedSize.value
         val bitmap = view?.takeIf { it.isAvailable }?.let { v ->
-            if (size?.size == 2) v.getBitmap(size[0], size[1]) else v.bitmap
-        } ?: return onJpeg(null)
-        CoroutineScope(Dispatchers.Default).launch {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-            bitmap.recycle()
-            onJpeg(out.toByteArray())
+            if (size != null) v.getBitmap(size.width, size.height) else v.bitmap
+        } ?: return null
+        return withContext(Dispatchers.Default) {
+            ByteArrayOutputStream().also {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it)
+                bitmap.recycle()
+            }.toByteArray()
         }
     }
 }
@@ -88,11 +87,7 @@ private const val CATCH_UP_MS = 250L
 // Waiting this long for a keyframe, configure the stream again: that restarts the encoder on one.
 private const val KEY_WAIT_MS = 2_000L
 
-/**
- * Feeds frames to a decoder rebuilt at every stream start, size change or decoder error, each at its turn by
- * [Playout]. New parameter sets go in as they arrive, a late frame is decoded without being shown, and after a lost
- * frame it waits for a keyframe, asking for one when none comes.
- */
+/** Feeds each frame at its turn to a decoder rebuilt on a new stream, size or error. */
 private class Feeder(private val live: LiveStream, private val surface: Surface) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
 
@@ -119,7 +114,7 @@ private class Feeder(private val live: LiveStream, private val surface: Surface)
                     if (current?.failed == true) live.note("The decoder failed; starting a new one")
                     current?.release()
                     val q = live.requested
-                    decoder = LiveDecoder(surface, q.width, q.height) { w, h -> live.decodedSize.value = "${w}x$h" }
+                    decoder = LiveDecoder(surface, q.width, q.height) { w, h -> live.decodedSize.value = Size(w, h) }
                     playout = Playout()
                     shownBase = 0
                     generation = live.generation.value

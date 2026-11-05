@@ -2,13 +2,6 @@ package com.macedonga.visor.core.media
 
 import com.macedonga.visor.core.protocol.Wire
 
-/**
- * svc51350, media_streaming_control: the live camera stream. The message types are the firmware's
- * MessageType enum, read off libmediastream_transport.so's protobuf-lite tables; the fields are the
- * Meta app's com.meta.media.stream.proto classes.
- */
-const val SVC_MEDIA_STREAMING_CONTROL = 51350
-
 object StreamType {
     const val CODEC_CONFIGURATION_UPDATE_REQUEST = 1
     const val CODEC_CONFIGURATION_UPDATE_RESPONSE = 2
@@ -23,10 +16,10 @@ object StreamType {
     const val AUDIO_CAST_BUFFER_END = 11
     const val VIDEO_CAST_BUFFER_END = 12
     const val CONTROL_STREAM_STOPPED = 13
-    const val USER_EVENT_NOTIFICATION = 23
     const val STREAMING_LIFECYCLE_NOTIFICATION = 19
     const val SYSTEM_HEALTH_EVENT = 21
     const val SUPPORTED_CONFIGURATION_UPDATE_REQUEST = 22
+    const val USER_EVENT_NOTIFICATION = 23
     const val STREAM_TELEMETRY_EVENT = 25
     const val SESSION_SETTINGS = 27
     const val UPDATE_CLIENT_APP_SETTINGS = 28
@@ -34,14 +27,6 @@ object StreamType {
     const val PHOTO_CAST_BUFFER_END = 35
     const val METADATA_CAST_BUFFER = 36
     const val CONFIGURE_MEDIA_STREAM_FEATURES = 40
-}
-
-/** ApplicationType. The SessionSettings an app sends names which kind of session it wants. */
-object StreamApp {
-    const val FACEBOOK = 1
-    const val INSTAGRAM = 2
-    const val FAIR_DEMO = 3
-    const val MMAI_LIVE = 4
 }
 
 object StreamAction {
@@ -72,13 +57,13 @@ data class VideoConfig(
 )
 
 /** SessionSettings: 1 connectivity, 2 abr, 3 timers, 4 application type, 5 overrides. */
-fun sessionSettings(app: Int, doffTimerSec: Int, inactivityTimerSec: Int, bypassDonCheck: Boolean, allowFrameCapture: Boolean = true, allowOcr: Boolean = false): ByteArray =
+fun sessionSettings(app: Int, doffTimerSec: Int, inactivityTimerSec: Int, bypassDonCheck: Boolean, allowOcr: Boolean = false): ByteArray =
     Wire.fieldBytes(3, Wire.fieldVarint(1, doffTimerSec.toLong()) + Wire.fieldVarint(2, inactivityTimerSec.toLong())) +
         Wire.fieldVarint(4, app.toLong()) +
         // OverrideSettings: 1 bypassDonCheck, 2 mediaBatchingIntervalMs, 3 allowFrameCapture, 4 allowOcrStreaming.
         Wire.fieldBytes(
             5,
-            Wire.fieldVarint(1, if (bypassDonCheck) 1 else 0) + Wire.fieldVarint(2, 0) + Wire.fieldVarint(3, if (allowFrameCapture) 1 else 0) +
+            Wire.fieldVarint(1, if (bypassDonCheck) 1 else 0) + Wire.fieldVarint(2, 0) + Wire.fieldVarint(3, 1) +
                 Wire.fieldVarint(4, if (allowOcr) 1 else 0),
         )
 
@@ -87,7 +72,7 @@ data class AudioConfig(val sampleRate: Int = 48_000, val bitrate: Int = 96_000, 
 
 /** ConfigureAudioStreamRequest: 1 nonce, 2 AudioConfig {1 mime, 2 rate, 3 bitrate, 4 channels, 5 profile}, 3 enabled. */
 fun configureAudio(nonce: Int, config: AudioConfig, enabled: Boolean = true): ByteArray {
-    val c = Wire.fieldBytes(1, "audio/mp4a-latm".toByteArray()) +
+    val c = Wire.fieldString(1, "audio/mp4a-latm") +
         Wire.fieldVarint(2, config.sampleRate.toLong()) +
         Wire.fieldVarint(3, config.bitrate.toLong()) +
         Wire.fieldVarint(4, config.channels.toLong()) +
@@ -105,8 +90,8 @@ object CodecType {
 }
 
 /** ConfigureVideoStreamRequest: 1 nonce, 2 VideoConfig, 3 enabled. */
-fun configureVideo(nonce: Int, config: VideoConfig, enabled: Boolean = true): ByteArray {
-    val c = Wire.fieldBytes(1, config.mime.toByteArray()) +
+fun configureVideo(nonce: Int, config: VideoConfig): ByteArray {
+    val c = Wire.fieldString(1, config.mime) +
         Wire.fieldVarint(2, config.width.toLong()) +
         Wire.fieldVarint(3, config.height.toLong()) +
         Wire.fieldVarint(4, config.bitrate.toLong()) +
@@ -114,7 +99,7 @@ fun configureVideo(nonce: Int, config: VideoConfig, enabled: Boolean = true): By
         Wire.fieldVarint(6, config.iFrameInterval.toLong()) +
         Wire.fieldVarint(7, config.eisMode.toLong()) +
         Wire.fieldVarint(8, config.captureFrameRate.toLong())
-    return Wire.fieldVarint(1, nonce.toLong()) + Wire.fieldBytes(2, c) + Wire.fieldVarint(3, if (enabled) 1 else 0)
+    return Wire.fieldVarint(1, nonce.toLong()) + Wire.fieldBytes(2, c) + Wire.fieldVarint(3, 1)
 }
 
 /** ControlStreamRequest: 1 nonce, 2 action, 3 session id. */

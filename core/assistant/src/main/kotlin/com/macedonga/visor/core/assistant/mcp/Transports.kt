@@ -4,7 +4,6 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
-import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLException
@@ -35,10 +34,8 @@ import org.json.JSONObject
 class McpException(
     val kind: Kind,
     message: String,
-    // WWW-Authenticate, for UNAUTHORIZED and FORBIDDEN.
+    // WWW-Authenticate, for UNAUTHORIZED.
     val challenge: String? = null,
-    // The JSON-RPC error code, for ERROR.
-    val code: Int = 0,
     cause: Throwable? = null,
 ) : IOException(message, cause) {
     enum class Kind {
@@ -79,9 +76,9 @@ internal suspend fun <T> Call.fetch(read: (Response) -> T): T = coroutineScope {
 internal fun IOException.asMcp(): McpException = when {
     this is McpException -> this
     // Android 16's local network protection refuses the connect with EPERM.
-    "EPERM" in message.orEmpty() || "ermission denied" in message.orEmpty() ->
+    "EPERM" in message.orEmpty() || message.orEmpty().contains("permission denied", ignoreCase = true) ->
         McpException(McpException.Kind.LOCAL_NETWORK, "Android refused the local network", cause = this)
-    this is SocketTimeoutException || this is InterruptedIOException -> McpException(McpException.Kind.TIMEOUT, "the server took too long", cause = this)
+    this is InterruptedIOException -> McpException(McpException.Kind.TIMEOUT, "the server took too long", cause = this)
     this is UnknownHostException -> McpException(McpException.Kind.UNREACHABLE, "no such address (${message.orEmpty()})", cause = this)
     this is ConnectException || this is NoRouteToHostException -> McpException(McpException.Kind.UNREACHABLE, "nothing answers there", cause = this)
     this is SSLException -> McpException(McpException.Kind.UNREACHABLE, "secure connection failed: ${message.orEmpty()}", cause = this)
@@ -97,7 +94,7 @@ internal fun Response.requireSuccess(session: Boolean) {
     val detail = "HTTP $code" + (said?.let { ": $it" } ?: "")
     throw when (code) {
         401 -> McpException(McpException.Kind.UNAUTHORIZED, detail, challenge = header("WWW-Authenticate"))
-        403 -> McpException(McpException.Kind.FORBIDDEN, detail, challenge = header("WWW-Authenticate"))
+        403 -> McpException(McpException.Kind.FORBIDDEN, detail)
         404 -> McpException(if (session) McpException.Kind.SESSION_GONE else McpException.Kind.NOT_MCP, detail)
         405, 406, 415 -> McpException(McpException.Kind.NOT_MCP, detail)
         408, 504 -> McpException(McpException.Kind.TIMEOUT, detail)
@@ -179,6 +176,10 @@ internal class StreamableHttp(
     @Volatile
     private var closed = false
 
+    // The credentials last sent, for the DELETE that ends the session.
+    @Volatile
+    private var lastHeaders: Map<String, String> = emptyMap()
+
     override val alive: Boolean get() = !closed
 
     private suspend fun post(message: JSONObject): Request = Request.Builder().url(url)
@@ -187,7 +188,7 @@ internal class StreamableHttp(
         .apply {
             session?.let { header("Mcp-Session-Id", it) }
             protocolVersion?.let { header("MCP-Protocol-Version", it) }
-            headers().forEach { (k, v) -> header(k, v) }
+            headers().also { lastHeaders = it }.forEach { (k, v) -> header(k, v) }
         }
         .build()
 
@@ -229,7 +230,10 @@ internal class StreamableHttp(
         // Ending the session is a courtesy: nothing waits for it.
         val id = session ?: return
         val request = Request.Builder().url(url).delete().header("Mcp-Session-Id", id)
-            .apply { protocolVersion?.let { header("MCP-Protocol-Version", it) } }.build()
+            .apply {
+                protocolVersion?.let { header("MCP-Protocol-Version", it) }
+                lastHeaders.forEach { (k, v) -> header(k, v) }
+            }.build()
         http.newCall(request).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: Call, e: IOException) = Unit
             override fun onResponse(call: Call, response: Response) = response.close()
@@ -247,7 +251,7 @@ internal class LegacySse(
     private val stream: OkHttpClient,
     private val headers: suspend () -> Map<String, String>,
     private val inbound: Inbound,
-    scope: CoroutineScope,
+    parent: CoroutineScope,
 ) : RpcTransport {
     override val kind = Transport.SSE
 
@@ -259,8 +263,8 @@ internal class LegacySse(
 
     override val alive: Boolean get() = !closed
 
-    private val job = Job(scope.coroutineContext[Job])
-    private val scope = CoroutineScope(scope.coroutineContext + job + Dispatchers.IO)
+    private val job = Job(parent.coroutineContext[Job])
+    private val scope = CoroutineScope(parent.coroutineContext + job + Dispatchers.IO)
     private val pending = ConcurrentHashMap<String, CompletableDeferred<JSONObject>>()
     private val aside = Channel<JSONObject>(Channel.UNLIMITED)
     private var endpoint: HttpUrl? = null
@@ -286,7 +290,7 @@ internal class LegacySse(
                             url.resolve(data.trim())?.let(ready::complete)
                         } else {
                             for (m in messages(data)) {
-                                if (m.has("method")) aside.trySend(m) else pending.remove(m.opt("id")?.toString())?.complete(m)
+                                if (m.has("method")) aside.trySend(m) else m.opt("id")?.toString()?.let { pending.remove(it) }?.complete(m)
                             }
                         }
                         !closed

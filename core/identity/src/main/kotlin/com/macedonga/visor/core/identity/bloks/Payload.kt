@@ -7,24 +7,17 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-/** A component: its id (a code point in the payload) and its attributes, keyed by attribute id. */
+/** A component: its type (a code point in the payload) and its attributes by attribute id. */
 class Node(val type: Int, val attrs: Map<Int, Any?>) {
     operator fun get(attr: Int): Any? = attrs[attr]
 
-    @Suppress("UNCHECKED_CAST")
-    fun children(attr: Int = CHILDREN): List<Node> = (attrs[attr] as? List<Any?>).orEmpty().filterIsInstance<Node>()
-
     override fun toString() = "Node($type)"
-
-    companion object {
-        const val CHILDREN = 32
-    }
 }
 
 /** A script attribute or table entry, parsed on first use. */
@@ -33,11 +26,8 @@ class Script(val source: String) {
     override fun toString() = "Script(${source.length})"
 }
 
-/**
- * A `component_queries` entry: a part of the screen fetched on its own (an async component), whose tree replaces the
- * children of the component [target]. Until it comes the screen shows a skeleton.
- */
-class ComponentQuery(val id: String, val target: String?, val appId: Script?, val params: Script?, val clientParams: Script?)
+/** An async component: fetched on its own, its tree replaces the children of [target]. */
+class ComponentQuery(val target: String?, val appId: Script?, val params: Script?, val clientParams: Script?)
 
 /** A local ("ls") or global ("gs") variable the payload declares. A global in mode "p" is reset when declared. */
 class Variable(val id: String, val type: String, val initial: Any?, val initialScript: Script?, val key: String?, val mode: String?)
@@ -66,41 +56,46 @@ class Payload(
         fun parse(bundle: String): Payload = of(Json.parseToJsonElement(bundle).jsonObject)
 
         fun of(layoutHolder: JsonObject): Payload {
-            val p = layoutHolder["layout"]!!.jsonObject["bloks_payload"]!!.jsonObject
+            val p = layoutHolder["layout"]?.jsonObject?.get("bloks_payload")?.jsonObject ?: throw BloksException("answer has no layout.bloks_payload")
             return Payload(
                 tree = p["tree"]?.let { convert(it) as? Node },
-                action = (p["action"] as? JsonPrimitive)?.contentOrNull()?.let(::Script),
+                action = (p["action"] as? JsonPrimitive)?.contentOrNull?.let(::Script),
                 variables = (p["data"] as? JsonArray).orEmpty().map { v ->
                     val o = v.jsonObject
                     val d = o["data"] as? JsonObject
                     Variable(
-                        id = o["id"]!!.jsonPrimitive.content,
+                        id = (o["id"] as? JsonPrimitive)?.contentOrNull ?: throw BloksException("variable without id"),
                         type = o["type"]?.jsonPrimitive?.content.orEmpty(),
                         initial = d?.get("initial")?.let(::convert),
-                        initialScript = (d?.get("initial_lispy") as? JsonPrimitive)?.contentOrNull()?.let(::Script),
-                        key = (d?.get("key") as? JsonPrimitive)?.contentOrNull(),
-                        mode = (d?.get("mode") as? JsonPrimitive)?.contentOrNull(),
+                        initialScript = (d?.get("initial_lispy") as? JsonPrimitive)?.contentOrNull?.let(::Script),
+                        key = (d?.get("key") as? JsonPrimitive)?.contentOrNull,
+                        mode = (d?.get("mode") as? JsonPrimitive)?.contentOrNull,
                     )
                 },
                 scripts = (p["ft"] as? JsonObject).orEmpty().mapValues { Script(it.value.jsonPrimitive.content) },
                 embedded = (p["embedded_payloads"] as? JsonArray).orEmpty().associate { e ->
                     val o = e.jsonObject
-                    o["id"]!!.jsonPrimitive.content to of(o["payload"]!!.jsonObject)
+                    val id = (o["id"] as? JsonPrimitive)?.contentOrNull ?: throw BloksException("embedded payload without id")
+                    id to of(o["payload"] as? JsonObject ?: throw BloksException("embedded payload without payload"))
                 },
                 props = (p["props"] as? JsonArray).orEmpty().associate { e ->
-                    e.jsonObject["name"]!!.jsonPrimitive.content to e.jsonObject["id"]!!.jsonPrimitive.content
+                    val o = e.jsonObject
+                    val name = (o["name"] as? JsonPrimitive)?.contentOrNull
+                    val id = (o["id"] as? JsonPrimitive)?.contentOrNull
+                    if (name == null || id == null) throw BloksException("prop without name or id")
+                    name to id
                 },
                 values = (p["values"] as? JsonArray).orEmpty().mapNotNull { e ->
                     val o = e as? JsonObject ?: return@mapNotNull null
-                    val id = (o["id"] as? JsonPrimitive)?.contentOrNull() ?: return@mapNotNull null
-                    val expression = (o["expression"] as? JsonPrimitive)?.contentOrNull() ?: return@mapNotNull null
+                    val id = (o["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+                    val expression = (o["expression"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                     id to Script(expression)
                 }.toMap(),
                 constants = when (val ct = p["ct"]) {
                     is JsonObject -> ct.mapValues { convert(it.value) }
                     is JsonArray -> ct.mapNotNull { e ->
                         val o = e as? JsonObject ?: return@mapNotNull null
-                        val name = ((o["name"] ?: o["id"]) as? JsonPrimitive)?.contentOrNull() ?: return@mapNotNull null
+                        val name = ((o["name"] ?: o["id"]) as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
                         name to o["value"]?.let(::convert)
                     }.toMap()
                     else -> emptyMap()
@@ -108,10 +103,9 @@ class Payload(
                 templates = (p["templates"] as? JsonObject).orEmpty().mapNotNull { (id, tree) -> (convert(tree) as? Node)?.let { id to it } }.toMap(),
                 componentQueries = (p["component_queries"] as? JsonArray).orEmpty().mapNotNull { e ->
                     val o = e as? JsonObject ?: return@mapNotNull null
-                    fun script(key: String) = (o[key] as? JsonPrimitive)?.contentOrNull()?.let(::Script)
+                    fun script(key: String) = (o[key] as? JsonPrimitive)?.contentOrNull?.let(::Script)
                     ComponentQuery(
-                        id = (o["id"] as? JsonPrimitive)?.contentOrNull().orEmpty(),
-                        target = ((o["targets"] as? JsonObject)?.get("component") as? JsonPrimitive)?.contentOrNull(),
+                        target = ((o["targets"] as? JsonObject)?.get("component") as? JsonPrimitive)?.contentOrNull,
                         appId = script("app_id_expr"),
                         params = script("params"),
                         clientParams = script("client_params"),
@@ -140,7 +134,5 @@ class Payload(
         }
 
         private fun attrId(key: String): Int = if (key.length == 1) key[0].code else key.toIntOrNull() ?: -1
-
-        private fun JsonPrimitive.contentOrNull(): String? = if (this is JsonNull) null else content
     }
 }

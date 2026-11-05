@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.transport
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -11,10 +12,12 @@ import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
 import java.io.IOException
+import java.util.Timer
+import java.util.TimerTask
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -24,20 +27,18 @@ import kotlinx.coroutines.withTimeoutOrNull
 val META_LE_SERVICE: UUID = UUID.fromString("0000fd5f-0000-1000-8000-00805f9b34fb")
 val META_PSM_CHARACTERISTIC: UUID = UUID.fromString("05acbe9f-6f61-4ca9-80bf-c8bbb52991c0")
 
-/** The PSM lensbreak connects to when GATT does not say. */
+/** The glasses' usual L2CAP PSM, tried before GATT is read. */
 const val META_LE_DEFAULT_PSM: Int = 0x80
 
 /**
  * The byte pipe under AirShield over Bluetooth LE: an L2CAP channel to the bonded glasses at [address], on the LE
  * link the [keeper] holds. The glasses keep it up while folded or charging in the case, when RFCOMM goes quiet.
- * Ported from lensbreak's link/l2cap_le.py.
  */
 class BluetoothLeTransport(
     private val context: Context,
     private val address: String,
     private val wireLog: WireLog? = null,
     private val keeper: LeKeeper? = null,
-    private val io: CoroutineDispatcher = Dispatchers.IO,
     // The Neural Band's is 129.
     private val defaultPsm: Int = META_LE_DEFAULT_PSM,
 ) : Transport {
@@ -46,32 +47,42 @@ class BluetoothLeTransport(
     @Volatile private var gatt: BluetoothGatt? = null
     @Volatile private var stream: SduStream? = null
 
-    @android.annotation.SuppressLint("MissingPermission")
+    /** Counts closes, so a connect that was in flight when one happened does not undo it. */
+    private val closes = AtomicInteger(0)
+
+    @SuppressLint("MissingPermission")
     override suspend fun connect() {
         close()
+        val before = closes.get()
         if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             throw TransportConnectException(ConnectFailure.PERMISSION_REFUSED, "Visor may not use Bluetooth yet")
         }
-        val device = context.getSystemService(BluetoothManager::class.java)?.adapter?.getRemoteDevice(address)
-            ?: throw TransportConnectException(ConnectFailure.BLUETOOTH_OFF, "Bluetooth is off")
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+            ?: throw TransportConnectException(ConnectFailure.BLUETOOTH_UNSUPPORTED, "this phone has no Bluetooth")
+        if (!adapter.isEnabled) throw TransportConnectException(ConnectFailure.BLUETOOTH_OFF, "Bluetooth is off")
+        val device = try {
+            adapter.getRemoteDevice(address)
+        } catch (error: IllegalArgumentException) {
+            throw TransportConnectException(ConnectFailure.BAD_ADDRESS, "$address is not a Bluetooth address", error)
+        }
         // The usual PSM first: reading it over GATT on a fresh link cost up to 6 s; read only when that one fails.
         val known = keeper?.psm
         val first = known ?: defaultPsm
         keeper?.note("opening L2CAP psm $first, LE link ${if (keeper.connected.value) "up" else "down"}")
         try {
-            open(device, first)
+            open(device, first, before)
         } catch (refused: TransportConnectException) {
             if (known != null || refused.failure == ConnectFailure.PERMISSION_REFUSED) throw refused
             val read = withTimeoutOrNull(GATT_MS) { readPsm(device) }
             if (read == null || read == first) throw refused
             keeper?.note("opening L2CAP psm $read, as the glasses name it")
-            open(device, read)
+            open(device, read, before)
         }
     }
 
-    @android.annotation.SuppressLint("MissingPermission")
-    private suspend fun open(device: android.bluetooth.BluetoothDevice, psm: Int) {
-        withContext(io) {
+    @SuppressLint("MissingPermission")
+    private suspend fun open(device: BluetoothDevice, psm: Int, before: Int) {
+        withContext(Dispatchers.IO) {
             val opening = try {
                 device.createInsecureL2capChannel(psm)
             } catch (error: SecurityException) {
@@ -82,8 +93,8 @@ class BluetoothLeTransport(
             // Whoever flips [settled] first wins: the timer closes the socket only if it gets there before the connect ends.
             val settled = AtomicBoolean(false)
             val timedOut = AtomicBoolean(false)
-            val watchdog = java.util.Timer(true).apply {
-                schedule(object : java.util.TimerTask() {
+            val watchdog = Timer(true).apply {
+                schedule(object : TimerTask() {
                     override fun run() {
                         if (!settled.compareAndSet(false, true)) return
                         timedOut.set(true)
@@ -101,19 +112,24 @@ class BluetoothLeTransport(
             } finally {
                 watchdog.cancel()
             }
+            if (closes.get() != before) {
+                runCatching { opening.close() }
+                throw TransportClosedException("the link was closed while it was opening")
+            }
             socket = opening
             stream = SduStream(opening.inputStream, opening.outputStream, wireLog)
         }
     }
 
     override suspend fun send(frame: ByteArray) {
-        withContext(io) { open().send(frame) }
+        withContext(Dispatchers.IO) { open().send(frame) }
     }
 
-    override suspend fun receive(): ByteArray = withContext(io) { open().receive() }
+    override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     override fun close() {
+        closes.incrementAndGet()
         stream = null
         socket?.let { runCatching { it.close() } }
         socket = null
@@ -124,7 +140,7 @@ class BluetoothLeTransport(
     private fun open(): SduStream = stream ?: throw TransportClosedException("not connected")
 
     /** The PSM from the glasses' GATT characteristic, when the keeper has not read it yet. */
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private suspend fun readPsm(device: BluetoothDevice): Int? {
         val result = CompletableDeferred<Int?>()
         val callback = object : BluetoothGattCallback() {
@@ -159,7 +175,7 @@ class BluetoothLeTransport(
 
 /**
  * The PSM characteristic is 16-bit little-endian words, e.g. `00 00 81 00`; the channel's PSM is the word in the LE
- * dynamic range, else the fixed one (lensbreak notes/72).
+ * dynamic range, else the fixed one.
  */
 internal fun parsePsm(value: ByteArray): Int? {
     val words = (0 until value.size / 2).map { (value[it * 2].toInt() and 0xFF) or ((value[it * 2 + 1].toInt() and 0xFF) shl 8) }

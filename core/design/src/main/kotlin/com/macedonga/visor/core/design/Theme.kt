@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.design
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -22,8 +23,10 @@ fun VisorTheme(
         MaterialTheme(
             colorScheme = colors.toMaterialScheme(),
             typography = typography.toMaterialTypography(),
-            content = content,
-        )
+        ) {
+            // No Surface at the root: without this, ripples take Material's black.
+            CompositionLocalProvider(LocalContentColor provides colors.textPrimary, content = content)
+        }
     }
 }
 
@@ -40,23 +43,39 @@ object Visor {
 private fun VisorColors.toMaterialScheme() = darkColorScheme(
     primary = textPrimary,
     onPrimary = canvas,
+    primaryContainer = textPrimary,
+    onPrimaryContainer = canvas,
+    inversePrimary = canvas,
     secondary = control,
     onSecondary = textPrimary,
+    secondaryContainer = textPrimary,
+    onSecondaryContainer = canvas,
     tertiary = lightNeutral,
     onTertiary = canvas,
+    tertiaryContainer = control,
+    onTertiaryContainer = textPrimary,
     background = canvas,
     onBackground = textPrimary,
     surface = surface,
     onSurface = textPrimary,
     surfaceVariant = raised,
     onSurfaceVariant = textSecondary,
+    surfaceTint = surface,
+    inverseSurface = textPrimary,
+    inverseOnSurface = canvas,
+    error = signal,
+    onError = canvas,
+    errorContainer = control,
+    onErrorContainer = signal,
+    outline = textTertiary,
+    outlineVariant = hairline,
+    surfaceBright = control,
+    surfaceDim = canvas,
+    surfaceContainerLowest = canvas,
+    surfaceContainerLow = surface,
     surfaceContainer = surface,
     surfaceContainerHigh = raised,
     surfaceContainerHighest = control,
-    outline = textTertiary,
-    outlineVariant = hairline,
-    error = signal,
-    onError = canvas,
 )
 
 private fun VisorTypography.toMaterialTypography(): Typography {

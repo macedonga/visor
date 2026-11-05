@@ -2,19 +2,15 @@ package com.macedonga.visor.settings
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.Canvas
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,23 +26,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.ui.switchRow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** An app that can post notifications, with its name and icon. */
+/** A phone app that can reach the glasses, with its name and icon. */
 private class PhoneApp(val pkg: String, val name: String, val icon: ImageBitmap?)
 
-/**
- * Which phone apps the glasses hear from: the ones that sent something lately first, every other app behind
- * "Show every app". All are on until muted, so a new app is heard from the start.
- */
+/** Which phone apps reach the glasses: recent senders first, the rest behind "Show every app". */
 @Composable
 fun NotifyAppsScreen(model: SettingsViewModel = hiltViewModel()) {
     val context = LocalContext.current
@@ -54,9 +48,9 @@ fun NotifyAppsScreen(model: SettingsViewModel = hiltViewModel()) {
     val seen by model.apps.seen.collectAsStateWithLifecycle()
     var apps by remember { mutableStateOf<List<PhoneApp>?>(null) }
     var every by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { launchable(context) } }
+    LaunchedEffect(Unit) { apps = withContext(Dispatchers.IO) { launchable(context, model.apps.seen.value.keys) } }
 
-    SettingsPage(stringResource(R.string.notify_apps_title), stringResource(R.string.notify_apps_lede), light = 0.35f) {
+    SettingsPage(stringResource(R.string.notify_apps_title), light = 0.35f) {
         val all = apps
         if (all == null) {
             item(key = "loading") {
@@ -72,8 +66,8 @@ fun NotifyAppsScreen(model: SettingsViewModel = hiltViewModel()) {
         val rest = all.filter { it.pkg !in seen }
         item(key = "actions") {
             Row(Modifier.padding(horizontal = SIDE).padding(bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActionPill(stringResource(R.string.notify_apps_all_on), { model.apps.setAll(all.map { it.pkg }, true) }, quiet = true, enabled = muted.isNotEmpty())
-                ActionPill(stringResource(R.string.notify_apps_all_off), { model.apps.setAll(all.map { it.pkg }, false) }, quiet = true)
+                ActionPill(stringResource(R.string.notify_apps_all_on), { model.apps.setAll(all.map { it.pkg }, true) }, quiet = true, enabled = all.any { it.pkg in muted })
+                ActionPill(stringResource(R.string.notify_apps_all_off), { model.apps.setAll(all.map { it.pkg }, false) }, quiet = true, enabled = all.any { it.pkg !in muted })
             }
         }
         if (recent.isNotEmpty()) {
@@ -85,7 +79,7 @@ fun NotifyAppsScreen(model: SettingsViewModel = hiltViewModel()) {
         if (!every && recent.isNotEmpty()) {
             item(key = "every") {
                 Box(Modifier.padding(top = 12.dp)) {
-                    NavRow(null, stringResource(R.string.notify_apps_every), stringResource(R.string.notify_apps_every_sub, rest.size), onClick = { every = true })
+                    Rows({ ValueRow(stringResource(R.string.notify_apps_every), pluralStringResource(R.plurals.notify_apps_count, rest.size, rest.size), onClick = { every = true }) })
                 }
             }
         } else {
@@ -94,42 +88,36 @@ fun NotifyAppsScreen(model: SettingsViewModel = hiltViewModel()) {
                 Rows(*rest.map { app -> @Composable { AppRow(app, app.pkg !in muted) { on -> model.apps.set(app.pkg, on) } } }.toTypedArray())
             }
         }
-        item(key = "foot") { Footnote(stringResource(R.string.notify_apps_foot)) }
     }
 }
 
 @Composable
 private fun AppRow(app: PhoneApp, on: Boolean, onChange: (Boolean) -> Unit) {
-    val host = LocalHost.current
-    Row(
-        Modifier.fillMaxWidth().switchRow(on).clickable { host.haptics.toggle(); onChange(!on) }.padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (app.icon != null) Image(app.icon, null, Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)))
-        else Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Visor.colors.control))
-        Spacer(Modifier.width(14.dp))
-        Text(app.name, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
-        VisorSwitch(on)
-    }
+    ToggleRow(app.name, on, onChange, leading = { AppIcon(app) })
 }
 
-/** Every app with a launcher entry, by name, but Visor itself. */
-private fun launchable(context: Context): List<PhoneApp> {
+@Composable
+private fun AppIcon(app: PhoneApp) {
+    if (app.icon != null) Image(app.icon, null, Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)))
+    else Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Visor.colors.control))
+}
+
+/** Every app with a launcher entry and every other app that has [sent] something, by name, but Visor itself. */
+private fun launchable(context: Context, sent: Set<String>): List<PhoneApp> {
     val pm = context.packageManager
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return pm.queryIntentActivities(intent, 0)
-        .map { it.activityInfo.applicationInfo }
-        .distinctBy { it.packageName }
-        .filter { it.packageName != context.packageName }
-        .map { info ->
-            val icon = runCatching {
-                val d = pm.getApplicationIcon(info)
-                val bmp = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
-                d.setBounds(0, 0, 96, 96)
-                d.draw(Canvas(bmp))
-                bmp.asImageBitmap()
-            }.getOrNull()
-            PhoneApp(info.packageName, pm.getApplicationLabel(info).toString(), icon)
-        }
+    val listed = pm.queryIntentActivities(intent, 0).map { it.activityInfo.applicationInfo }.distinctBy { it.packageName }
+    val others = (sent - listed.map { it.packageName }.toSet()).map { pkg ->
+        runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull()?.let { phoneApp(pm, it) } ?: PhoneApp(pkg, pkg, null)
+    }
+    return (listed.map { phoneApp(pm, it) } + others)
+        .filter { it.pkg != context.packageName }
         .sortedBy { it.name.lowercase() }
 }
+
+private fun phoneApp(pm: PackageManager, info: ApplicationInfo): PhoneApp {
+    val icon = runCatching { pm.getApplicationIcon(info).toBitmap(ICON_PX, ICON_PX).asImageBitmap() }.getOrNull()
+    return PhoneApp(info.packageName, pm.getApplicationLabel(info).toString(), icon)
+}
+
+private const val ICON_PX = 96

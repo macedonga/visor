@@ -2,7 +2,6 @@ package com.macedonga.visor.core.media
 
 import android.media.MediaCodec
 import android.media.MediaFormat
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
@@ -89,12 +88,15 @@ class LiveDecoder(
         format.setInteger(MediaFormat.KEY_MAX_HEIGHT, MAX_SIDE)
         format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT)
         format.setInteger(MediaFormat.KEY_PRIORITY, 0)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+        format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
         if (config != null) format.setByteBuffer("csd-0", ByteBuffer.wrap(config))
 
-        val t = HandlerThread("live-decoder").also { it.start(); thread = it }
-        return MediaCodec.createDecoderByType(videoCodec.mime).also {
-            it.setCallback(object : MediaCodec.Callback() {
+        val t = HandlerThread("live-decoder").also { it.start() }
+        var made: MediaCodec? = null
+        try {
+            val c = MediaCodec.createDecoderByType(videoCodec.mime)
+            made = c
+            c.setCallback(object : MediaCodec.Callback() {
                 override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
                     freeInputs.offer(index)
                 }
@@ -117,9 +119,16 @@ class LiveDecoder(
                     failed = true
                 }
             }, Handler(t.looper))
-            it.configure(format, surface, null, 0)
-            it.start()
-            codec = it
+            c.configure(format, surface, null, 0)
+            c.start()
+            thread = t
+            codec = c
+            return c
+        } catch (e: Throwable) {
+            made?.let { runCatching { it.release() } }
+            t.quitSafely()
+            failed = true
+            throw e
         }
     }
 

@@ -3,6 +3,7 @@ package com.macedonga.visor.band
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import com.macedonga.visor.core.connection.objects
 import com.macedonga.visor.core.identity.KeystoreSealer
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -14,10 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * A Neural Band this phone owns: where it is, the key its lease hints name, the Display it goes with, and its own owner
- * key, as the Meta app keeps one per device.
- */
+/** A Neural Band this phone owns: where it is, the key its lease hints name, the Display it goes with, and its own owner key. */
 data class BandRecord(val serial: String, val address: String, val publicKey: ByteArray?, val glasses: String?, val key: ByteArray? = null) {
     override fun equals(other: Any?): Boolean =
         other is BandRecord && serial == other.serial && address == other.address && glasses == other.glasses &&
@@ -40,14 +38,8 @@ class Bands @Inject constructor(@ApplicationContext context: Context) {
 
     @Synchronized
     fun save(band: BandRecord) {
-        // One band per Display, as the Meta app pairs them.
+        // One band per Display.
         _all.value = _all.value.filter { it.serial != band.serial && (band.glasses == null || it.glasses != band.glasses) } + band
-        write()
-    }
-
-    @Synchronized
-    fun forget(serial: String) {
-        _all.value = _all.value.filter { it.serial != serial }
         write()
     }
 
@@ -55,8 +47,7 @@ class Bands @Inject constructor(@ApplicationContext context: Context) {
         if (!file.exists()) return emptyList()
         return runCatching {
             val list = JSONArray(file.readText())
-            (0 until list.length()).map { i ->
-                val o = list.getJSONObject(i)
+            list.objects().map { o ->
                 BandRecord(
                     serial = o.getString("serial"),
                     address = o.getString("address"),

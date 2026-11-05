@@ -14,11 +14,13 @@ android {
         // A release build takes both from its tag (.github/workflows/release.yml).
         versionCode = providers.environmentVariable("VISOR_VERSION_CODE").orNull?.toInt() ?: 1
         versionName = providers.environmentVariable("VISOR_VERSION_NAME").orNull ?: "0.1"
+        buildConfigField("boolean", "TAGGED", providers.environmentVariable("VISOR_VERSION_NAME").isPresent.toString())
     }
 
     // The release key comes from the environment: the CI's secrets, or a shell that exports the same names.
     // It is PKCS12, so the key has the keystore's password.
-    val keystore = providers.environmentVariable("VISOR_KEYSTORE").orNull?.let(::file)?.takeIf { it.exists() }
+    val keystore = providers.environmentVariable("VISOR_KEYSTORE").orNull?.let(::file)
+        ?.also { require(it.exists()) { "VISOR_KEYSTORE points at a missing file: $it" } }
     signingConfigs {
         if (keystore != null) {
             create("release") {
@@ -33,19 +35,15 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
+            // Phones only; the emulator runs debug builds.
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         }
     }
 
-    buildFeatures {
-        buildConfig = true
-        aidl = false
-        shaders = false
-    }
+    buildFeatures { buildConfig = true }
 
-
-    // The glasses' model is read whole into a direct buffer; stored uncompressed it maps straight in.
+    // The glasses' model, stored uncompressed so the stage reads it without inflating.
     androidResources {
         noCompress += "glb"
     }
@@ -74,15 +72,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.webkit)
     implementation(libs.androidx.browser)
     implementation(libs.androidx.media)
     implementation(libs.kotlinx.coroutines.android)
 
-    // Navigation 3, for the test client's screens.
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.androidx.navigation3.ui)
-    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
 
     implementation(libs.filament.android)
     implementation(libs.gltfio.android)
@@ -96,6 +91,6 @@ dependencies {
     }
 
     implementation(libs.hilt.android)
-    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
     ksp(libs.hilt.compiler)
 }

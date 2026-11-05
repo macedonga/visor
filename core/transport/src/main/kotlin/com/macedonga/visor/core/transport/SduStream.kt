@@ -46,8 +46,7 @@ class SduStream(
             } catch (error: IOException) {
                 throw TransportClosedException("the link went away while reading", error)
             }
-            // The reference treats any empty chunk as a closed link, `if not chunk`, and so does
-            // this.
+            // 0 or -1: the peer closed the link.
             if (read < 1) {
                 throw TransportClosedException("the peer closed the link after $filled of $count bytes")
             }

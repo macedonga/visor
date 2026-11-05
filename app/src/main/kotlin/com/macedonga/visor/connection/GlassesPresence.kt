@@ -38,7 +38,7 @@ class GlassesPresence : CompanionDeviceService() {
     /** Reaches the pair Visor is for when it is the one at [address]; another pair stays as it is. */
     private fun appeared(address: String?) {
         if (address == null) return
-        val current = runBlocking(Dispatchers.IO) { store.currentSerial()?.let { serial -> store.all().firstOrNull { it.serial == serial } } } ?: return
+        val current = runBlocking(Dispatchers.IO) { store.chosen() } ?: return
         if (!current.glassesAddress.equals(address, ignoreCase = true)) return
         GlassesService.reconnect(this)
     }

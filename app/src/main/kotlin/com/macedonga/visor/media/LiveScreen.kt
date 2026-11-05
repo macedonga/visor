@@ -1,7 +1,9 @@
 package com.macedonga.visor.media
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.provider.Settings
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -17,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
@@ -47,6 +50,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.core.app.PictureInPictureModeChangedInfo
@@ -57,14 +63,21 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.macedonga.visor.R
+import com.macedonga.visor.core.connection.HINGE_CLOSED
 import com.macedonga.visor.core.media.LivePhase
+import com.macedonga.visor.core.media.LiveProblem
 import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiDirectPermissions
+import com.macedonga.visor.core.media.wifiIsOn
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.settings.ConfirmSheet
+import com.macedonga.visor.settings.openAppPage
 import com.macedonga.visor.stage.LocalStage
-import com.macedonga.visor.stage.StageSpot
+import com.macedonga.visor.stage.STAGE_ASPECT
+import com.macedonga.visor.stage.stageSpot
 import com.macedonga.visor.ui.rememberHaptics
 import kotlin.math.hypot
 import kotlin.math.max
@@ -72,14 +85,10 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * The glasses' camera, live. It comes up out of the glasses on their stage: their light turns towards red and
- * breathes while Wi-Fi Direct joins, and the first frame blooms out of the camera's glass to fill the screen. A tap
- * steps back from the full-screen picture into a lit window with the readouts and the controls; another goes back.
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** The glasses' camera, live: it blooms out of the lens; a tap steps back to the controls. [onClose] says whether a stream showed. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net.Uri) -> Unit, model: LiveViewModel = hiltViewModel()) {
+fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onOpen: () -> Unit, model: LiveViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val activity = LocalActivity.current as? ComponentActivity
     val haptics = rememberHaptics()
@@ -92,8 +101,11 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
     val pip = rememberInPip(activity)
 
     var allowed by remember { mutableStateOf(wifiDirectAllowed(context)) }
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+    // Refused for good, Allow opens Visor's page in the phone's settings.
+    var refused by remember { mutableStateOf(false) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { answers ->
         allowed = wifiDirectAllowed(context)
+        refused = answers.any { (name, granted) -> !granted && activity?.shouldShowRequestPermissionRationale(name) == false }
         if (allowed) model.start()
     }
     // Coming back to a Live already running (from the notification, say), the picture is simply there.
@@ -109,6 +121,11 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
             asked = true
             ask.launch(wifiDirectPermissions)
         }
+    }
+    // Back from the Wi-Fi panel with Wi-Fi on, the Live starts again.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val s = model.live.status.value
+        if (s.phase == LivePhase.FAILED && s.problem == LiveProblem.WIFI_OFF && wifiIsOn(context)) model.start()
     }
 
     val video = rememberLiveVideo(model.live)
@@ -134,12 +151,11 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
         }
     }
     LaunchedEffect(status.phase) { if (status.phase == LivePhase.FAILED) { stage.light.flicker(); haptics.error() } }
-    // The temples as the glasses have them; they stream only open, so once the picture is up the pair is open too,
-    // and the home it goes back to has it the same.
+    // The temples as the glasses report them; streaming means open.
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val closed = when {
         shown || status.phase == LivePhase.RUNNING || status.phase == LivePhase.RESTARTING -> false
-        glasses.link == LinkState.READY -> glasses.device?.hinge?.let { it == "CLOSED" } ?: stage.lastFolded
+        glasses.link == LinkState.READY -> glasses.device?.hinge?.let { it == HINGE_CLOSED } ?: stage.lastFolded
         else -> stage.lastFolded
     }
 
@@ -150,9 +166,8 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
     val scope = rememberCoroutineScope()
     LiveWatchers(model)
 
-    // Leaving runs the entrance backwards: the picture goes back into the camera's glass, the pair is left on its
-    // stage where the home has it, and only then the screen goes.
-    val close: () -> Unit = {
+    // Leaving runs the entrance backwards before the screen goes.
+    val leave: () -> Unit = {
         if (!closing) {
             closing = true
             sheet = false
@@ -163,15 +178,17 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
                     stage.renderer.cameraOnScreen()?.let { (x, y) -> lens = Offset(x, y) }
                     bloom.animateTo(0f, tween(LEAVE_MS, easing = LEAVE))
                 }
-                // After a stream the home counts the glasses as here.
-                if (shown) stage.fromLive = true
-                onClose()
+                onClose(shown)
             }
         }
     }
+    // On air, leaving asks first: it takes the broadcast down.
+    var confirmEnd by remember { mutableStateOf(false) }
+    val close: () -> Unit = { if (!closing && model.outputs.broadcast.running) confirmEnd = true else leave() }
     val step by animateFloatAsState(if (stepped && !pip && shown && !closing) 1f else 0f, spring(dampingRatio = 0.84f, stiffness = 280f), label = "step")
     BackHandler {
         when {
+            confirmEnd -> confirmEnd = false
             sheet -> sheet = false
             broadcastSheet -> broadcastSheet = false
             stepped -> stepped = false
@@ -193,22 +210,23 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
     }
     Immersive(activity, hidden = !closing)
     // The glasses' microphones play only while the Live is on screen.
-    val listen by model.settings.settings.collectAsStateWithLifecycle()
-    LifecycleResumeEffect(listen.listen) {
-        model.outputs.listening = listen.listen
-        onPauseOrDispose { model.outputs.listening = false }
+    val settings by model.settings.settings.collectAsStateWithLifecycle()
+    LifecycleStartEffect(settings.listen) {
+        model.outputs.listening = settings.listen
+        onStopOrDispose { model.outputs.listening = false }
     }
 
     // The picture's colours, for the light around the window.
     var glow by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(shown, stepped) {
         while (shown) {
-            video.sample(6, 10)?.let { glow = it.asImageBitmap() }
+            video.sample(GLOW_W, GLOW_H)?.let { glow = it.asImageBitmap() }
             delay(if (stepped) 300 else 1_200)
         }
     }
 
     val density = LocalDensity.current
+    val controls = stringResource(R.string.live_controls)
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
@@ -216,28 +234,27 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
             .drawBehind { drawRect(Color.Black.copy(alpha = bloom.value)) }
             .pointerInput(shown, pip) {
                 if (shown && !pip) detectTapGestures(onTap = { stepped = !stepped; haptics.tick(0.4f) })
-            },
+            }
+            .semantics { if (shown && !pip) onClick(label = controls) { stepped = !stepped; true } },
     ) {
         val w = constraints.maxWidth.toFloat()
         val h = constraints.maxHeight.toFloat()
         // The bars' room whether they show or not: a sheet bringing them back must not move the window.
         val top = WindowInsets.statusBarsIgnoringVisibility.getTop(density).toFloat()
         val bottom = WindowInsets.navigationBarsIgnoringVisibility.getBottom(density).toFloat()
-        val aspect = decoded?.split('x')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 2 && it[1] > 0 }?.let { it[0] / it[1] } ?: (9f / 16f)
+        val aspect = decoded?.takeIf { it.height > 0 }?.let { it.width.toFloat() / it.height } ?: (9f / 16f)
         val cover = coverRect(w, h, aspect)
         val window = with(density) { windowRect(w, h, aspect, top + 64.dp.toPx(), bottom + 236.dp.toPx(), 20.dp.toPx()) }
         val placed = lerp(cover, window, step)
         val visible = lerp(Rect(0f, 0f, w, h), window, step)
         val radius = with(density) { 26.dp.toPx() } * step
 
-        // The open stage at the top, as the home has it when it scrolls up: the pair travels here from wherever it was,
-        // then grows into the camera and fades as the picture blooms out of it.
+        // The stage at the top: the pair grows into the camera and fades as the picture blooms.
         val stageH = w / STAGE_ASPECT
-        val stageTop = 0f
-        StageSpot(closed, liveliness = 0.8f) {
+        stageSpot(closed, liveliness = 0.8f) {
             val b = bloom.value
             val dive = b * b * (3 - 2 * b)
-            this.top = stageTop
+            this.top = 0f
             this.height = h
             this.scale = 1f + 5f * dive
             this.pivotX = lens.x
@@ -245,13 +262,19 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
             this.shift = 0f
             this.alpha = (1f - b * 1.5f).coerceIn(0f, 1f)
         }
-        val lensPx = Offset(lens.x * w, stageTop + lens.y * stageH)
+        val lensPx = Offset(lens.x * w, lens.y * stageH)
         val reach = max(max(hypot(lensPx.x, lensPx.y), hypot(w - lensPx.x, lensPx.y)), max(hypot(lensPx.x, h - lensPx.y), hypot(w - lensPx.x, h - lensPx.y)))
 
         // Kept while the picture shows, so its colours are already settled when the window opens.
         if (shown) LiveGlow(glow, window, step)
         if (bloom.value < 1f) {
-            Arrival(status, allowed, stageTop, stageH, lens, bloom.value, closing, onAllow = { ask.launch(wifiDirectPermissions) }, onRetry = model::start, onClose = close)
+            Arrival(
+                status, allowed, stageH, bloom.value, closing,
+                onAllow = { if (refused) openAppPage(context) else ask.launch(wifiDirectPermissions) },
+                onWifi = { runCatching { context.startActivity(Intent(Settings.Panel.ACTION_WIFI)) } },
+                onRetry = model::start,
+                onClose = close,
+            )
         }
         LiveFrame(
             video = video,
@@ -294,18 +317,19 @@ fun LiveScreen(onClose: () -> Unit, onSettings: () -> Unit, onOpen: (android.net
                         .background(Color.White),
                 )
             }
-        } else if (pip && (recording != null || broadcast.phase != com.macedonga.visor.core.media.BroadcastPhase.OFF)) {
+        } else if (pip && (recording != null || broadcast.airing)) {
             PipBadge(recording != null)
         }
-        // Opening what was saved leaves the Live, unless something is still being made of it.
-        if (!pip && !closing) NoticeIsland(model) { uri ->
+        // Going to the gallery leaves the Live, unless something is still being made of it.
+        if (!pip && !closing) NoticeIsland(model) {
             if (!model.keepsGoing()) model.stop()
-            onOpen(uri)
+            onOpen()
         }
     }
 
     if (sheet) LiveSheet(model, onSettings = { sheet = false; onSettings() }, onDismiss = { sheet = false })
     if (broadcastSheet) BroadcastSheet(model, onDismiss = { broadcastSheet = false })
+    if (confirmEnd) ConfirmSheet(stringResource(R.string.live_broadcast), null, stringResource(R.string.live_broadcast_end), onConfirm = leave, onDismiss = { confirmEnd = false })
 }
 
 /** Where the whole picture goes to fill the screen, cut at the sides or the top. */
@@ -367,6 +391,3 @@ private const val BLOOM_MS = 1_150
 private val BLOOM = CubicBezierEasing(0.55f, 0f, 0.2f, 1f)
 private const val LEAVE_MS = 620
 private val LEAVE = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
-
-/** The same proportions as the home's stage, so the renderer frames the pair the same way. */
-internal const val STAGE_ASPECT = 1.02f

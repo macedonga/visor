@@ -25,10 +25,7 @@ class NotifyApps @Inject constructor(@ApplicationContext context: Context) {
     )
     val seen: StateFlow<Map<String, Long>> = _seen.asStateFlow()
 
-    fun set(pkg: String, on: Boolean) {
-        _muted.value = if (on) _muted.value - pkg else _muted.value + pkg
-        prefs.edit().putStringSet(MUTED, _muted.value).apply()
-    }
+    fun set(pkg: String, on: Boolean) = setAll(listOf(pkg), on)
 
     fun setAll(pkgs: Collection<String>, on: Boolean) {
         _muted.value = if (on) _muted.value - pkgs.toSet() else _muted.value + pkgs

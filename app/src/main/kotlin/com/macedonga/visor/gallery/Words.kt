@@ -27,8 +27,8 @@ fun dayTitle(date: LocalDate): String {
         date == today -> stringResource(R.string.gallery_today)
         date == today.minusDays(1) -> stringResource(R.string.gallery_yesterday)
         date.isAfter(today.minusDays(7)) -> DateTimeFormatter.ofPattern("EEEE", locale).format(date)
-        date.year == today.year -> DateTimeFormatter.ofPattern("EEEE d MMMM", locale).format(date)
-        else -> DateTimeFormatter.ofPattern("d MMMM yyyy", locale).format(date)
+        date.year == today.year -> DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM"), locale).format(date)
+        else -> DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "dMMMMyyyy"), locale).format(date)
     }
     return text.replaceFirstChar { it.titlecase(locale) }
 }
@@ -65,6 +65,6 @@ fun spoken(item: GalleryItem): String = listOfNotNull(
 
 /** 0:12, 4:05, 1:02:03. */
 fun duration(ms: Long): String {
-    val s = ms / 1000
+    val s = (ms / 1000).coerceAtLeast(0)
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }

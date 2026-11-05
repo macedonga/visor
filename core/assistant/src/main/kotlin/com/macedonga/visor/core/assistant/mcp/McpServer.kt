@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.assistant.mcp
 
 import android.content.Context
+import com.macedonga.visor.core.connection.strings
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -73,7 +74,7 @@ data class McpServer(
     // Tools the person turned off, by name.
     val off: Set<String> = emptySet(),
     val transport: Transport = Transport.AUTO,
-    // A client typed in by the person, kept when its grant is dropped by a sign-out.
+    // A client ID typed in by the person, used instead of registering Visor.
     val clientId: String = "",
     val clientSecret: String = "",
     // Where the typed-in client sends the browser back: the app, or a loopback address.
@@ -94,7 +95,7 @@ data class McpServer(
             id = o.getString("id"), name = o.optString("name"), url = o.getString("url"), enabled = o.optBoolean("enabled", true),
             auth = runCatching { AuthKind.valueOf(o.optString("auth")) }.getOrDefault(AuthKind.NONE),
             secret = o.optString("secret"), header = o.optString("header"),
-            off = o.optJSONArray("off")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }.orEmpty(),
+            off = o.optJSONArray("off")?.strings()?.toSet().orEmpty(),
             transport = runCatching { Transport.valueOf(o.optString("transport")) }.getOrDefault(Transport.AUTO),
             clientId = o.optString("clientId"), clientSecret = o.optString("clientSecret"), redirect = o.optString("redirect"),
             oauth = o.optJSONObject("oauth")?.let(OAuthGrant::from),

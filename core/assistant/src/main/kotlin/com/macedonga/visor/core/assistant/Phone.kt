@@ -48,7 +48,7 @@ enum class MediaControl(val what: String, val done: String) {
 }
 
 /** The line in the diary for [control] done in [done]'s app. */
-internal fun MediaControl.action(done: PhoneDone) = ToolAction(done.app.ifEmpty { PHONE }, what, done.failure == null)
+internal fun MediaControl.action(done: PhoneDone) = ToolAction(done.app, what, done.failure == null, kind = name.lowercase())
 
 /** [Phone] as tools for the model. */
 internal class PhoneTools(private val phone: Phone) {
@@ -92,23 +92,26 @@ internal class PhoneTools(private val phone: Phone) {
                 told(done) {
                     if (it.tapToOpen) "The route to $to waits in a notification on the phone; tapping it opens ${it.app.ifEmpty { "the map app" }}."
                     else "The route to $to is open in ${it.app.ifEmpty { "the map app" }} on the phone; the wearer starts it there."
-                } to ToolAction(done.app.ifEmpty { PHONE }, "Directions · $to", done.failure == null && !done.tapToOpen)
+                } to ToolAction(done.app, "Directions · $to", done.failure == null && !done.tapToOpen, kind = "directions", subject = to)
             }
         }
         "play_media" -> {
             val query = input.optString("query").trim()
             phone.play(query, input.optString("app").trim()).let { done ->
-                // Which step gave up, so the answer can say it (#45).
+                // Which step gave up, for the answer to say.
                 val why = done.gaveUp.takeIf { it.isNotEmpty() }?.let { ": $it" }.orEmpty()
                 told(done) {
                     when {
-                        // Leading with the negative: a small model turned "open on the search" into "playing" (issue #37).
+                        // The negative first: a small model reads "open on the search" as "playing".
                         it.tapToOpen -> "Nothing is playing yet$why. ${it.app} needs a tap: a notification on the phone opens it on the search."
                         it.opened -> "Nothing is playing yet$why. ${it.app} is open on the phone on the search; the wearer picks the song there."
                         it.playing.isNotEmpty() -> "Playing in ${it.app}: ${it.playing}."
                         else -> "Playing in ${it.app}."
                     }
-                } to ToolAction(done.app.ifEmpty { PHONE }, if (query.isEmpty()) "Play" else "Play · $query", done.failure == null && !done.opened && !done.tapToOpen)
+                } to ToolAction(
+                    done.app, if (query.isEmpty()) "Play" else "Play · $query", done.failure == null && !done.opened && !done.tapToOpen,
+                    kind = "play_media", subject = query,
+                )
             }
         }
         "media_control" -> {
@@ -137,6 +140,3 @@ internal class PhoneTools(private val phone: Phone) {
             .apply { required?.let { put("required", JSONArray().put(it)) } }
     }
 }
-
-/** Who did it, in the diary, when no app is known. */
-private const val PHONE = "Phone"

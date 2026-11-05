@@ -6,6 +6,7 @@ import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
 import java.security.PublicKey
+import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
@@ -54,7 +55,7 @@ object Ecdh {
 
     /** The wire form of a public key: 64 raw bytes of `x ‖ y`. */
     fun rawFromPublicKey(key: PublicKey): ByteArray {
-        val point = (key as java.security.interfaces.ECPublicKey).w
+        val point = (key as ECPublicKey).w
         return fixedWidth(point.affineX) + fixedWidth(point.affineY)
     }
 

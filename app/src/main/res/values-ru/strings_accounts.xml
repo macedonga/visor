@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accounts_title">Аккаунты</string>
+    <string name="accounts_meta">Meta</string>
+    <string name="accounts_instagram">Instagram</string>
+    <string name="accounts_link">Привязать</string>
+    <string name="accounts_linked">Привязан</string>
+    <string name="accounts_not_linked">Не привязан</string>
+    <string name="accounts_logged_out">Сначала войдите в Meta</string>
+    <string name="accounts_unreachable">Не удалось связаться с Meta</string>
+    <string name="accounts_no_answer">Очки не ответили</string>
+    <string name="accounts_refused">Очки отклонили запрос</string>
+    <string name="accounts_meta_refused">Meta отклонила запрос</string>
+    <string name="accounts_failed">Не удалось привязать</string>
+    <string name="accounts_off_for_glasses">%1$s, отключено для очков</string>
+    <string name="accounts_facebook_messenger">Facebook и Messenger</string>
+    <string name="accounts_threads">Threads</string>
+    <string name="accounts_needs_internet">Очкам нужен интернет</string>
+    <string name="link_channel">Привязка аккаунтов</string>
+    <string name="link_title">Привяжите %1$s к очкам</string>
+    <string name="link_reconnect_title">Снова привяжите %1$s к очкам</string>
+</resources>

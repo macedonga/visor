@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The widget's type, after VisorTypography: Inter with its optical size axis. -->
 <resources>
-    <dimen name="widget_radius">24dp</dimen>
+    <dimen name="widget_radius">@android:dimen/system_app_widget_background_radius</dimen>
 
     <style name="WidgetText">
         <item name="android:fontFamily">@font/inter</item>

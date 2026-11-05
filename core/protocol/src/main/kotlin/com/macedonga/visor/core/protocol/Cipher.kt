@@ -8,13 +8,10 @@ import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-/** Raised when a frame's MAC does not verify, or when its padding is invalid. */
+/** Raised when a frame's MAC or length does not verify. */
 class AuthenticationException(message: String) : Exception(message)
 
-/** Which way round the 32-bit sequence number goes into the MAC counter. */
-enum class SeqEndian { LITTLE, BIG }
-
-/** AirShield per-frame cipher: AES-256-CBC plus HMAC-SHA256, encrypt-then-MAC (notes/67). */
+/** AirShield per-frame cipher: AES-256-CBC plus HMAC-SHA256, encrypt-then-MAC. */
 object AirShieldCipher {
 
     /** Truncated HMAC-SHA256. */
@@ -31,24 +28,19 @@ object AirShieldCipher {
 
     /** Modified PKCS#7. An aligned input gets a whole block, so there is always a pad. */
     fun pad(data: ByteArray): ByteArray {
-        val padLen = BLOCK - (data.size % BLOCK)   // always 1..16, a full block when aligned
+        val padLen = BLOCK - (data.size % BLOCK)
         val marker = ((padLen + PAD_OFFSET) and 0xFF).toByte()
         return data + ByteArray(padLen) { marker }
     }
 
-    fun unpad(data: ByteArray): ByteArray {
-        if (data.isEmpty() || data.size % BLOCK != 0) {
-            throw AuthenticationException("ciphertext not block-aligned")
-        }
+    /** [data] without the pad [pad] adds; data that does not end in one comes back whole. */
+    fun stripPad(data: ByteArray): ByteArray {
+        if (data.isEmpty()) return data
         val last = data[data.size - 1].toInt() and 0xFF
-        val padLen = (last + 0x40) and 0xFF        // inverse of +0xC0
-        if (padLen !in 1..BLOCK || padLen > data.size) {
-            throw AuthenticationException("invalid padding length")
-        }
+        val padLen = (last - PAD_OFFSET) and 0xFF
+        if (padLen !in 1..BLOCK || padLen > data.size) return data
         for (i in data.size - padLen until data.size) {
-            if ((data[i].toInt() and 0xFF) != last) {
-                throw AuthenticationException("inconsistent padding bytes")
-            }
+            if ((data[i].toInt() and 0xFF) != last) return data
         }
         return data.copyOfRange(0, data.size - padLen)
     }
@@ -63,29 +55,16 @@ object AirShieldCipher {
         return cipher.doFinal(data)
     }
 
-    internal fun seqBytes(seq: Int, endian: SeqEndian): ByteArray {
-        val order = if (endian == SeqEndian.LITTLE) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
-        return ByteBuffer.allocate(4).order(order).putInt(seq).array()
-    }
+    internal fun le32(value: Int): ByteArray =
+        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
 }
 
-/**
- * Stateful per-channel crypto: [seal] for tx and [unseal] for rx on AirShield DATA frame bodies.
- */
-class FrameCrypto(
-    keys: SessionKeys,
-    private val seqEndian: SeqEndian = SeqEndian.LITTLE,
-    private val chainIv: Boolean = true,
-    private val counterPrefix: Int = AirShieldCipher.COUNTER_PREFIX,
-    initTxSeq: Int = 0,
-    initRxSeq: Int = 0,
-) {
+/** One direction's crypto on AirShield DATA frame bodies: [seal] for tx, [unseal] for rx. */
+class FrameCrypto(keys: SessionKeys, initSeq: Int = 0) {
     private val aesKey: ByteArray
     private val hmacKey: ByteArray
-    private var txIv: ByteArray
-    private var rxIv: ByteArray
-    private var txSeq: Int = initTxSeq
-    private var rxSeq: Int = initRxSeq
+    private var iv: ByteArray
+    private var seq: Int = initSeq
 
     init {
         require(keys.aesKey.size == 32 && keys.hmacKey.size == 32 && keys.iv.size == AirShieldCipher.BLOCK) {
@@ -93,54 +72,31 @@ class FrameCrypto(
         }
         aesKey = keys.aesKey
         hmacKey = keys.hmacKey
-        txIv = keys.iv
-        rxIv = keys.iv
+        iv = keys.iv
     }
 
-    /**
-     * A relayed stream's cipher: the SAME AES-256 and HMAC-SHA256 keys, the seq RESET to 0, and the
-     * IV taken from this stream's current chained value.
-     */
-    fun forkStream(): FrameCrypto {
-        val forked = FrameCrypto(
-            SessionKeys(aesKey, hmacKey, txIv),
-            seqEndian = seqEndian,
-            chainIv = chainIv,
-            counterPrefix = counterPrefix,
-            initTxSeq = 0,
-            initRxSeq = 0,
-        )
-        forked.txIv = txIv
-        forked.rxIv = rxIv
-        return forked
-    }
-
-    private fun mac(seq: Int, blockCount: Int, ciphertext: ByteArray): ByteArray {
-        // 8-byte counter: the constant prefix as LE u32, then the seq, then blockCount and
-        // the ciphertext.
-        val ctr8 = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(counterPrefix).array() +
-            AirShieldCipher.seqBytes(seq, seqEndian)
-        val macInput = ctr8 + byteArrayOf(blockCount.toByte()) + ciphertext
+    private fun mac(blockCount: Int, ciphertext: ByteArray): ByteArray {
+        // MAC input: prefix (LE u32), seq (LE u32), blockCount, ciphertext.
+        val macInput = AirShieldCipher.le32(AirShieldCipher.COUNTER_PREFIX) + AirShieldCipher.le32(seq) +
+            byteArrayOf(blockCount.toByte()) + ciphertext
         val hmac = Mac.getInstance("HmacSHA256")
         hmac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
         return hmac.doFinal(macInput).copyOf(AirShieldCipher.TAG_SIZE)
     }
 
     fun seal(plaintext: ByteArray): ByteArray {
-        val ciphertext = AirShieldCipher.aesCbc(aesKey, txIv, AirShieldCipher.pad(plaintext), encrypt = true)
+        val ciphertext = AirShieldCipher.aesCbc(aesKey, iv, AirShieldCipher.pad(plaintext), encrypt = true)
         val blockCount = (ciphertext.size / AirShieldCipher.BLOCK) - 1
         require(blockCount in 0..0xFF) { "plaintext too large for a single AirShield frame" }
-        val tag = mac(txSeq, blockCount, ciphertext)
+        val tag = mac(blockCount, ciphertext)
         val frame = tag + byteArrayOf(blockCount.toByte()) + ciphertext
-        if (chainIv) {
-            txIv = ciphertext.copyOfRange(ciphertext.size - AirShieldCipher.BLOCK, ciphertext.size)
-        }
-        txSeq += 1
+        iv = ciphertext.copyOfRange(ciphertext.size - AirShieldCipher.BLOCK, ciphertext.size)
+        seq += 1
         return frame
     }
 
-    /** Verify and decrypt one DATA frame body. */
-    fun unseal(frame: ByteArray, verifyUnpad: Boolean = true): ByteArray {
+    /** Verify and decrypt one DATA frame body. The pad stays: DataX takes it off with [AirShieldCipher.stripPad]. */
+    fun unseal(frame: ByteArray): ByteArray {
         if (frame.size < AirShieldCipher.TAG_SIZE + 1 + AirShieldCipher.BLOCK) {
             throw AuthenticationException("frame too short")
         }
@@ -148,21 +104,15 @@ class FrameCrypto(
         val blockCount = frame[AirShieldCipher.TAG_SIZE].toInt() and 0xFF
         val ciphertext = frame.copyOfRange(AirShieldCipher.TAG_SIZE + 1, frame.size)
         if (ciphertext.size != (blockCount + 1) * AirShieldCipher.BLOCK) {
-            throw AuthenticationException("ciphertext length != block_count")
+            throw AuthenticationException("ciphertext length does not match the block count")
         }
-        // MessageDigest.isEqual is the JVM's constant-time comparison, the counterpart of
-        // Python's hmac.compare_digest. contentEquals short-circuits and leaks timing.
-        if (!MessageDigest.isEqual(tag, mac(rxSeq, blockCount, ciphertext))) {
+        // Constant-time compare.
+        if (!MessageDigest.isEqual(tag, mac(blockCount, ciphertext))) {
             throw AuthenticationException("MAC verification failed")
         }
-        var plaintext = AirShieldCipher.aesCbc(aesKey, rxIv, ciphertext, encrypt = false)
-        if (verifyUnpad) {
-            plaintext = AirShieldCipher.unpad(plaintext)
-        }
-        if (chainIv) {
-            rxIv = ciphertext.copyOfRange(ciphertext.size - AirShieldCipher.BLOCK, ciphertext.size)
-        }
-        rxSeq += 1
+        val plaintext = AirShieldCipher.aesCbc(aesKey, iv, ciphertext, encrypt = false)
+        iv = ciphertext.copyOfRange(ciphertext.size - AirShieldCipher.BLOCK, ciphertext.size)
+        seq += 1
         return plaintext
     }
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="captions_title">Субтитры</string>
+    <string name="captions_share">Поделиться</string>
+    <string name="captions_mode">Режим</string>
+    <string name="captions_mode_captions">Субтитры</string>
+    <string name="captions_mode_translation">Перевод</string>
+    <string name="captions_language">Язык</string>
+    <string name="captions_self">Вы говорите</string>
+    <string name="captions_other">Собеседник говорит</string>
+    <string name="captions_pair">%1$s → %2$s</string>
+    <string name="captions_heard">Услышано</string>
+    <string name="captions_listening">Слушаем…</string>
+    <string name="captions_start">Запустить на очках</string>
+    <string name="captions_stop">Остановить</string>
+    <string name="captions_live">На очках</string>
+    <string name="captions_start_anyway">Запустить</string>
+    <string name="captions_get_size">Скачать · %1$s</string>
+    <string name="captions_installing">Установка на очки…</string>
+    <string name="captions_no_pack">У Meta нет пакета для этого языка</string>
+    <string name="captions_no_space">На телефоне нужно %1$s свободного места</string>
+    <string name="captions_download_stopped">Загрузка прервалась</string>
+    <string name="captions_not_installed">Очки не установили пакет</string>
+</resources>

@@ -4,7 +4,7 @@ package com.macedonga.visor.core.media
 data class Rung(val quality: StreamQuality, val bitrate: Int, val frameRate: Int)
 
 /**
- * From the best a 2.4 GHz group has held (1080p at 4 Mbit/s and 30 fps) down to what Bluetooth-era links managed.
+ * From the best a 2.4 GHz group has held (1080p at 4 Mbit/s and 30 fps) down to 360p at 600 kbit/s.
  * The 24 fps rung under it keeps the size and eases the bitrate first.
  */
 val LADDER = listOf(
@@ -25,10 +25,8 @@ private val SHARES = listOf(1f, 0.7f, 0.5f, 0.35f)
  * heat or their own ceiling allow.
  */
 class QualityPilot {
-    var index = 0
-        private set
-    var share = 0
-        private set
+    private var index = 0
+    private var share = 0
 
     private var lastChange = 0L
     private var upAt = 0L
@@ -41,8 +39,8 @@ class QualityPilot {
     val rung: Rung
         get() = LADDER[index].let { it.copy(bitrate = (it.bitrate * SHARES[share]).toInt()) }
 
-    fun reset(now: Long, start: Int = 0) {
-        index = start
+    fun reset(now: Long) {
+        index = 0
         share = 0
         lastChange = now
         upAt = 0
@@ -53,19 +51,21 @@ class QualityPilot {
     }
 
     /** The lowest index heat and the glasses' ceiling allow right now. */
-    private fun floor(thermal: String?, supported: Int?): Int = maxOf(
-        when (thermal) {
-            "MODERATE" -> 2
-            "SEVERE" -> 4
-            "CRITICAL", "SHUTDOWN" -> 5
-            else -> 0
-        },
-        when (supported) {
-            0 -> 4
-            1 -> 3
-            else -> 0
-        },
-    )
+    private fun floor(thermal: String?, supported: Int?): Int {
+        val heat = when (thermal) {
+            "MODERATE" -> StreamQuality.HIGH
+            "SEVERE" -> StreamQuality.LOW
+            "CRITICAL", "SHUTDOWN" -> StreamQuality.VERY_LOW
+            else -> null
+        }
+        val ceiling = when (supported) {
+            0 -> StreamQuality.LOW
+            1 -> StreamQuality.MEDIUM
+            else -> null
+        }
+        fun at(q: StreamQuality?) = q?.let { LADDER.indexOfFirst { r -> r.quality == it } } ?: 0
+        return maxOf(at(heat), at(ceiling))
+    }
 
     /** One second of [stats]; the rung to move to, or null to stay. */
     fun step(now: Long, stats: StreamStats, thermal: String?, supported: Int?, holdSize: Boolean): Rung? {

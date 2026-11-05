@@ -1,10 +1,16 @@
 package com.macedonga.visor.core.media
 
+import com.macedonga.visor.core.protocol.SVC_AIRSHIP
+import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.protocol.uuidText
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.zip.Adler32
 import kotlinx.coroutines.channels.Channel
@@ -15,9 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-
-/** svc20, airship: Meta's file transfer engine. Ported from lensbreak/readout/airship.py. */
-const val SVC_AIRSHIP = 20
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Photos and videos. The glasses also offer `parfait` metadata and `telemetry` logs. */
 const val NAMESPACE_MEDIA = "namespace_media"
@@ -48,9 +52,12 @@ private const val MT_OFFER_MULTISCOPE = 12
 private const val MT_CURSOR = 2
 private const val MT_DROP = 7
 
+private const val ANSWER_MS = 15_000L
+private const val CHECK_BYTES = 65_536
+
 /** A file the glasses offered. [uuid] matches the capture list's asset id. */
-class Offer(val raw: ByteArray, val size: Long, val namespace: String) {
-    val uuid: String = formatUuid(raw)
+class Offer(val idBytes: ByteArray, val size: Long, val namespace: String) {
+    val uuid: String = uuidText(idBytes)
 }
 
 /** A whole file. [verified] is true when our adler32 matches the glasses'. */
@@ -78,10 +85,12 @@ class AirshipReceiver(private val spool: File) : Responder {
     @Volatile
     var describe: (String) -> String = { "" }
 
-    /** Takers of other files, asked in order; the first that wants an offer gets it. */
+    /** Takers of other files, asked in order: the first that wants an offer takes it, and each other that still wants it gets it too. */
     val extras = CopyOnWriteArrayList<ExtraFiles>()
 
-    private class Live(val offer: Offer, val file: File, val taker: ExtraFiles?) {
+    private class Reply(val type: Int, val payload: ByteArray)
+
+    private class Incoming(val offer: Offer, val file: File, val taker: ExtraFiles?) {
         var out = FileOutputStream(file)
         val adler = Adler32()
         var received = 0L
@@ -110,7 +119,7 @@ class AirshipReceiver(private val spool: File) : Responder {
 
     // The session calls respond from its one coroutine; the lock is for abandon.
     private val lock = Mutex()
-    private val live = HashMap<Int, Live>()
+    private val incoming = HashMap<Int, Incoming>()
 
     /** When the glasses last said their send queue is empty, in [System.nanoTime] milliseconds. */
     @Volatile
@@ -141,15 +150,15 @@ class AirshipReceiver(private val spool: File) : Responder {
         // A cursor or a drop on a channel this side opened answers a file we are sending. Those come without the
         // originator bit; a file the glasses offer meanwhile can come on their own channel of the same number.
         if (channel and 0x8000 == 0) outgoing[channel]?.let {
-            it.trySend(message.info.messageType to message.payload)
+            it.trySend(Reply(message.info.messageType, message.payload))
             return
         }
         val reply = lock.withLock { handle(channel, message.info.messageType, message.payload) } ?: return
-        connection.send(DataXConnection.mirror(channel), reply.second, messageType = reply.first)
+        connection.send(DataXConnection.mirror(channel), reply.payload, messageType = reply.type)
     }
 
     // Files this side is sending, by channel without the originator bit: their answers go here.
-    private val outgoing = java.util.concurrent.ConcurrentHashMap<Int, Channel<Pair<Int, ByteArray>>>()
+    private val outgoing = ConcurrentHashMap<Int, Channel<Reply>>()
 
     /**
      * Send [data] to the glasses as [baseName] in [namespace], the way their own sender does it in
@@ -171,12 +180,12 @@ class AirshipReceiver(private val spool: File) : Responder {
         connection: DataXConnection,
         namespace: String,
         baseName: String,
-        file: java.io.File,
+        file: File,
         chunk: Int = 1024,
         uuid: ByteArray? = null,
         onProgress: (Long) -> Unit = {},
     ): String? =
-        java.io.RandomAccessFile(file, "r").use { raf ->
+        RandomAccessFile(file, "r").use { raf ->
             send(connection, namespace, baseName, file.length(), chunk, onProgress, uuid) { at, n -> ByteArray(n).also { raf.seek(at); raf.readFully(it) } }
         }
 
@@ -191,31 +200,32 @@ class AirshipReceiver(private val spool: File) : Responder {
         uuid: ByteArray? = null,
         read: (Long, Int) -> ByteArray,
     ): String? {
-        val uuid = uuid ?: ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+        val id = uuid ?: ByteArray(16).also { SecureRandom().nextBytes(it) }
         val channel = connection.openChannel(SVC_AIRSHIP)
-        val answers = Channel<Pair<Int, ByteArray>>(Channel.UNLIMITED)
+        val answers = Channel<Reply>(Channel.UNLIMITED)
         outgoing[channel and 0x7FFF] = answers
         // The checksum of everything before [at], read again from the start when they ask for a rewind.
         fun adlerTo(at: Long) = Adler32().apply {
             var p = 0L
             while (p < at) {
-                val n = minOf(65_536L, at - p).toInt()
+                val n = minOf(CHECK_BYTES.toLong(), at - p).toInt()
                 update(read(p, n))
                 p += n
             }
         }
         try {
-            val offer = ProtoWriter().bytes(1, uuid).varint(2, size).string(3, namespace).string(4, baseName).build()
+            val offer = Wire.fieldBytes(1, id) + Wire.fieldVarintNonZero(2, size) + Wire.fieldString(3, namespace) +
+                Wire.fieldString(4, baseName)
             connection.send(channel, offer, messageType = MT_OFFER, serviceId = SVC_AIRSHIP)
-            var (type, payload) = kotlinx.coroutines.withTimeoutOrNull(15_000) { answers.receive() } ?: return "no answer to the offer"
+            var answer = withTimeoutOrNull(ANSWER_MS) { answers.receive() } ?: return "no answer to the offer"
             while (true) {
-                when (type) {
+                when (answer.type) {
                     MT_DROP -> return "refused"
                     MT_CURSOR -> Unit
-                    else -> return "unexpected answer type $type"
+                    else -> return "unexpected answer type ${answer.type}"
                 }
                 // Resume from where they say they are; a fresh file starts at 0.
-                var at = fields(payload).long(1).coerceIn(0, size)
+                var at = parsed(answer.payload).varint(1).coerceIn(0, size)
                 var adler = adlerTo(at)
                 var sinceCheck = 0
                 while (at < size) {
@@ -225,26 +235,25 @@ class AirshipReceiver(private val spool: File) : Responder {
                     adler.update(bytes)
                     at += n
                     sinceCheck += n
-                    if (sinceCheck >= 65_536 && at < size) {
+                    if (sinceCheck >= CHECK_BYTES && at < size) {
                         sinceCheck = 0
                         onProgress(at)
                         connection.send(channel, cursor(at, adler.value), messageType = MT_CHECK)
                     }
                     // Answers to checks are read as they come; a cursor behind us means rewind.
-                    val answer = answers.tryReceive().getOrNull() ?: continue
-                    if (answer.first == MT_DROP) return "dropped mid-transfer"
-                    val theirs = fields(answer.second).long(1)
-                    if (answer.first == MT_CURSOR && theirs < at) {
+                    val check = answers.tryReceive().getOrNull() ?: continue
+                    if (check.type == MT_DROP) return "dropped mid-transfer"
+                    val theirs = parsed(check.payload).varint(1)
+                    if (check.type == MT_CURSOR && theirs < at) {
                         at = theirs
                         adler = adlerTo(at)
                     }
                 }
                 connection.send(channel, cursor(size, adler.value), messageType = MT_COMPLETE)
-                val end = kotlinx.coroutines.withTimeoutOrNull(15_000) { answers.receive() } ?: return "no answer to the complete"
-                if (end.first == MT_DROP) return null
+                val end = withTimeoutOrNull(ANSWER_MS) { answers.receive() } ?: return "no answer to the complete"
+                if (end.type == MT_DROP) return null
                 // A cursor instead of the drop: they want part of it again.
-                type = end.first
-                payload = end.second
+                answer = end
             }
         } finally {
             outgoing.remove(channel and 0x7FFF)
@@ -253,32 +262,32 @@ class AirshipReceiver(private val spool: File) : Responder {
 
     /** Let go of every half-received file. Called when the link drops. */
     suspend fun abandon() = lock.withLock {
-        live.values.forEach { it.discard() }
-        live.clear()
+        incoming.values.forEach { it.discard() }
+        incoming.clear()
         publish()
     }
 
-    private fun handle(channel: Int, type: Int, payload: ByteArray): Pair<Int, ByteArray>? {
+    private fun handle(channel: Int, type: Int, payload: ByteArray): Reply? {
         when (type) {
             MT_OFFER, MT_OFFER_MULTISCOPE -> {
-                val f = fields(payload)
-                val offer = Offer(f.bytes(1), f.long(2), f.bytes(3).decodeToString())
-                live.remove(channel)?.discard()
+                val f = parsed(payload)
+                val offer = Offer(f.bytes(1), f.varint(2), f.bytes(3).decodeToString())
+                incoming.remove(channel)?.discard()
                 val taker = if (offer.namespace in ACCEPTED) null else extras.firstOrNull { runCatching { it.wants(offer) }.getOrDefault(false) }
                 // Refusing still needs the drop, or the glasses' queue stalls behind this offer.
                 if (offer.namespace !in ACCEPTED && taker == null) {
                     if (offer.namespace !in QUIET) _notes.trySend("Refused ${sizeWords(offer.size)} in namespace \"${offer.namespace}\"")
-                    return MT_DROP to fileId(offer.raw)
+                    return Reply(MT_DROP, fileId(offer.idBytes))
                 }
                 spool.mkdirs()
-                live[channel] = Live(offer, File(spool, offer.uuid), taker)
+                incoming[channel] = Incoming(offer, File(spool, offer.uuid), taker)
                 _notes.trySend("Receiving ${sizeWords(offer.size)}${describe(offer.uuid)}")
                 publish()
                 // Offset 0 with the adler32 of nothing: what FileReceiver::acceptOffer sends.
-                return MT_CURSOR to cursor(0, 1)
+                return Reply(MT_CURSOR, cursor(0, 1))
             }
 
-            MT_DATA -> live[channel]?.let { t ->
+            MT_DATA -> incoming[channel]?.let { t ->
                 t.append(payload)
                 val percent = if (t.offer.size > 0) t.received * 100 / t.offer.size else 0
                 if (percent != t.percent) {
@@ -290,37 +299,44 @@ class AirshipReceiver(private val spool: File) : Responder {
                 }
             }
 
-            MT_RESET -> live[channel]?.restart()
+            MT_RESET -> incoming[channel]?.restart()
 
-            MT_CHECK -> live[channel]?.let { return MT_CURSOR to cursor(it.received, it.adler.value) }
+            MT_CHECK -> incoming[channel]?.let { return Reply(MT_CURSOR, cursor(it.received, it.adler.value)) }
 
             MT_COMPLETE -> {
-                val t = live.remove(channel) ?: return null
+                val t = incoming.remove(channel) ?: return null
                 t.out.close()
-                val f = fields(payload)
-                val verified = f.long(1) == t.received && f.long(2) == t.adler.value
+                val f = parsed(payload)
+                val verified = f.varint(1) == t.received && f.varint(2) == t.adler.value
                 val whole = Received(t.offer, t.file, verified)
                 if (t.offer.namespace in ACCEPTED) {
-                    extras.forEach { runCatching { it.peek(whole) } }
+                    if (t.offer.namespace == NAMESPACE_MEDIA) extras.forEach { x ->
+                        runCatching { x.peek(whole) }.onFailure { _notes.trySend("A file taker failed: ${it.message ?: it}") }
+                    }
                     _received.trySend(whole)
                 } else {
-                    t.taker?.let { runCatching { it.take(whole) } }
+                    t.taker?.let { first ->
+                        val takers = listOf(first) + extras.filter { it !== first && runCatching { it.wants(t.offer) }.getOrDefault(false) }
+                        takers.forEach { taker ->
+                            runCatching { taker.take(whole) }.onFailure { _notes.trySend("A file taker failed: ${it.message ?: it}") }
+                        }
+                    }
                     t.file.delete()
                 }
                 publish()
                 // FileReceiver::complete answers with a drop, which takes it off their queue.
-                return MT_DROP to fileId(t.offer.raw)
+                return Reply(MT_DROP, fileId(t.offer.idBytes))
             }
 
-            MT_REMOVED -> live.remove(channel)?.let {
+            MT_REMOVED -> incoming.remove(channel)?.let {
                 it.discard()
                 _notes.trySend("The glasses withdrew a file of ${sizeWords(it.offer.size)}")
                 publish()
             }
 
             MT_STOPPED -> {
-                val reason = fields(payload).long(2)
-                live.remove(channel)?.let {
+                val reason = parsed(payload).varint(2)
+                incoming.remove(channel)?.let {
                     it.discard()
                     _notes.trySend(
                         "The glasses paused a file of ${sizeWords(it.offer.size)} (reason $reason). " +
@@ -339,7 +355,7 @@ class AirshipReceiver(private val spool: File) : Responder {
     }
 
     private fun publish() {
-        _transfers.value = live.values.map {
+        _transfers.value = incoming.values.map {
             val seconds = (System.nanoTime() - it.startedAt) / 1e9
             val rate = if (it.startedAt == 0L || seconds <= 0) 0 else (it.received / seconds).toLong()
             Transfer(it.offer.uuid, it.received, it.offer.size, rate)
@@ -347,15 +363,12 @@ class AirshipReceiver(private val spool: File) : Responder {
     }
 }
 
-private fun cursor(offset: Long, adler: Long): ByteArray = ProtoWriter().varint(1, offset).varint(2, adler).build()
+private fun cursor(offset: Long, adler: Long): ByteArray = Wire.fieldVarintNonZero(1, offset) + Wire.fieldVarintNonZero(2, adler)
 
-private fun fileId(uuid: ByteArray): ByteArray = ProtoWriter().bytes(1, uuid).build()
+private fun fileId(uuid: ByteArray): ByteArray = Wire.fieldBytes(1, uuid)
 
-private fun formatUuid(raw: ByteArray): String {
-    val h = raw.joinToString("") { "%02x".format(it) }
-    if (raw.size != 16) return h
-    return "${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}"
-}
+// A malformed payload reads as empty, so the offer or file still gets its drop.
+private fun parsed(payload: ByteArray): Wire.Fields = runCatching { Wire.parse(payload) }.getOrElse { Wire.parse(ByteArray(0)) }
 
 /** 14.9 MB, 380 KB, 22 B. */
 fun sizeWords(bytes: Long): String = when {

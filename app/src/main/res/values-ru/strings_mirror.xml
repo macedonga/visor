@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mirror_title">Дублирование экрана</string>
+    <string name="mirror_start">Запустить</string>
+    <string name="mirror_stop">Остановить</string>
+    <string name="mirror_starting">Запуск…</string>
+    <string name="mirror_live">Работает</string>
+    <string name="mirror_not_read">Очки не прислали конфигурацию.</string>
+    <string name="mirror_no_flag">Эти очки не умеют дублировать экран.</string>
+    <string name="mirror_flag_not_sent">Очки не включили дублирование экрана.</string>
+    <string name="mirror_no_answer">Очки не ответили.</string>
+    <string name="mirror_asleep">Экран очков спит.</string>
+    <string name="mirror_timeout">Очки не ответили вовремя.</string>
+    <string name="mirror_unknown">Очки отказались дублировать экран.</string>
+    <string name="mirror_needs_restart">Перезапустите очки один раз, чтобы включить дублирование.</string>
+    <string name="mirror_no_wifi">Wi-Fi с очками не подключился.</string>
+</resources>

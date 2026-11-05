@@ -20,12 +20,13 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -37,30 +38,32 @@ import org.json.JSONObject
 /** One MobileConfig param from the glasses' params map. type: 1 bool, 2 int64, 3 string, 4 double. */
 class McParam(val name: String, val type: Int, val slot: Int, val sessionless: Boolean)
 
+enum class ConfigBusy { READING, SENDING }
+
+/** How the last read or write ended; [why] is a write's failure. */
+data class ConfigNote(val kind: Kind, val why: String = "") {
+    enum class Kind { NOT_READ, SENT, RESENT, NOT_SENT }
+}
+
 data class ConfigState(
     // The glasses' own values by param name, from their last bug report or from the last write.
     val values: Map<String, Any> = emptyMap(),
     // What the last bug report showed, so a write is only taken as landed once a report says so.
     val reported: Map<String, Any> = emptyMap(),
     val reportedAt: Long? = null,
-    // When Visor last sent a table; a report older than this does not tell whether it landed.
-    val sentAt: Long? = null,
     val params: Map<String, McParam> = emptyMap(),
     // The values from before Visor's first write, the way back.
     val baseline: Map<String, Any>? = null,
     val readAt: Long? = null,
     // The glasses' boot as the last report named it: a new one means they restarted since.
     val boot: String? = null,
-    val busy: String = "",
-    val note: String = "",
+    val busy: ConfigBusy? = null,
+    val note: ConfigNote? = null,
 )
 
 /**
- * The glasses' MobileConfig, Meta's server-side feature switches. They come out of a lite bug report, the directory
- * collectors without dumpstate (mobileconfig/current_mc_values.json and the params map, in seconds where a full report
- * takes minutes over Bluetooth); a change goes back as a full pair of
- * FBMobileConfigTables zipped onto airship namespace "mobileconfig", the way the Meta app syncs them.
- * Most switches are read at boot, so the glasses need a restart after a write.
+ * The glasses' MobileConfig: read from a lite bug report, written as a pair of mctables zipped onto airship
+ * "mobileconfig". Most switches apply after a restart.
  */
 class GlassesConfig(
     context: Context,
@@ -81,7 +84,7 @@ class GlassesConfig(
     private var schemaHash = ""
     private var counts = IntArray(4)
     private var sessionId = ""
-    private var waiting: CompletableDeferred<Unit>? = null
+    private var waiting: CompletableDeferred<Boolean>? = null
     private var reading: Deferred<Boolean>? = null
     private var boot: String? = null
     private val writes = Mutex()
@@ -98,7 +101,7 @@ class GlassesConfig(
     /** The pair's own values, or none yet; what the last pair had stays in its folder. */
     private fun switchTo(serial: String) {
         dir = File(root, serial)
-        // Before Visor kept pairs apart, the one pair's files sat in the root.
+        // Files loose in the root are the first pair's.
         val loose = root.listFiles { f -> f.isFile }.orEmpty()
         if (loose.isNotEmpty() && !dir.exists()) {
             dir.mkdirs()
@@ -121,14 +124,24 @@ class GlassesConfig(
     /** [read], waited for: true once the report came in. A second ask joins the read on its way. */
     suspend fun readNow(): Boolean = readAsync().await()
 
+    /** The configuration, read once if it never was, after any photos still to come over; [onRead] hears the read start. True once there is one. */
+    suspend fun readOnce(timeoutMs: Long, onRead: () -> Unit): Boolean {
+        if (_state.value.params.isNotEmpty()) return true
+        withTimeoutOrNull(BRING_OVER_MS) { combine(media.importing, media.fresh) { importing, fresh -> !importing && fresh.isEmpty() }.first { it } }
+        media.importing.first { !it }
+        onRead()
+        read()
+        return withTimeoutOrNull(timeoutMs) { _state.first { it.params.isNotEmpty() } } != null
+    }
+
     @Synchronized
     private fun readAsync(): Deferred<Boolean> = reading?.takeIf { it.isActive } ?: scope.async {
-        val done = CompletableDeferred<Unit>().also { waiting = it }
-        _state.update { it.copy(busy = "Asking the glasses for their configuration.", note = "") }
+        val done = CompletableDeferred<Boolean>().also { waiting = it }
+        _state.update { it.copy(busy = ConfigBusy.READING, note = null) }
         media.requestBugReport(LITE_REPORT)
-        val got = withTimeoutOrNull(READ_TIMEOUT_MS) { done.await() } != null
+        val got = withTimeoutOrNull(READ_TIMEOUT_MS) { done.await() } == true
         waiting = null
-        _state.update { it.copy(busy = "", note = if (got) it.note else "The glasses did not send their configuration.") }
+        _state.update { it.copy(busy = null, note = if (got) it.note else ConfigNote(ConfigNote.Kind.NOT_READ)) }
         got
     }.also { reading = it }
 
@@ -138,7 +151,7 @@ class GlassesConfig(
     }
 
     /** [apply], waited for: null once the glasses have the table, else why it did not go. */
-    suspend fun send(changes: Map<String, Any>): String? = write(changes, "Sent. Restart the glasses to use the new values.")
+    suspend fun send(changes: Map<String, Any>): String? = write(changes, ConfigNote.Kind.SENT)
 
     /** The zip [apply] would send for [changes], for checking it by hand. */
     fun preview(changes: Map<String, Any>): Pair<String, ByteArray> = tables(state.value.values + changes)
@@ -146,17 +159,17 @@ class GlassesConfig(
     /** Put back the values from before Visor's first write. */
     fun restore() {
         val base = state.value.baseline ?: return
-        scope.launch { write(base, "Original values sent. Restart the glasses to use them.") }
+        scope.launch { write(base, ConfigNote.Kind.SENT) }
     }
 
-    private suspend fun write(changes: Map<String, Any>, done: String): String? {
+    private suspend fun write(changes: Map<String, Any>, done: ConfigNote.Kind): String? {
         // A read on its way finishes first: the table goes over what it brings.
         reading?.takeIf { it.isActive }?.await()
         return writes.withLock {
             val s = state.value
             if (s.params.isEmpty()) return@withLock "the glasses' configuration has not been read yet"
             val values = s.values + changes
-            _state.update { it.copy(busy = "Sending to the glasses…", note = "") }
+            _state.update { it.copy(busy = ConfigBusy.SENDING, note = null) }
             val why = runCatching {
                 val (name, zip) = tables(values)
                 val sent = CompletableDeferred<String?>()
@@ -168,11 +181,9 @@ class GlassesConfig(
                     File(dir, BASELINE).writeText(valuesJson(s.values))
                 }
                 File(dir, VALUES).writeText(valuesJson(values))
-                val now = System.currentTimeMillis()
-                File(dir, SENT).writeText(now.toString())
-                _state.update { it.copy(values = values, baseline = it.baseline ?: s.values, sentAt = now, busy = "", note = done) }
+                _state.update { it.copy(values = values, baseline = it.baseline ?: s.values, busy = null, note = ConfigNote(done)) }
             } else {
-                _state.update { it.copy(busy = "", note = "Not sent: $why") }
+                _state.update { it.copy(busy = null, note = ConfigNote(ConfigNote.Kind.NOT_SENT, why)) }
             }
             why
         }
@@ -180,28 +191,33 @@ class GlassesConfig(
 
     /** A bug report zip from the glasses: keep its MobileConfig part. */
     private fun take(zip: File) {
-        val lost = ZipFile(zip).use { z ->
-            fun bytes(path: String) = z.getEntry(path)?.let { e -> z.getInputStream(e).use { it.readBytes() } }
-            val map = bytes("mobileconfig/maps/current/merged_params_map_v4_u0.txt") ?: return
-            val names = bytes("mobileconfig/maps/current/merged_params_names_v4_u0.txt") ?: return
-            val values = bytes("mobileconfig/current_mc_values.json")
-            values?.let {
-                File(dir, VALUES).writeBytes(it)
-                File(dir, REPORTED).writeBytes(it)
+        var found = false
+        try {
+            val lost = ZipFile(zip).use { z ->
+                fun bytes(path: String) = z.getEntry(path)?.let { e -> z.getInputStream(e).use { it.readBytes() } }
+                val map = bytes("mobileconfig/maps/current/merged_params_map_v4_u0.txt") ?: return
+                val names = bytes("mobileconfig/maps/current/merged_params_names_v4_u0.txt") ?: return
+                val values = bytes("mobileconfig/current_mc_values.json")
+                values?.let {
+                    File(dir, VALUES).writeBytes(it)
+                    File(dir, REPORTED).writeBytes(it)
+                }
+                File(dir, MAP).writeBytes(map)
+                File(dir, NAMES).writeBytes(names)
+                bytes("mobileconfig/session_info.json")?.let { File(dir, SESSION).writeBytes(it) }
+                bytes("mobileconfig/current_timestamp.txt")?.let { File(dir, TIMESTAMP).writeText(String(it).trim()) }
+                boot = bytes("settingsservice/boot_session_id")?.let { String(it).trim() } ?: boot
+                values == null
             }
-            File(dir, MAP).writeBytes(map)
-            File(dir, NAMES).writeBytes(names)
-            bytes("mobileconfig/session_info.json")?.let { File(dir, SESSION).writeBytes(it) }
-            bytes("mobileconfig/current_timestamp.txt")?.let { File(dir, TIMESTAMP).writeText(String(it).trim()) }
-            boot = bytes("settingsservice/boot_session_id")?.let { String(it).trim() } ?: boot
-            values == null
+            load()
+            _state.update { it.copy(readAt = System.currentTimeMillis(), boot = boot) }
+            found = true
+            // A reset leaves the glasses on built-in defaults, without what Meta's servers had set (dynamic photos among
+            // it); the last values Visor saw go back.
+            if (lost && state.value.values.isNotEmpty()) scope.launch { write(emptyMap(), ConfigNote.Kind.RESENT) }
+        } finally {
+            waiting?.complete(found)
         }
-        load()
-        _state.update { it.copy(readAt = System.currentTimeMillis(), boot = boot, note = "Read ${it.values.size} values from the glasses.") }
-        // A reset leaves the glasses on built-in defaults, without what Meta's servers had set (dynamic photos among
-        // it); the last values Visor saw go back.
-        if (lost && state.value.values.isNotEmpty()) scope.launch { write(emptyMap(), "The glasses had lost their configuration; the last one went back. Restart the glasses to use it.") }
-        waiting?.complete(Unit)
     }
 
     private fun load() {
@@ -211,14 +227,12 @@ class GlassesConfig(
         val values = File(dir, VALUES).takeIf { it.isFile }?.let { parseValues(it.readText()) }.orEmpty()
         val baseline = File(dir, BASELINE).takeIf { it.isFile }?.let { parseValues(it.readText()) }
         val reported = File(dir, REPORTED).takeIf { it.isFile }
-        val sent = File(dir, SENT).takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull()
         _state.update {
             it.copy(
                 values = values, params = params, baseline = baseline, readAt = it.readAt ?: map.lastModified(),
-                // Before Visor kept reports apart, the values it held were the last report's.
+                // Without reported.json, the saved values are the last report's.
                 reported = reported?.let { f -> parseValues(f.readText()) } ?: values,
                 reportedAt = reported?.lastModified() ?: File(dir, VALUES).takeIf { f -> f.isFile }?.lastModified(),
-                sentAt = sent,
             )
         }
     }
@@ -330,15 +344,16 @@ class GlassesConfig(
         const val NAMES = "params_names.json"
         const val SESSION = "session_info.json"
         const val REPORTED = "reported.json"
-        const val SENT = "sent_at.txt"
         const val TIMESTAMP = "current_timestamp.txt"
         const val LAST_STAMP = "last_stamp.txt"
-        private const val NO_PAIR = "none"
+        const val NO_PAIR = "none"
         const val STAMP = "MMM-dd-yyyy-HH-mm-ss"
         const val STALE_MARGIN_MS = 15 * 60_000L
         const val READ_TIMEOUT_MS = 10 * 60_000L
-        // BugReportParams.mode 1: 355 KB in 10 s over Bluetooth on 7238, where the default full report was 4.3 MB in 2 min.
-        private const val LITE_REPORT = 1
+        // Auto-import looks every 15 s, so an import on its way starts well inside this.
+        const val BRING_OVER_MS = 2 * 60_000L
+        // BugReportParams.mode 1: the lite report, without dumpstate.
+        const val LITE_REPORT = 1
         const val SEND_TIMEOUT_MS = 60_000L
         // One sessionless, one sessioned.
         val FILLERS = mapOf("smartglasses_test_config.test_1" to true, "smartglasses_test_config_sessioned.gw_test_1" to false)

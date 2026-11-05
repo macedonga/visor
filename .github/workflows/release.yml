@@ -1,5 +1,5 @@
 # Builds the signed release APK for a version tag (v1.2.3) and publishes it as a GitHub release.
-# Run it by hand to get a draft release of the current main instead.
+# Run it by hand for a draft release of the branch it runs on.
 #
 # Secrets: VISOR_KEYSTORE_BASE64 (the PKCS12 keystore, base64), VISOR_KEYSTORE_PASSWORD, VISOR_KEY_ALIAS,
 # and Meta's app tokens VISOR_META_HW_TOKEN, VISOR_META_AR_TOKEN and VISOR_META_FRL_TOKEN (README, Build from source).
@@ -44,6 +44,10 @@ jobs:
             echo "error: '$name' is not a version like 1.2.3 or 1.2.3-beta.1" >&2
             exit 1
           fi
+          if (( BASH_REMATCH[2] > 99 || BASH_REMATCH[3] > 99 )); then
+            echo "error: minor and patch must be under 100" >&2
+            exit 1
+          fi
           # 1.2.3 -> 10203, so every later version installs over the one before.
           code=$(( BASH_REMATCH[1] * 10000 + BASH_REMATCH[2] * 100 + BASH_REMATCH[3] ))
           {
@@ -70,11 +74,13 @@ jobs:
       - name: Check the secrets and restore the release key
         env:
           KEYSTORE_BASE64: ${{ secrets.VISOR_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.VISOR_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.VISOR_KEY_ALIAS }}
           META_HW_TOKEN: ${{ secrets.VISOR_META_HW_TOKEN }}
           META_AR_TOKEN: ${{ secrets.VISOR_META_AR_TOKEN }}
           META_FRL_TOKEN: ${{ secrets.VISOR_META_FRL_TOKEN }}
         run: |
-          for secret in KEYSTORE_BASE64 META_HW_TOKEN META_AR_TOKEN META_FRL_TOKEN; do
+          for secret in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS META_HW_TOKEN META_AR_TOKEN META_FRL_TOKEN; do
             if [ -z "${!secret}" ]; then
               echo "error: the VISOR_$secret secret is not set" >&2
               exit 1

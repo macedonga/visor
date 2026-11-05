@@ -23,10 +23,11 @@ const val MT_CAPTURE_GONE = 0x82
 /** Link type 1 is the RFCOMM link already up. The glasses accept 1, 3 and 7. */
 const val LINK_BLUETOOTH = 1
 
-const val KIND_VIDEO = 1
-const val KIND_STILL = 2
-const val KIND_IMU = 3
-const val KIND_FRAMES = 4
+private const val KIND_VIDEO = 1
+private const val KIND_STILL = 2
+private const val KIND_IMU = 3
+private const val KIND_FRAMES = 4
+private val PLAUSIBLE_MILLIS = 1_577_836_800_000..4_102_444_800_000 // 2020 to 2100
 
 // The Display's kinds are the wire CaptureType plus 0xC00 (inferred). Any other kind is classed by its assets.
 private const val CAPTURE_VIDEO = 3074L
@@ -38,6 +39,8 @@ data class Asset(val id: String, val typeCode: Long, val size: Long) {
 
     /** Set once the glasses have handed the asset to a phone. */
     val delivered: Boolean get() = typeCode and ASSET_DELIVERED != 0L
+
+    fun asDelivered() = copy(typeCode = typeCode or ASSET_DELIVERED)
 }
 
 /** What a capture is, read from its kind and, where the kind says nothing, from its assets. */
@@ -96,7 +99,7 @@ data class Capture(
     /** The main asset has not gone to any phone yet. */
     val isNew: Boolean get() = main?.delivered == false
 
-    val takenAtMillis: Long? get() = (timestampNs / 1_000_000).takeIf { it in 1_577_836_800_000..4_102_444_800_000 }
+    val takenAtMillis: Long? get() = (timestampNs / 1_000_000).takeIf { it in PLAUSIBLE_MILLIS }
 }
 
 /** Ask for the capture list. Each capture comes back on its own as [MT_CAPTURE]. */
@@ -119,10 +122,7 @@ suspend fun deleteCapture(connection: DataXConnection, handle: String) = request
 private suspend fun request(connection: DataXConnection, type: Int, payload: ByteArray) =
     connection.sendOnService(SVC_MEDIA, type, payload)
 
-/**
- * One [MT_CAPTURE] flatbuffer. There is no schema, so slots are the ones lensbreak read off live
- * messages, and every string, table and vector is validated before it is believed.
- */
+/** One [MT_CAPTURE] flatbuffer, read without a schema: every string, table and vector is checked before use. */
 fun parseCapture(payload: ByteArray): Capture? {
     if (payload.size < 4) return null
     val f = Flat(payload)
@@ -145,7 +145,7 @@ fun parseCapture(payload: ByteArray): Capture? {
     return Capture(handle, f.number(f.field(info, 8)), assets, timestamp, landscape, steadiness)
 }
 
-/** A flatbuffer read by its own vtables. Port of capture_list.py's `_Buf`. */
+/** A flatbuffer read by its own vtables. */
 private class Flat(private val b: ByteArray) {
     private val bb = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN)
 

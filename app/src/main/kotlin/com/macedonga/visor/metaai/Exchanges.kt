@@ -1,5 +1,6 @@
 package com.macedonga.visor.metaai
 
+import android.text.format.DateFormat
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -10,7 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,21 +31,24 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -52,25 +56,36 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.ANSWER_TOO_LATE
+import com.macedonga.visor.core.assistant.CameraAction
+import com.macedonga.visor.core.assistant.MediaControl
 import com.macedonga.visor.core.assistant.ON_GLASSES
 import com.macedonga.visor.core.assistant.TurnRecord
 import com.macedonga.visor.core.assistant.TurnSource
+import com.macedonga.visor.core.assistant.mcp.ToolAction
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.gallery.PhotoLight
 import com.macedonga.visor.gallery.clockTime
 import com.macedonga.visor.gallery.dayTitle
+import com.macedonga.visor.home.rememberNow
+import com.macedonga.visor.settings.CARD_RADIUS
+import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlin.math.ceil
 
-internal val SIDE = 24.dp
 private val LIGHT_OVERHANG = 96.dp
+private const val WAITING_MS = 120_000L
 
-/** As tall as the parent and [by] more above and below it. */
-private fun Modifier.overhang(by: androidx.compose.ui.unit.Dp) = layout { measurable, constraints ->
-    val extra = by.roundToPx()
+/** Still waiting for its answer: asked moments ago, or asked again ([asking]). */
+internal fun TurnRecord.awaiting(asking: Set<String> = emptySet(), now: Long = System.currentTimeMillis()) =
+    answer.isEmpty() && problem.isEmpty() && (now - at < WAITING_MS || interactionId in asking)
+
+/** As tall as the parent and [amount] more above and below it. */
+private fun Modifier.overhang(amount: Dp) = layout { measurable, constraints ->
+    val extra = amount.roundToPx()
     val placeable = measurable.measure(constraints.copy(minHeight = constraints.minHeight + 2 * extra, maxHeight = constraints.maxHeight + 2 * extra))
     layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, -extra) }
 }
@@ -79,21 +94,20 @@ private fun Modifier.overhang(by: androidx.compose.ui.unit.Dp) = layout { measur
 @Composable
 internal fun ledeStyle(): TextStyle = Visor.type.body.copy(fontSize = 19.sp, lineHeight = 27.sp, letterSpacing = (-0.012).em)
 
-/**
- * A day's head: its name and date, which open the calendar; its lines once written; its photos, small and
- * overlapping, each a way to its exchange.
- */
+/** A day's title, which opens the calendar, its lines and its photos. */
 @Composable
-internal fun DayHead(day: DiaryDay, first: Boolean, onCalendar: () -> Unit, onPhoto: (String) -> Unit, onLongPress: () -> Unit) {
+internal fun DayHead(day: DiaryDay, first: Boolean, onCalendar: () -> Unit, onPhoto: (String) -> Unit, onActions: () -> Unit) {
     val colors = Visor.colors
-    val relative = day.date == LocalDate.now() || day.date == LocalDate.now().minusDays(1)
-    val full = DateTimeFormatter.ofPattern("EEEE d MMMM", java.util.Locale.getDefault()).format(day.date).replaceFirstChar { it.titlecase() }
+    val locale = LocalConfiguration.current.locales[0]
+    val today = LocalDate.now()
+    val relative = day.date == today || day.date == today.minusDays(1)
+    val full = DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM"), locale).format(day.date).replaceFirstChar { it.titlecase(locale) }
     val sub = listOfNotNull(full.takeIf { relative }, pluralStringResource(R.plurals.meta_ai_questions, day.questions, day.questions)).joinToString(" · ")
     Column(Modifier.fillMaxWidth().padding(top = if (first) 4.dp else 44.dp).animateContentSize()) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .pointerInput(Unit) { detectTapGestures(onTap = { onCalendar() }, onLongPress = { onLongPress() }) }
+                .combinedClickable(interactionSource = null, indication = null, hapticFeedbackEnabled = false, onClick = onCalendar, onLongClick = onActions)
                 .padding(horizontal = SIDE, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -117,18 +131,20 @@ private fun PhotoStack(photos: List<TurnRecord>, onPhoto: (String) -> Unit, modi
     val shown = photos.take(4)
     Box(modifier.height(48.dp).width((48 + (shown.size - 1) * 34).dp)) {
         for ((i, turn) in shown.withIndex()) {
-            val image by rememberDiaryPhoto(turn.image, 192)
-            Box(
-                Modifier
-                    .offset(x = (i * 34).dp)
-                    .size(48.dp)
-                    .graphicsLayer { rotationZ = if (i % 2 == 0) -3f else 3f }
-                    .clip(RoundedCornerShape(11.dp))
-                    .border(2.dp, Visor.colors.canvas, RoundedCornerShape(11.dp))
-                    .background(Visor.colors.raised)
-                    .clickable { onPhoto(turn.interactionId) },
-            ) {
-                image?.let { Image(it, stringResource(R.string.gallery_photo), Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+            key(turn.interactionId) {
+                val image by rememberDiaryPhoto(turn.image, 192)
+                Box(
+                    Modifier
+                        .offset(x = (i * 34).dp)
+                        .size(48.dp)
+                        .graphicsLayer { rotationZ = if (i % 2 == 0) -3f else 3f }
+                        .clip(RoundedCornerShape(11.dp))
+                        .border(2.dp, Visor.colors.canvas, RoundedCornerShape(11.dp))
+                        .background(Visor.colors.raised)
+                        .clickable { onPhoto(turn.interactionId) },
+                ) {
+                    image?.let { Image(it, stringResource(R.string.gallery_photo), Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                }
             }
         }
     }
@@ -139,10 +155,12 @@ private fun PhotoStack(photos: List<TurnRecord>, onPhoto: (String) -> Unit, modi
 internal fun ConversationBlock(
     conversation: DiaryConversation,
     speech: Speech,
-    onLongPress: (TurnRecord) -> Unit,
+    asking: Set<String>,
+    onActions: (TurnRecord) -> Unit,
     onPhoto: (String) -> Unit,
     onMemories: () -> Unit,
 ) {
+    val now = rememberNow()
     Column(Modifier.fillMaxWidth().padding(vertical = 18.dp)) {
         conversation.startedOn?.let {
             Text(
@@ -153,28 +171,37 @@ internal fun ConversationBlock(
             )
         }
         for ((i, turn) in conversation.turns.withIndex()) {
-            if (i > 0) Spacer(Modifier.height(24.dp))
-            Exchange(turn, speech.shownOf(turn), { onLongPress(turn) }, onPhoto, onMemories)
+            key(turn.interactionId) {
+                if (i > 0) Spacer(Modifier.height(24.dp))
+                Exchange(turn, speech.shownOf(turn), { onActions(turn) }, onPhoto, onMemories, waiting = turn.awaiting(asking, maxOf(now, System.currentTimeMillis())))
+            }
         }
     }
 }
 
-/**
- * A question and its answer. The time and where it was asked, the question in grey, the photo it came with lighting
- * the whole exchange, the answer in white, word by word while it is being spoken; what the model kept, under it.
- */
+/** One question, its photo and its answer, revealed word by word while it is spoken. */
 @Composable
-internal fun Exchange(turn: TurnRecord, shown: Int, onLongPress: () -> Unit, onPhoto: (String) -> Unit, onMemories: () -> Unit) {
+internal fun Exchange(
+    turn: TurnRecord,
+    shown: Int,
+    onActions: (() -> Unit)?,
+    onPhoto: (String) -> Unit,
+    onMemories: () -> Unit,
+    waiting: Boolean = turn.awaiting(),
+) {
     val colors = Visor.colors
     val photo = turn.image.takeIf { it.isNotEmpty() }
     val image by rememberDiaryPhoto(photo)
     Box(Modifier.fillMaxWidth()) {
-        // Past the exchange's edges, and out to nothing before its own: a light cut off at a bound blurs into a line.
+        // Overhangs the exchange so the light fades out instead of ending at a hard edge.
         if (photo != null) PhotoLight(image, Modifier.matchParentSize().overhang(LIGHT_OVERHANG), level = 0.48f, radius = 0.5f)
         Column(
             Modifier
                 .fillMaxWidth()
-                .pointerInput(turn.interactionId) { detectTapGestures(onLongPress = { onLongPress() }) }
+                .then(
+                    if (onActions == null) Modifier
+                    else Modifier.combinedClickable(interactionSource = null, indication = null, hapticFeedbackEnabled = false, onClick = onActions, onLongClick = onActions),
+                )
                 .padding(horizontal = SIDE),
         ) {
             val where = if (turn.source == TurnSource.PHONE) " · " + stringResource(R.string.meta_ai_phone) else ""
@@ -186,16 +213,16 @@ internal fun Exchange(turn: TurnRecord, shown: Int, onLongPress: () -> Unit, onP
                         .padding(vertical = 14.dp)
                         .fillMaxWidth()
                         .aspectRatio(4f / 5f)
-                        .clip(RoundedCornerShape(18.dp))
+                        .clip(RoundedCornerShape(CARD_RADIUS))
                         .background(colors.raised)
                         .clickable { onPhoto(photo) },
                 ) {
-                    image?.let { Image(it, stringResource(R.string.meta_ai_photo), Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    image?.let { Image(it, stringResource(R.string.gallery_photo), Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                 }
             } else {
                 Spacer(Modifier.height(8.dp))
             }
-            Answer(turn, shown)
+            Answer(turn, shown, waiting)
             for (fact in turn.remembered) {
                 Row(
                     Modifier.padding(top = 10.dp).clip(RoundedCornerShape(8.dp)).clickable(onClick = onMemories).padding(vertical = 2.dp),
@@ -213,10 +240,11 @@ internal fun Exchange(turn: TurnRecord, shown: Int, onLongPress: () -> Unit, onP
             // What the assistant did with the person's integrations, as quietly as what it remembered.
             for (action in turn.actions) {
                 val tint = if (action.ok) colors.textTertiary else colors.signal
+                val (by, did) = action.words()
                 Row(Modifier.padding(top = 10.dp).padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(VisorIcons.Plug, null, Modifier.size(15.dp), tint = tint)
                     Text(
-                        stringResource(if (action.ok) R.string.meta_ai_action else R.string.meta_ai_action_failed, action.server, action.what),
+                        stringResource(if (action.ok) R.string.meta_ai_action else R.string.meta_ai_action_failed, by, did),
                         style = Visor.type.label,
                         color = tint,
                         modifier = Modifier.padding(start = 6.dp),
@@ -228,17 +256,19 @@ internal fun Exchange(turn: TurnRecord, shown: Int, onLongPress: () -> Unit, onP
 }
 
 @Composable
-private fun Answer(turn: TurnRecord, shown: Int) {
+private fun Answer(turn: TurnRecord, shown: Int, waiting: Boolean) {
     val colors = Visor.colors
     when {
         turn.problem == ON_GLASSES -> Text(stringResource(R.string.meta_ai_on_glasses), style = Visor.type.label, color = colors.textTertiary)
-        turn.problem.isNotEmpty() && turn.problem != ANSWER_TOO_LATE ->
-            Text(stringResource(R.string.meta_ai_no_answer, turn.problem), style = Visor.type.label, color = colors.textTertiary)
+        (turn.problem.isNotEmpty() && turn.problem != ANSWER_TOO_LATE) || (turn.answer.isEmpty() && !waiting) ->
+            Text(stringResource(R.string.meta_ai_unanswered), style = Visor.type.label, color = colors.textTertiary)
         turn.answer.isEmpty() -> Thinking()
         else -> {
-            val text = turn.answer
+            // A turn that only acted keeps its actions' names as its answer.
+            val silent = turn.actions.isNotEmpty() && turn.answer == turn.actions.joinToString { it.what }
+            val text = if (silent) turn.actions.map { it.words().second }.joinToString(", ") else turn.answer
             // The words not yet spoken hold their place, so nothing moves as they come.
-            val annotated = if (shown >= text.length) buildAnnotatedString { append(text) } else buildAnnotatedString {
+            val annotated = if (shown >= text.length) AnnotatedString(text) else buildAnnotatedString {
                 append(text.substring(0, shown))
                 withStyle(SpanStyle(color = Color.Transparent)) { append(text.substring(shown)) }
             }
@@ -250,23 +280,62 @@ private fun Answer(turn: TurnRecord, shown: Int) {
     }
 }
 
+/** Who did [ToolAction] and what, in the app's language for Visor's own tools; a server's words as it gave them. */
+@Composable
+private fun ToolAction.words(): Pair<String, String> {
+    val camera = CameraAction.entries.firstOrNull { it.tool == kind }
+    val control = MediaControl.entries.firstOrNull { it.name.lowercase() == kind }
+    val by = if (camera != null) stringResource(R.string.glasses_title) else server.ifEmpty { stringResource(R.string.meta_ai_phone) }
+    val did = when {
+        kind == "directions" -> stringResource(R.string.phone_directions, subject)
+        kind == "play_media" -> if (subject.isEmpty()) stringResource(R.string.gallery_play) else stringResource(R.string.phone_play, subject)
+        control != null -> stringResource(
+            when (control) {
+                MediaControl.PAUSE -> R.string.meta_ai_pause
+                MediaControl.RESUME -> R.string.meta_ai_resume
+                MediaControl.NEXT -> R.string.meta_ai_next
+                MediaControl.PREVIOUS -> R.string.meta_ai_previous
+                MediaControl.STOP -> R.string.meta_ai_stop
+                MediaControl.RESTART -> R.string.meta_ai_restart
+            },
+        )
+        camera != null -> stringResource(
+            when (camera) {
+                CameraAction.TAKE_PHOTO -> R.string.shutter_take_photo
+                CameraAction.RECORD_VIDEO -> R.string.shutter_record_video
+                CameraAction.RECORD_HYPERLAPSE -> R.string.meta_ai_hyperlapse
+                CameraAction.STOP_RECORDING -> R.string.live_stop_recording
+            },
+        )
+        else -> what
+    }
+    return by to did
+}
+
 /** Three dots breathing one after the other: the model is on it. */
 @Composable
-internal fun Thinking(modifier: Modifier = Modifier) {
+private fun Thinking() {
     val beat = rememberInfiniteTransition(label = "thinking")
     val t by beat.animateFloat(0f, 1f, infiniteRepeatable(tween(1200), RepeatMode.Restart), label = "t")
-    Row(modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (i in 0 until 3) {
-            val phase = ((t - i * 0.18f) % 1f + 1f) % 1f
-            val a = 0.25f + 0.75f * (1f - kotlin.math.abs(phase * 2f - 1f))
-            Box(Modifier.size(6.dp).graphicsLayer { alpha = a }.clip(CircleShape).background(Visor.colors.textSecondary))
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .graphicsLayer {
+                        val phase = ((t - i * 0.18f) % 1f + 1f) % 1f
+                        alpha = 0.25f + 0.75f * (1f - abs(phase * 2f - 1f))
+                    }
+                    .clip(CircleShape)
+                    .background(Visor.colors.textSecondary),
+            )
         }
     }
 }
 
 /** A Live AI session, folded into one card: how long, a strip of what the camera saw, what was asked. */
 @Composable
-internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit) {
+internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit, onActions: () -> Unit) {
     val colors = Visor.colors
     val turns = conversation.turns
     val first = turns.first()
@@ -276,9 +345,9 @@ internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit) {
         Modifier
             .padding(horizontal = 16.dp, vertical = 14.dp)
             .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(CARD_RADIUS))
             .background(colors.raised)
-            .clickable(onClick = onOpen)
+            .combinedClickable(hapticFeedbackEnabled = false, onClick = onOpen, onLongClick = onActions)
             .padding(18.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -295,15 +364,17 @@ internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit) {
         if (frames.isNotEmpty()) {
             Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (frame in frames) {
-                    val image by rememberDiaryPhoto(frame.image, 160)
-                    Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(colors.control)) {
-                        image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    key(frame.interactionId) {
+                        val image by rememberDiaryPhoto(frame.image, 160)
+                        Box(Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(colors.control)) {
+                            image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                        }
                     }
                 }
             }
         }
         Text(
-            turns.joinToString(" · ") { "“${it.question.trim()}”" },
+            turns.joinToString(" · ") { it.question.trim() },
             style = Visor.type.body,
             color = colors.textSecondary,
             maxLines = 2,
@@ -324,7 +395,7 @@ internal fun PhotoView(path: String, onClose: () -> Unit) {
         ) {
             PhotoLight(image, Modifier.fillMaxSize(), level = 0.7f)
             image?.let {
-                Image(it, stringResource(R.string.meta_ai_photo), Modifier.fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(18.dp)), contentScale = ContentScale.Fit)
+                Image(it, stringResource(R.string.gallery_photo), Modifier.fillMaxWidth().padding(16.dp).clip(RoundedCornerShape(18.dp)), contentScale = ContentScale.Fit)
             }
         }
     }

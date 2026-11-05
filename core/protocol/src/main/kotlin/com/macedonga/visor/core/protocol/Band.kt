@@ -1,8 +1,8 @@
 package com.macedonga.visor.core.protocol
 
 /**
- * The Neural Band's RPC on svc52822, as Meta AI 294.1 speaks it (com.oculus.wearableinputservice). A request goes out
- * as DataX type 0x0314, whose low byte is the band's REQUEST; what the band sends carries its own type in the low byte.
+ * The Neural Band's RPC on svc52822. A request goes out as DataX type 0x0314, whose low byte is the band's REQUEST;
+ * what the band sends carries its own type in the low byte.
  */
 object Band {
     const val REQUEST_TYPE = 0x0314
@@ -45,11 +45,12 @@ object Band {
      * type (field 36) with priority 90 (35) and the use case "GenericC50" (37); before it the one bool, enableGestures (3).
      */
     fun gestureStreams(seq: Int, on: Boolean, protocol: Int?): ByteArray {
-        val map = protocol == null || protocol >= 2
-        val entries = if (map) GESTURE_STREAMS.fold(ByteArray(0)) { out, type ->
+        val sendMap = protocol == null || protocol >= 2
+        val sendBool = protocol == null || protocol < 2
+        val bool = if (sendBool) Wire.fieldVarint(3, if (on) 1 else 0) else ByteArray(0)
+        val entries = if (!sendMap) ByteArray(0) else GESTURE_STREAMS.fold(ByteArray(0)) { out, type ->
             out + Wire.fieldBytes(36, Wire.fieldVarint(1, type.toLong()) + Wire.fieldVarint(2, if (on) 1 else 0))
-        } + Wire.fieldVarint(35, PRIORITY_GENERIC_C50) + Wire.fieldBytes(37, "GenericC50".encodeToByteArray()) else ByteArray(0)
-        val bool = if (!map || protocol == null) Wire.fieldVarint(3, if (on) 1 else 0) else ByteArray(0)
+        } + Wire.fieldVarint(35, PRIORITY_GENERIC_C50) + Wire.fieldString(37, "GenericC50")
         return request(seq, 4, bool + entries)
     }
 
@@ -60,9 +61,6 @@ object Band {
     /** RpcRequest {1: seq, 17: HapticsReq {1: VibrateReq {1 duration in ms, 3 amplitude 0-255}}}, as the Display sends it: no frequency (2). */
     fun vibrate(seq: Int, millis: Long, amplitude: Int): ByteArray =
         request(seq, 17, Wire.fieldBytes(1, Wire.fieldVarint(1, millis) + Wire.fieldVarint(3, amplitude.toLong())))
-
-    /** RpcRequest {1: seq, 17: HapticsReq {3: StopReq {}}}. */
-    fun stopHaptics(seq: Int): ByteArray = request(seq, 17, Wire.fieldBytes(3, ByteArray(0)))
 
     // The firmware update: Ota on RpcRequest 7 (answers in RpcResponse 8), the bulk file transfer on 9 (answers in 10).
     const val OTA_ITEM_FIRMWARE = 0
@@ -77,10 +75,10 @@ object Band {
     // deviceState: the band runs its recovery firmware.
     const val OTA_DEVICE_RECOVERY = 2
     const val OTA_RESULT_OK = 0
-    const val TRANSFER_OTA = 1
-    const val TRANSFER_NEW = 1
-    const val TRANSFER_PARTIAL = 2
-    const val TRANSFER_FULL = 3
+    // Bulk.Info.state.
+    const val BULK_NEW = 1
+    const val BULK_PARTIAL = 2
+    const val BULK_FULL = 3
     const val CHUNK_BYTES = 950
 
     /**
@@ -123,7 +121,7 @@ object Band {
     /** RpcRequest {1: seq, 9: BulkDataTransferReq {1: InfoRequest {1 MD5, 2 size, 3 type, 4 transferID}}}. */
     fun bulkInfo(seq: Int, md5: ByteArray, size: Long, transferId: Int): ByteArray = request(
         seq, 9,
-        Wire.fieldBytes(1, Wire.fieldBytes(1, md5) + Wire.fieldVarint(2, size) + Wire.fieldVarint(3, TRANSFER_OTA.toLong()) + Wire.fieldVarint(4, transferId.toLong())),
+        Wire.fieldBytes(1, Wire.fieldBytes(1, md5) + Wire.fieldVarint(2, size) + Wire.fieldVarint(3, BULK_TYPE_OTA) + Wire.fieldVarint(4, transferId.toLong())),
     )
 
     /** RpcRequest {1: seq, 9: BulkDataTransferReq {2: ChunkData {1 transferID, 2 chunkOffset, 3 chunkData}}}. */
@@ -217,6 +215,7 @@ object Band {
     private const val PRIORITY_GENERIC_C50 = 90L
     private const val SOURCE_MWA_ANDROID = 2L
     private const val TOPOLOGY_DIRECT = 0L
+    private const val BULK_TYPE_OTA = 1L
 }
 
 /** svc150's NotifyLease {1: peerKeyHint, 2: leaseType}: the Display taking its band. Type 1 on the channel it opens. */

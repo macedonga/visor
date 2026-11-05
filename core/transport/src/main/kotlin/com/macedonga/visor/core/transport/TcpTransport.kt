@@ -4,6 +4,8 @@ import java.io.BufferedInputStream
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.atomic.AtomicInteger
+import javax.net.SocketFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,9 +13,9 @@ import kotlinx.coroutines.withContext
 class TcpTransport(
     private val host: String,
     private val port: Int,
-    private val meter: WireLog? = null,
+    private val wireLog: WireLog? = null,
     // A network other than the phone's default, such as the glasses' own, hands out its own sockets.
-    private val sockets: javax.net.SocketFactory? = null,
+    private val sockets: SocketFactory? = null,
 ) : Transport {
 
     @Volatile
@@ -22,7 +24,11 @@ class TcpTransport(
     @Volatile
     private var stream: SduStream? = null
 
+    /** Counts closes, so a connect that was in flight when one happened does not undo it. */
+    private val closes = AtomicInteger(0)
+
     override suspend fun connect() = withContext(Dispatchers.IO) {
+        val before = closes.get()
         val opening = sockets?.createSocket() ?: Socket()
         try {
             opening.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MILLIS)
@@ -31,8 +37,12 @@ class TcpTransport(
             opening.close()
             throw TransportConnectException(ConnectFailure.NO_ANSWER, "nothing answered on $host:$port (${error.message})", error)
         }
+        if (closes.get() != before) {
+            runCatching { opening.close() }
+            throw TransportClosedException("the link was closed while it was opening")
+        }
         socket = opening
-        stream = SduStream(BufferedInputStream(opening.getInputStream(), 1 shl 16), opening.getOutputStream(), meter)
+        stream = SduStream(BufferedInputStream(opening.getInputStream(), 1 shl 16), opening.getOutputStream(), wireLog)
     }
 
     override suspend fun send(frame: ByteArray) = withContext(Dispatchers.IO) { open().send(frame) }
@@ -40,6 +50,7 @@ class TcpTransport(
     override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
     override fun close() {
+        closes.incrementAndGet()
         runCatching { socket?.close() }
         socket = null
         stream = null

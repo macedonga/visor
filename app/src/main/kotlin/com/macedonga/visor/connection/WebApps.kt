@@ -1,9 +1,12 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.webkit.CookieManager
+import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.protocol.SVC_LEASE
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -12,9 +15,11 @@ import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.core.settings.ProtoField
+import com.macedonga.visor.core.settings.asBool
 import com.macedonga.visor.core.settings.encodeProto
 import com.macedonga.visor.core.settings.parseProto
 import com.macedonga.visor.log.EventLog
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
@@ -38,17 +43,13 @@ data class WebApp(val key: String, val name: String, val url: String, val icon: 
 
 enum class AddResult { ADDED, EXISTS, NOT_HTTPS, FULL, NOT_CONNECTED, UNREADABLE }
 
-/**
- * svc55074, the browser's phone service: the Display's web-app manager (type 15: CREATE 1, DELETE 2, LIST 3, UPDATE 4,
- * OPEN 5, DEV MODE STATUS 6, answered with 16), cookies (11, answered with 9) and a BLE scan (17, answered with 20 and
- * no devices). The list is the glasses' own partner_app_settings, one dev_mode_web_app_<n> entry each, so the web apps
- * added with the Meta app are in it; Visor changes only the entry it adds, removes or renames. [open] sends OPEN.
- */
+/** svc55074, the Display's web apps in partner_app_settings; Visor changes only the entries it adds, removes or renames. */
 @Singleton
 class WebApps @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val connection: Provider<GlassesConnection>,
     private val settings: Provider<GlassesSettings>,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val apps: StateFlow<List<WebApp>> by lazy {
@@ -65,7 +66,7 @@ class WebApps @Inject constructor(
             MT_GET_COOKIES -> connection.send(reply, cookies(f), messageType = MT_SET_COOKIES)
             // Visor scans for nothing: the page gets an answer with no devices.
             MT_BLE_SCAN_START -> connection.send(reply, Wire.fieldBytes(1, f.bytes(1)), messageType = MT_BLE_SCAN_RESPONSE)
-            else -> log.get().add("Web apps: type ${message.info.messageType} not served")
+            else -> log.add("Web apps: type ${message.info.messageType} not served")
         }
     }
 
@@ -87,8 +88,10 @@ class WebApps @Inject constructor(
                 manifest?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }?.let { ProtoField(3, 2, bytes = it) },
             )
             if (!write(fields + message(DISPLAY_CONFIGS, listOf(text(1, key), message(2, config))))) return AddResult.NOT_CONNECTED
+            val s = settings.get()
+            if (!asBool(s.value(DEVELOPER_MODE)) && !s.write(DEVELOPER_MODE, "true")) log.add("Web apps: developer mode did not go on")
         }
-        log.get().add("Web apps: added ${uri.host}")
+        log.add("Web apps: added ${uri.host}")
         return AddResult.ADDED
     }
 
@@ -118,10 +121,8 @@ class WebApps @Inject constructor(
     private fun inForce(state: SettingsState): String = state.pending[SETTING] ?: state.stored[SETTING].orEmpty()
 
     private fun write(fields: List<ProtoField>): Boolean {
-        val s = settings.get()
-        val sent = s.write(SETTING, Base64.encodeToString(encodeProto(fields), Base64.NO_WRAP)) &&
-            (s.value(DEVELOPER_MODE) == "true" || s.write(DEVELOPER_MODE, "true"))
-        if (!sent) log.get().add("Web apps: the list did not go to the glasses")
+        val sent = settings.get().write(SETTING, Base64.encodeToString(encodeProto(fields), Base64.NO_WRAP))
+        if (!sent) log.add("Web apps: the list did not go to the glasses")
         return sent
     }
 
@@ -139,15 +140,15 @@ class WebApps @Inject constructor(
                 }
             }
             glasses.submit { it.sendOnService(SVC_LEASE, MT_LEASE, Wire.fieldVarint(1, FEATURE_WEB_APP)) }
-            if (bound.await() == null) log.get().add("Web apps: the browser's service did not report bound; sending OPEN anyway")
+            if (bound.await() == null) log.add("Web apps: the browser's service did not report bound; sending OPEN anyway")
         }
         delay(REGISTER_MS)
-        val request = Wire.fieldBytes(1, UUID.randomUUID().toString().encodeToByteArray()) +
+        val request = Wire.fieldString(1, UUID.randomUUID().toString()) +
             Wire.fieldVarint(2, ACTION_OPEN) +
-            Wire.fieldBytes(3, app.name.encodeToByteArray()) +
-            Wire.fieldBytes(4, app.url.encodeToByteArray())
+            Wire.fieldString(3, app.name) +
+            Wire.fieldString(4, app.url)
         glasses.submit { mux -> mux.send(mux.openChannel(SVC), request, messageType = MT_MANAGE, serviceId = SVC) }
-        log.get().add("Web apps: OPEN sent for ${app.name}")
+        log.add("Web apps: OPEN sent for ${app.name}")
         return true
     }
 
@@ -156,25 +157,25 @@ class WebApps @Inject constructor(
         fun answer(error: String? = null, apps: List<WebApp> = emptyList()): ByteArray =
             Wire.fieldBytes(1, id) +
                 Wire.fieldVarint(2, if (error == null) 1L else 0L) +
-                (error?.let { Wire.fieldBytes(3, it.encodeToByteArray()) } ?: ByteArray(0)) +
+                (error?.let { Wire.fieldString(3, it) } ?: ByteArray(0)) +
                 apps.fold(ByteArray(0)) { out, app -> out + Wire.fieldBytes(4, info(app)) }
         val key = f.bytes(5).decodeToString()
         val name = f.bytes(3).decodeToString()
         return when (f.varint(2)) {
             ACTION_CREATE -> when (add(name, f.bytes(4).decodeToString())) {
                 AddResult.ADDED, AddResult.EXISTS -> answer()
-                AddResult.NOT_HTTPS -> answer("Only https pages can be web apps")
-                AddResult.FULL -> answer("Up to $MAX_APPS web apps")
-                AddResult.NOT_CONNECTED, AddResult.UNREADABLE -> answer("The web apps could not be read")
+                AddResult.NOT_HTTPS -> answer(context.getString(R.string.webapps_not_https))
+                AddResult.FULL -> answer(context.getString(R.string.webapps_full))
+                AddResult.NOT_CONNECTED, AddResult.UNREADABLE -> answer(context.getString(R.string.webapps_unreadable))
             }
-            ACTION_DELETE -> if (remove(key)) answer() else answer("No such web app")
+            ACTION_DELETE -> if (remove(key)) answer() else answer(context.getString(R.string.webapps_err_missing))
             ACTION_LIST -> answer(apps = apps.value)
-            ACTION_UPDATE -> if (rename(key, name)) answer() else answer("No such web app")
-            // The glasses open pages through the phone, not the other way round.
-            ACTION_OPEN -> answer("Web apps open from the phone")
+            ACTION_UPDATE -> if (rename(key, name)) answer() else answer(context.getString(R.string.webapps_err_missing))
+            // OPEN goes from the phone to the glasses only.
+            ACTION_OPEN -> answer(context.getString(R.string.webapps_err_open))
             // Developer mode goes on with the first web app Visor adds.
             ACTION_DEV_MODE_STATUS -> answer()
-            else -> answer("Unknown action")
+            else -> answer(context.getString(R.string.webapps_err_unknown))
         }
     }
 
@@ -186,17 +187,17 @@ class WebApps @Inject constructor(
         val cookies = jar.split(";").map { it.trim().split("=", limit = 2) }.filter { it.size == 2 }.fold(ByteArray(0)) { out, (name, value) ->
             out + Wire.fieldBytes(
                 3,
-                Wire.fieldBytes(1, name.encodeToByteArray()) + Wire.fieldBytes(2, value.encodeToByteArray()) +
-                    Wire.fieldBytes(3, host.encodeToByteArray()) + Wire.fieldBytes(4, PATH_ROOT),
+                Wire.fieldString(1, name) + Wire.fieldString(2, value) +
+                    Wire.fieldString(3, host) + Wire.fieldString(4, "/"),
             )
         }
-        return Wire.fieldBytes(1, f.bytes(1)) + Wire.fieldBytes(2, url.encodeToByteArray()) + cookies
+        return Wire.fieldBytes(1, f.bytes(1)) + Wire.fieldString(2, url) + cookies
     }
 
     /** WebappAppInfo {1 partnerKey, 2 appName, 3 appUrl, 4 iconUrl}. */
     private fun info(app: WebApp): ByteArray =
-        Wire.fieldBytes(1, app.key.encodeToByteArray()) + Wire.fieldBytes(2, app.name.encodeToByteArray()) +
-            Wire.fieldBytes(3, app.url.encodeToByteArray()) + Wire.fieldBytes(4, app.icon.encodeToByteArray())
+        Wire.fieldString(1, app.key) + Wire.fieldString(2, app.name) +
+            Wire.fieldString(3, app.url) + Wire.fieldString(4, app.icon)
 
     /** PartnerAppSettings {3 displayConfigs: map entry {1 key, 2 DisplayConfig {1 Item {1 title, 2 icon}, 2 url}}}. */
     private fun appsIn(value: String): List<WebApp> =
@@ -233,7 +234,6 @@ class WebApps @Inject constructor(
 
     companion object {
         const val SVC = 55074
-        private const val SVC_LEASE = 56
         private const val MT_LEASE = 1
         private const val MT_LIFECYCLE = 3
         private const val STATE_BOUND = 1L
@@ -257,6 +257,5 @@ class WebApps @Inject constructor(
         private const val MAX_APPS = 20
         private const val BOUND_MS = 3_000L
         private const val REGISTER_MS = 1_500L
-        private val PATH_ROOT = "/".encodeToByteArray()
     }
 }

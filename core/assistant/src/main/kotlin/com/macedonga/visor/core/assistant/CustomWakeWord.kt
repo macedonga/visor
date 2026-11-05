@@ -6,6 +6,7 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,7 +28,7 @@ data class WakeWordResult(val success: Boolean, val error: String, val wakeword:
 class CustomWakeWord internal constructor(
     private val send: suspend (Int, ByteArray) -> Boolean,
     // The glasses' mic as a Bluetooth headset, for when they send no audio over the link.
-    private val headset: suspend (Long, (String) -> Unit, (Int) -> Unit) -> ByteArray? = { _, _, _ -> null },
+    private val headset: suspend (Long, (String) -> Unit, (Int) -> Unit) -> ByteArray?,
 ) {
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
@@ -52,7 +53,7 @@ class CustomWakeWord internal constructor(
     }
 
     /** Ask the glasses to start or stop recording one sample. */
-    suspend fun capture(start: Boolean, request: String): Boolean = send(EV_CAPTURE_CONTROL, ThriftWriter().bool(1, start).str(2, request).done())
+    private suspend fun capture(start: Boolean, request: String): Boolean = send(EV_CAPTURE_CONTROL, ThriftWriter().bool(1, start).str(2, request).done())
 
     @Volatile
     private var take: Take? = null
@@ -74,9 +75,12 @@ class CustomWakeWord internal constructor(
     }
 
     private suspend fun headsetTake(ms: Long): ByteArray? = try {
-        runCatching { headset(ms, ::note) { peak -> _level.value = (peak / LOUD).coerceIn(0f, 1f) } }
-            .onFailure { note("Custom wake word: headset take failed: ${it.message}") }
-            .getOrNull()
+        headset(ms, ::note) { peak -> _level.value = (peak / LOUD).coerceIn(0f, 1f) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        note("headset take failed: ${e.message}")
+        null
     } finally {
         _level.value = 0f
     }
@@ -84,7 +88,7 @@ class CustomWakeWord internal constructor(
     /** One sample from the glasses' own stream on the assistant's channel (header 6106, data 6100, end 6101). */
     private suspend fun ownTake(ms: Long): ByteArray? {
         val request = UUID.randomUUID().toString()
-        val t = Take(_level, runCatching { opusDecoder() }.getOrElse { note("Custom wake word: no Opus decoder: ${it.message}"); return null })
+        val t = Take(_level, runCatching { opusDecoder() }.getOrElse { note("no Opus decoder: ${it.message}"); return null })
         take = t
         val started = System.currentTimeMillis()
         var elapsed = 0L
@@ -99,11 +103,11 @@ class CustomWakeWord internal constructor(
             _level.value = 0f
             t.close()
         }
-        note("Custom wake word: recorded ${t.pcm.size() / BYTES_PER_MS} ms in ${t.packets} packets" + (t.header?.let { ", header $it" } ?: ""))
+        note("recorded ${t.pcm.size() / BYTES_PER_MS} ms in ${t.packets} packets" + (t.header?.let { ", header $it" } ?: ""))
         // Under half its time in audio is a starved stream, as the Meta app counts it.
         if (!starved && t.pcm.size() / BYTES_PER_MS < elapsed / 2) {
             starved = true
-            note("Custom wake word: the glasses' stream brought next to no audio; the next takes try their headset mic")
+            note("the glasses' stream brought next to no audio; the next takes try their headset mic")
         }
         return speechOf(t.pcm.toByteArray())
     }
@@ -111,7 +115,7 @@ class CustomWakeWord internal constructor(
     internal fun onStream(type: Int, payload: ByteArray) {
         val t = take ?: return
         when (type) {
-            MT_ENROLLMENT_HEADER -> t.header = payload.take(48).joinToString("") { "%02x".format(it) }
+            MT_ENROLLMENT_HEADER -> t.header = payload.toHexString(0, minOf(48, payload.size))
             MT_STREAMER_DATA -> for (packet in packetsOf(payload)) t.decode(packet)
             // The glasses send an empty 6101 right after the header, as the stream opens: only one after audio ends the take.
             MT_STREAMER_END -> if (t.packets > 0) t.ended.complete(Unit)
@@ -130,28 +134,12 @@ class CustomWakeWord internal constructor(
         fun decode(packet: ByteArray) {
             packets++
             runCatching {
-                val i = codec.dequeueInputBuffer(5_000)
-                if (i >= 0) {
-                    codec.getInputBuffer(i)!!.apply { clear(); put(packet) }
-                    codec.queueInputBuffer(i, 0, packet.size, 0, 0)
-                }
-                while (true) {
-                    val o = codec.dequeueOutputBuffer(info, 0)
-                    if (o < 0) break
-                    val out = codec.getOutputBuffer(o)
-                    if (out != null && info.size > 0) {
-                        out.position(info.offset)
-                        out.limit(info.offset + info.size)
-                        val wide = ShortArray(info.size / 2)
-                        out.order(ByteOrder.nativeOrder()).asShortBuffer().get(wide)
-                        // 48 kHz from the decoder, 16 kHz for the glasses' model.
-                        val bytes = ByteBuffer.allocate(wide.size / 3 * 2).order(ByteOrder.LITTLE_ENDIAN)
-                        for (k in 0 until wide.size / 3) bytes.putShort(((wide[k * 3] + wide[k * 3 + 1] + wide[k * 3 + 2]) / 3).toShort())
-                        pcm.write(bytes.array())
-                        val loud = (0 until wide.size / 3).maxOfOrNull { k -> kotlin.math.abs(bytes.getShort(k * 2).toInt()) } ?: 0
-                        level.value = (loud / LOUD).coerceIn(0f, 1f)
-                    }
-                    codec.releaseOutputBuffer(o, false)
+                for (samples in codec.decode16k(packet, 0, info)) {
+                    val bytes = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+                    samples.forEach { bytes.putShort(it) }
+                    pcm.write(bytes.array())
+                    val loud = samples.maxOfOrNull { kotlin.math.abs(it.toInt()) } ?: 0
+                    level.value = (loud / LOUD).coerceIn(0f, 1f)
                 }
             }
         }
@@ -169,7 +157,7 @@ class CustomWakeWord internal constructor(
         val waiting = CompletableDeferred<WakeWordResult>()
         answer = waiting
         if (!send(EV_BATCH_ENROLLMENT, ThriftWriter().str(1, phrase).listOfBinaries(2, clips).str(3, id).done())) return null
-        note("Custom wake word: sent \"$phrase\" with ${clips.size} recordings (${clips.sumOf { it.size }} bytes)")
+        note("sent \"$phrase\" with ${clips.size} recordings (${clips.sumOf { it.size }} bytes)")
         return withTimeoutOrNull(ENROLL_MS) { waiting.await() }
     }
 
@@ -178,8 +166,8 @@ class CustomWakeWord internal constructor(
         send(EV_UTTERANCE, ThriftWriter().i32(1, 0).i32(2, 1).str(3, "").str(4, ByteArray(0)).str(5, UUID.randomUUID().toString()).done())
 
     /** Close the session; false when the close could not go out. */
-    suspend fun end(session: String, reason: Int = 0): Boolean =
-        send(EV_SESSION_END, ThriftWriter().str(1, session).i32(2, reason).done())
+    suspend fun end(session: String): Boolean =
+        send(EV_SESSION_END, ThriftWriter().str(1, session).i32(2, 0).done())
 
     internal fun onResult(fields: Map<Int, Any?>) {
         val result = WakeWordResult(
@@ -189,7 +177,7 @@ class CustomWakeWord internal constructor(
             transcript = fields[4].asText(),
             enrollmentId = fields[5].asText(),
         )
-        note("Custom wake word: ${if (result.success) "enrolled \"${result.wakeword}\"" else "refused: ${result.error}"} (heard \"${result.transcript}\")")
+        note("${if (result.success) "enrolled \"${result.wakeword}\"" else "refused: ${result.error}"} (heard \"${result.transcript}\")")
         answer?.complete(result)
         _results.tryEmit(result)
     }
@@ -205,7 +193,7 @@ class CustomWakeWord internal constructor(
         internal const val EV_RESULT = 368
         private const val TAKE_MS = 3_000L
         private const val END_MS = 2_000L
-        private const val BYTES_PER_MS = 32
+        internal const val BYTES_PER_MS = 32
         // A voice near the glasses peaks around a third of full scale.
         private const val LOUD = 12_000f
         private const val EV_UTTERANCE = 365

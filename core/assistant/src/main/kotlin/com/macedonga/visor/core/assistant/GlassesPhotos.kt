@@ -1,12 +1,11 @@
 package com.macedonga.visor.core.assistant
 
 import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.protocol.uuidText
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.util.UUID
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -29,7 +28,7 @@ class GlassesPhotos : Responder {
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         when (message.info.messageType) {
             1 -> {
-                id = runCatching { uuidOf(Wire.parse(message.payload).bytes(1)) }.getOrDefault("")
+                id = runCatching { Wire.parse(message.payload).bytes(1) }.getOrNull()?.takeIf { it.size == 16 }?.let(::uuidText).orEmpty()
                 parts.reset()
             }
             2 -> parts.write(message.payload)
@@ -37,7 +36,8 @@ class GlassesPhotos : Responder {
                 val bytes = parts.toByteArray()
                 parts.reset()
                 if (bytes.isEmpty()) return
-                synchronized(recent) {
+                // One without an id is never taken by a later question.
+                if (id.isNotEmpty()) synchronized(recent) {
                     recent[id] = bytes
                     while (recent.size > KEPT) recent.remove(recent.keys.first())
                 }
@@ -48,12 +48,6 @@ class GlassesPhotos : Responder {
 
     /** The photo with [id], if it already came; it is handed over once. */
     fun take(id: String): ByteArray? = synchronized(recent) { recent.remove(id) }
-
-    private fun uuidOf(raw: ByteArray): String {
-        if (raw.size != 16) return ""
-        val b = ByteBuffer.wrap(raw)
-        return UUID(b.long, b.long).toString()
-    }
 
     private companion object {
         const val KEPT = 4

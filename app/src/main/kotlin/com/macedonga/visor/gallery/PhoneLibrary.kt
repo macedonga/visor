@@ -5,7 +5,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.ContentObserver
 import android.net.Uri
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -15,12 +14,16 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -37,24 +40,32 @@ data class PhoneItem(
     val name: String,
 )
 
-/**
- * Pictures/Visor and Movies/Visor, kept current by watching MediaStore. Visor wrote these files, so it reads and
- * changes them with no media permission. A deletion waits out its undo before it goes to the system's trash.
- */
+/** Visor's photo and video albums in MediaStore; a delete waits out its undo, then goes to the trash. */
 @Singleton
 class PhoneLibrary @Inject constructor(@ApplicationContext private val context: Context, private val albums: Albums) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _items = MutableStateFlow<List<PhoneItem>>(emptyList())
-    val items: StateFlow<List<PhoneItem>> = _items.asStateFlow()
+    /** Null until MediaStore is first read. */
+    private val _items = MutableStateFlow<List<PhoneItem>?>(null)
+    val listed: StateFlow<List<PhoneItem>?> = _items.asStateFlow()
+    val items: StateFlow<List<PhoneItem>> = _items.map { it.orEmpty() }.stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     /** Deleted, but still within their undo. */
     private val _leaving = MutableStateFlow<Set<Uri>>(emptySet())
     val leaving: StateFlow<Set<Uri>> = _leaving.asStateFlow()
 
-    private var pending: Job? = null
+    private class Batch(val uris: Set<Uri>, val then: (Uri) -> Unit)
+
+    /** The last deletion, while it can be undone. */
+    private val pending = MutableStateFlow<Batch?>(null)
+    val undoable: StateFlow<Int> = pending.map { it?.uris?.size ?: 0 }.stateIn(scope, SharingStarted.Eagerly, 0)
+
+    private val reloads = Channel<Unit>(Channel.CONFLATED)
 
     init {
+        scope.launch {
+            for (ask in reloads) _items.value = (query(IMAGES, albums.photosPattern(), false) + query(VIDEOS, albums.videosPattern(), true)).sortedByDescending { it.takenAt }
+        }
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) = reload()
         }
@@ -63,40 +74,35 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
     }
 
     fun reload() {
-        scope.launch { _items.value = (query(IMAGES, albums.photosPattern(), false) + query(VIDEOS, albums.videosPattern(), true)).sortedByDescending { it.takenAt } }
+        reloads.trySend(Unit)
     }
 
-    /** Takes [uris] out of sight at once; they go to the trash once [undoMs] passes without [undo]. */
-    fun delete(uris: Collection<Uri>, undoMs: Long = UNDO_MS, then: (Uri) -> Unit = {}) {
+    /** Takes [uris] out of sight at once; they go to the trash once [UNDO_MS] passes without [undo]. */
+    fun delete(uris: Collection<Uri>, then: (Uri) -> Unit = {}) {
         commitPending()
-        _leaving.update { it + uris }
-        pending = scope.launch {
-            delay(undoMs)
-            commit(uris.toSet(), then)
+        val batch = Batch(uris.toSet(), then)
+        _leaving.update { it + batch.uris }
+        pending.value = batch
+        scope.launch {
+            delay(UNDO_MS)
+            if (pending.compareAndSet(batch, null)) commit(batch.uris, batch.then)
         }
     }
 
     fun undo() {
-        pending?.cancel()
-        pending = null
-        _leaving.value = emptySet()
+        val batch = pending.getAndUpdate { null } ?: return
+        _leaving.update { it - batch.uris }
     }
 
     private fun commitPending() {
-        val waiting = _leaving.value
-        pending?.cancel()
-        if (waiting.isNotEmpty()) scope.launch { commit(waiting) {} }
+        val batch = pending.getAndUpdate { null } ?: return
+        scope.launch { commit(batch.uris, batch.then) }
     }
 
     private fun commit(uris: Set<Uri>, then: (Uri) -> Unit) {
         for (uri in uris) {
             runCatching {
-                // The system's trash keeps them for 30 days where it exists; before Android 11 they simply go.
-                if (Build.VERSION.SDK_INT >= 30) {
-                    context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_TRASHED, 1) }, null, null)
-                } else {
-                    context.contentResolver.delete(uri, null, null)
-                }
+                trash(uri)
                 then(uri)
             }
         }
@@ -104,17 +110,21 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
         reload()
     }
 
-    /** Deletes outright, no undo: for copies something else has replaced. */
+    /** Sends copies something else replaced to the trash. */
     fun remove(uris: Collection<Uri>) {
         scope.launch {
-            for (uri in uris) runCatching { context.contentResolver.delete(uri, null, null) }
+            for (uri in uris) runCatching { trash(uri) }
             reload()
         }
     }
 
+    /** The system's trash keeps it for 30 days. */
+    private fun trash(uri: Uri) {
+        context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_TRASHED, 1) }, null, null)
+    }
+
     fun setFavorite(uris: Collection<Uri>, favorite: Boolean) {
-        if (Build.VERSION.SDK_INT < 30) return
-        _items.update { list -> list.map { if (it.uri in uris) it.copy(favorite = favorite) else it } }
+        _items.update { list -> list?.map { if (it.uri in uris) it.copy(favorite = favorite) else it } }
         scope.launch {
             for (uri in uris) {
                 runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_FAVORITE, if (favorite) 1 else 0) }, null, null) }
@@ -132,7 +142,7 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
             add(MediaStore.MediaColumns.HEIGHT)
             add(MediaStore.MediaColumns.DURATION)
             add(MediaStore.MediaColumns.DISPLAY_NAME)
-            if (Build.VERSION.SDK_INT >= 30) add(MediaStore.MediaColumns.IS_FAVORITE)
+            add(MediaStore.MediaColumns.IS_FAVORITE)
         }.toTypedArray()
         val out = ArrayList<PhoneItem>()
         runCatching {
@@ -147,7 +157,7 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
                         width = c.getInt(4),
                         height = c.getInt(5),
                         durationMs = c.getLong(6),
-                        favorite = Build.VERSION.SDK_INT >= 30 && c.getInt(8) == 1,
+                        favorite = c.getInt(8) == 1,
                         name = c.getString(7).orEmpty(),
                     )
                 }
@@ -157,7 +167,7 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
     }
 
     companion object {
-        const val UNDO_MS = 5_000L
+        private const val UNDO_MS = 5_000L
         private val IMAGES: Uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         private val VIDEOS: Uri = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
     }

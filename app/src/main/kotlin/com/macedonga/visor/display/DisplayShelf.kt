@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -23,13 +26,21 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
+import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.core.connection.Captions
+import com.macedonga.visor.core.connection.CaptionsPhase
+import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.PrompterPhase
 import com.macedonga.visor.core.connection.Teleprompter
 import com.macedonga.visor.core.design.Visor
+import com.macedonga.visor.core.media.Screencast
+import com.macedonga.visor.core.media.ScreencastPhase
+import com.macedonga.visor.settings.CARD_RADIUS
 import com.macedonga.visor.ui.VisorIcons
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -41,11 +52,11 @@ enum class DisplayTool { TELEPROMPTER, CAPTIONS, GESTURES, MIRROR }
 class ShelfModel @Inject constructor(
     val script: PrompterScript,
     val prompter: Teleprompter,
-    val band: com.macedonga.visor.band.BandLink,
-    val connection: com.macedonga.visor.core.connection.GlassesConnection,
-    val captions: com.macedonga.visor.core.connection.Captions,
+    val band: BandLink,
+    val connection: GlassesConnection,
+    val captions: Captions,
     val captionsChoices: CaptionsChoices,
-    val screencast: com.macedonga.visor.core.media.Screencast,
+    val screencast: Screencast,
 ) : ViewModel()
 
 /** The Display's tools on the home: a card each, with what it holds now. */
@@ -58,7 +69,7 @@ fun DisplayShelf(onOpen: (DisplayTool) -> Unit, modifier: Modifier = Modifier, m
     val bandBattery = glasses.device?.bandBattery ?: band.battery
     LazyRow(modifier, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         item(key = "prompter") {
-            val words = text.split(Regex("\\s+")).count { it.isNotEmpty() }
+            val words = remember(text) { wordCount(text) }
             ToolCard(
                 VisorIcons.Lines,
                 stringResource(R.string.prompter_title),
@@ -76,7 +87,7 @@ fun DisplayShelf(onOpen: (DisplayTool) -> Unit, modifier: Modifier = Modifier, m
             ToolCard(
                 VisorIcons.Captions,
                 stringResource(R.string.captions_title),
-                if (captions.phase == com.macedonga.visor.core.connection.CaptionsPhase.LIVE) stringResource(R.string.captions_live) else captionsSummary(choice),
+                if (captions.phase == CaptionsPhase.LIVE) stringResource(R.string.captions_live) else captionsSummary(choice),
                 onClick = { onOpen(DisplayTool.CAPTIONS) },
             )
         }
@@ -93,7 +104,7 @@ fun DisplayShelf(onOpen: (DisplayTool) -> Unit, modifier: Modifier = Modifier, m
             ToolCard(
                 VisorIcons.Mirror,
                 stringResource(R.string.mirror_title),
-                if (mirror.phase == com.macedonga.visor.core.media.ScreencastPhase.LIVE) stringResource(R.string.mirror_live) else stringResource(R.string.mirror_idle),
+                if (mirror.phase == ScreencastPhase.LIVE) stringResource(R.string.mirror_live) else stringResource(R.string.sum_off),
                 onClick = { onOpen(DisplayTool.MIRROR) },
             )
         }
@@ -105,14 +116,20 @@ private fun ToolCard(icon: ImageVector, title: String, status: String, onClick: 
     Column(
         Modifier
             .width(CARD_WIDTH)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(CARD_RADIUS))
             .background(Visor.colors.raised)
             .clickable(onClick = onClick)
             .padding(18.dp),
     ) {
         Icon(icon, null, Modifier.size(22.dp), tint = Visor.colors.textPrimary)
         Spacer(Modifier.height(28.dp))
-        Text(title, style = Visor.type.heading, color = Visor.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        BasicText(
+            title,
+            style = Visor.type.heading.copy(color = Visor.colors.textPrimary),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = 15.sp, maxFontSize = Visor.type.heading.fontSize, stepSize = 1.sp),
+        )
         Spacer(Modifier.height(2.dp))
         Text(status, style = Visor.type.label, color = Visor.colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

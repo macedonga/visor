@@ -2,7 +2,7 @@ package com.macedonga.visor.core.session
 
 import com.macedonga.visor.core.protocol.Ecdh
 import com.macedonga.visor.core.protocol.EnableEncryption
-import com.macedonga.visor.core.protocol.EphemeralKeyPair
+import com.macedonga.visor.core.protocol.EndLinkSetup
 import com.macedonga.visor.core.protocol.FrameCrypto
 import com.macedonga.visor.core.protocol.FrameType
 import com.macedonga.visor.core.protocol.Framing
@@ -13,41 +13,26 @@ import com.macedonga.visor.core.protocol.LinkSetupMsgType
 import com.macedonga.visor.core.protocol.LinkUuid
 import com.macedonga.visor.core.protocol.RequestEncryption
 import com.macedonga.visor.core.protocol.ServiceId
-import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.transport.Transport
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.SecureRandom
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Where a handshake's random material comes from. Injectable so a test can pin it. */
-fun interface RandomSource {
+/** RequestEncryption and EndLinkSetup ride the secure variant of channel 1, bit 15 set. */
+internal const val LINK_SETUP_CHANNEL = 0x8001
 
-    fun nextBytes(count: Int): ByteArray
-
-    companion object {
-
-        fun secure(): RandomSource {
-            val random = SecureRandom()
-            return RandomSource { count -> ByteArray(count).also(random::nextBytes) }
-        }
-    }
-}
-
-/** The handshake did not complete. Ported from `handshake.py`'s `ProtocolError`. */
+/** The handshake did not complete. */
 class HandshakeException(message: String) : Exception(message)
 
 /** SecureLink: the AirShield handshake plus the per-direction frame cipher. */
-class SecureLink(
-    private val transport: Transport,
-    private val random: RandomSource = RandomSource.secure(),
-    // DIVERGENCE: the reference's `new_uuid4` stamps `os.urandom(16)` by hand.
-    private val newUuid: () -> ByteArray = LinkUuid::random,
-    private val ephemeral: () -> EphemeralKeyPair = Ecdh::generateEphemeral,
-) : PlaintextLink {
+class SecureLink(private val transport: Transport) {
 
-    // DIVERGENCE: the reference has no lock.
+    private val random = SecureRandom()
+
     private val txMutex = Mutex()
 
     private var txCrypto: FrameCrypto? = null
@@ -56,7 +41,7 @@ class SecureLink(
     /** DATA frames that arrived during the handshake, handled after [open] returns. */
     private val pending = ArrayDeque<ByteArray>()
 
-    /** Channel binding material for a future re-sign. Null until [open] succeeds. */
+    /** Channel binding material for the svc36 exchange. Null until [open] succeeds. */
     var binding: HandshakeBinding? = null
         private set
 
@@ -66,35 +51,28 @@ class SecureLink(
 
     /** Run the AirShield handshake and install the per-direction frame ciphers. */
     suspend fun open() {
-        val keyPair = ephemeral()
+        val keyPair = Ecdh.generateEphemeral()
         val myPublic = keyPair.publicKey64
-        val myChallenge = random.nextBytes(16)
-        val mySeed = random.nextBytes(32)
-        val myIv = random.nextBytes(16)
-        // The per-direction random preamble seq, little endian, as the reference's
-        // `int.from_bytes(os.urandom(4), "little")`.
-        val mySeq = random.nextBytes(4).let { bytes ->
-            (bytes[0].toLong() and 0xFF) or
-                ((bytes[1].toLong() and 0xFF) shl 8) or
-                ((bytes[2].toLong() and 0xFF) shl 16) or
-                ((bytes[3].toLong() and 0xFF) shl 24)
-        }
+        val myChallenge = bytes(16)
+        val mySeed = bytes(32)
+        val myIv = bytes(16)
+        // The per-direction random preamble seq, unsigned 32-bit.
+        val mySeq = ByteBuffer.wrap(bytes(4)).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xFFFFFFFFL
 
         sendLinkSetup(
             LINK_SETUP_CHANNEL,
             LinkSetupMsgType.REQUEST_ENCRYPTION,
-            RequestEncryption(publicKey = myPublic, challenge = myChallenge).encode(),
+            RequestEncryption(publicKey = myPublic, challenge = myChallenge, supportedParameters = OUR_PARAMETERS).encode(),
         )
         // Send our EnableEncryption IMMEDIATELY.
         sendLinkSetup(
             ENABLE_CHANNEL,
             LinkSetupMsgType.ENABLE_ENCRYPTION,
-            EnableEncryption(publicKey = myPublic, seed = mySeed, iv = myIv, base = mySeq).encode(),
+            EnableEncryption(publicKey = myPublic, seed = mySeed, iv = myIv, base = mySeq, parameters = OUR_PARAMETERS).encode(),
         )
 
         var peerRequest: RequestEncryption? = null
         var peerEnable: EnableEncryption? = null
-        // The reference's `for _ in range(8)` with its `break`.
         for (attempt in 0 until HANDSHAKE_READS) {
             val sdu = transport.receive()
             if (sdu.isNotEmpty() &&
@@ -127,14 +105,10 @@ class SecureLink(
         val secret = Ecdh.computeSharedSecret(keyPair.privateKey, enable.publicKey)
 
         binding = HandshakeBinding(
-            myChallenge = myChallenge,
             glChallenge = request.challenge,
             mySeed = mySeed,
-            glSeed = enable.seed,
-            myPub = myPublic,
-            glPub = enable.publicKey,
             glReqPub = request.publicKey,
-            ecdhSecret = secret,
+            myPub = myPublic,
         )
 
         // What both ends support is what the link uses: the band offers 27, no Multikey.
@@ -143,23 +117,15 @@ class SecureLink(
         // our seed.
         val rxKeys = Kdf.deriveDirectionKeys(secret, myChallenge, enable.seed, enable.iv, multikey = multikey)
         val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv, multikey = multikey)
-        rxCrypto = FrameCrypto(rxKeys, initRxSeq = enable.base.toInt())
-        txCrypto = FrameCrypto(txKeys, initTxSeq = mySeq.toInt())
+        rxCrypto = FrameCrypto(rxKeys, enable.base.toInt())
+        txCrypto = FrameCrypto(txKeys, mySeq.toInt())
 
         // EndLinkSetup is NOT sent here.
     }
 
     /** Send EndLinkSetup as the first encrypted DATA frame. */
-    suspend fun finishLinkSetup(asMain: Int = 1) {
-        checkNotNull(txCrypto) { "link not open" }
-        val scopeUuid = newUuid()
-        val leaseUuid = newUuid()
-        check(LinkUuid.isValid(scopeUuid) && LinkUuid.isValid(leaseUuid)) {
-            "an EndLinkSetup uuid would fail the firmware's v4 check, and the failure is silent"
-        }
-        val body = Wire.fieldVarint(1, asMain.toLong()) +
-            Wire.fieldBytes(2, scopeUuid) +
-            Wire.fieldBytes(3, leaseUuid)
+    suspend fun finishLinkSetup() {
+        val body = EndLinkSetup.encode(asMain = 1, scopeUuid = LinkUuid.random(), leaseUuid = LinkUuid.random())
         val sdu = Header.build(
             channelId = LINK_SETUP_CHANNEL,
             dataLen = body.size,
@@ -169,22 +135,15 @@ class SecureLink(
         sealAndSend(sdu)
     }
 
-    override suspend fun send(plaintext: ByteArray) {
-        checkNotNull(txCrypto) { "link not open" }
-        sealAndSend(plaintext)
-    }
+    suspend fun send(plaintext: ByteArray) = sealAndSend(plaintext)
 
     /** The next DATA frame's plaintext. */
-    override suspend fun receive(): ByteArray {
+    suspend fun receive(): ByteArray {
         val crypto = checkNotNull(rxCrypto) { "link not open" }
         while (true) {
             val sdu = pending.removeFirstOrNull() ?: transport.receive()
             val frame = Framing.unpack(sdu)
-            if (frame.type == FrameType.DATA.value) {
-                // verifyUnpad = false: the plaintext is a DataX message, possibly block
-                // aligned with no pad byte, and the DataX layer trims by the header length.
-                return crypto.unseal(frame.body, verifyUnpad = false)
-            }
+            if (frame.type == FrameType.DATA.value) return crypto.unseal(frame.body)
             lastCommand = frame.body.firstOrNull()?.toInt()?.and(0xFF)
         }
     }
@@ -227,9 +186,9 @@ class SecureLink(
         }
     }
 
+    private fun bytes(n: Int) = ByteArray(n).also(random::nextBytes)
+
     private companion object {
-        /** RequestEncryption and EndLinkSetup ride the secure variant of channel 1, bit 15 set. */
-        const val LINK_SETUP_CHANNEL = 0x8001
         const val ENABLE_CHANNEL = 0x0001
 
         /** How many frames [open] will read while waiting for the peer's two messages. */

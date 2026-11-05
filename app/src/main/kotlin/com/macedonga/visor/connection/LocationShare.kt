@@ -3,41 +3,36 @@ package com.macedonga.visor.connection
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Looper
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
-import com.macedonga.visor.settings.hasDisplay
+import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * svc41102, locationservice: the Display asks for the phone's location (type 3) and gets fixes (type 4,
- * LocationResult {1 status, 2 Location}) until it says stop (type 5), closes the channel or the link ends. Its register
- * message on connect (26) and the keep-alive (18) need no answer. Without the location permission the answer says so.
- */
+/** svc41102, locationservice: the phone's fixes (type 4) from the glasses' request (3) until stop (5), a close or the link's end. */
 @Singleton
 class LocationShare @Inject constructor(
     @ApplicationContext private val context: Context,
     private val requests: RequestLog,
     private val glasses: Provider<GlassesConnection>,
+    log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
+    private val scope = responderScope(log, "Location")
     private val listening = ConcurrentHashMap<Int, Subscription>()
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
@@ -48,7 +43,7 @@ class LocationShare @Inject constructor(
         }
         when (message.info.messageType) {
             MT_REQUEST -> {
-                val display = hasDisplay(glasses.get().state.value.info?.build)
+                val display = isDisplayBuild(glasses.get().state.value.info?.build)
                 // The Display asks again on the same channel when only the accuracy changes; the new request replaces the old.
                 if (!display && listening.containsKey(channel)) return
                 val precise = runCatching { Wire.parse(message.payload).varint(3) }.getOrDefault(0L) == ACCURACY_BEST
@@ -73,9 +68,12 @@ class LocationShare @Inject constructor(
     ) : LocationListener {
         private val reply = DataXConnection.mirror(channel)
         private val manager = context.getSystemService(LocationManager::class.java)
-        private val logId = requests.start("location://${if (precise) "precise" else "approximate"}", SOURCE_LOCATION)
+        private val logId = requests.start("location://${if (precise) "precise" else "approximate"}", RequestSource.LOCATION)
         private var fixes = 0L
         private var linkWatch: Job? = null
+
+        @Volatile
+        private var finished = false
 
         @SuppressLint("MissingPermission")
         fun start() {
@@ -85,31 +83,34 @@ class LocationShare @Inject constructor(
                 if (listening.remove(channel, this@Subscription)) stop()
             }
             val permission = if (precise) Manifest.permission.ACCESS_FINE_LOCATION else Manifest.permission.ACCESS_COARSE_LOCATION
-            if (manager == null || context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
-                send(Wire.fieldVarint(1, STATUS_NO_PERMISSION))
-                requests.finish(logId, "no location permission", failed = true)
+            if (manager == null || !context.allows(permission)) {
+                fail(STATUS_NO_PERMISSION, "no location permission")
                 return
             }
             val provider = listOf(LocationManager.FUSED_PROVIDER, LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
                 .firstOrNull { p -> (p != LocationManager.GPS_PROVIDER || precise) && manager.allProviders.contains(p) && manager.isProviderEnabled(p) }
             if (provider == null) {
-                send(Wire.fieldVarint(1, STATUS_OTHER_ERROR))
-                requests.finish(logId, "no location provider enabled", failed = true)
+                fail(STATUS_OTHER_ERROR, "no location provider enabled")
                 return
             }
             try {
                 manager.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
                 manager.requestLocationUpdates(provider, INTERVAL_MS, 0f, this, Looper.getMainLooper())
             } catch (error: RuntimeException) {
-                send(Wire.fieldVarint(1, STATUS_OTHER_ERROR))
-                requests.finish(logId, "location updates refused: ${error.message}", failed = true)
+                fail(STATUS_OTHER_ERROR, "location updates refused: ${error.message}")
             }
         }
 
         fun stop() {
             linkWatch?.cancel()
             manager?.removeUpdates(this)
-            requests.finish(logId, "stopped after $fixes fixes", failed = false)
+            if (!finished) requests.finish(logId, "stopped after $fixes fixes", failed = false)
+        }
+
+        private fun fail(status: Long, why: String) {
+            send(Wire.fieldVarint(1, status))
+            requests.finish(logId, why, failed = true)
+            finished = true
         }
 
         override fun onLocationChanged(location: Location) {
@@ -127,7 +128,7 @@ class LocationShare @Inject constructor(
         var b = Wire.fieldDouble(1, l.latitude) + Wire.fieldDouble(2, l.longitude) + Wire.fieldFloat(3, l.accuracy) + Wire.fieldVarint(5, l.time)
         if (l.hasAltitude()) b += Wire.fieldDouble(8, l.altitude)
         if (l.hasVerticalAccuracy()) b += Wire.fieldFloat(9, l.verticalAccuracyMeters)
-        // The Display takes an unknown bearing or speed as -1, as the Meta app sends it.
+        // The Display takes an unknown bearing or speed as -1.
         fun motion(field: Int, known: Boolean, value: Float) {
             if (known) b += Wire.fieldFloat(field, value) else if (display) b += Wire.fieldFloat(field, UNKNOWN)
         }
@@ -149,9 +150,8 @@ class LocationShare @Inject constructor(
         private const val ACCURACY_BEST = 0L
         private const val STATUS_OK = 0L
         private const val STATUS_NO_PERMISSION = 1L
-        // ERROR_OTHER in LocationResult: no provider can answer (notes/213, location-to-glasses.md:191).
+        // LocationResult ERROR_OTHER: no provider can answer.
         private const val STATUS_OTHER_ERROR = 2L
         private const val INTERVAL_MS = 2_000L
-        private const val SOURCE_LOCATION = -3
     }
 }

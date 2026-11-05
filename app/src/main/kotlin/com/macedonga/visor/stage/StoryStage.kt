@@ -1,9 +1,24 @@
 package com.macedonga.visor.stage
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -11,7 +26,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -20,18 +34,17 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.macedonga.visor.core.design.Visor
+import com.macedonga.visor.settings.BAR
+import com.macedonga.visor.settings.TopBar
 import com.macedonga.visor.ui.animationsOff
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.sin
 
-/**
- * What a guided flow asks of the pair while it runs, as the setup tells its story: where the view turns, whether it
- * drifts round while the glasses work, and sound at a part of the frame, going out (a tone from a temple) or coming in
- * (a voice to the front). Screens set it; [StoryStage] plays it every frame.
- */
+/** What a guided screen asks of the pair: a turn, a sway while the glasses work, and sound at one part. */
 class StageCue {
     /** Degrees the view turns from rest. */
     var yaw by mutableFloatStateOf(0f)
@@ -49,17 +62,14 @@ class StageCue {
     var level by mutableFloatStateOf(0f)
 }
 
-/**
- * The pair on the stage for a guided flow: centred at [centrePx] on the window at [scale] (both eased on a spring as a
- * step changes them, as the setup's pages do), lit by [look], turned and swayed by [cue], with its sound drawn over it.
- */
+/** The pair for a guided screen, centred at [centrePx] at [scale], lit by [look] and moved by [cue]. */
 @Composable
-fun StoryStage(cue: StageCue, look: LightLook, centrePx: Float, scale: Float, stagePx: Float, closed: Boolean = false) {
+private fun StoryStage(cue: StageCue, look: LightLook, centrePx: Float, scale: Float, stagePx: Float) {
     val stage = LocalStage.current
     val colors = Visor.colors
     val centre by animateFloatAsState(centrePx, spring(dampingRatio = 0.9f, stiffness = 40f), label = "centre")
     val zoom by animateFloatAsState(scale, spring(dampingRatio = 0.9f, stiffness = 40f), label = "scale")
-    StageSpot(closed, liveliness = 0.5f) {
+    stageSpot(closed = false, liveliness = 0.5f) {
         val h = stagePx * max(zoom, 1f)
         top = centre - h / 2
         height = h
@@ -72,7 +82,6 @@ fun StoryStage(cue: StageCue, look: LightLook, centrePx: Float, scale: Float, st
     StageLight(look)
 
     val clock = remember { mutableFloatStateOf(0f) }
-    val now by rememberUpdatedState(cue)
     LaunchedEffect(stage) {
         var last = 0L
         val pose = stage.pose
@@ -82,7 +91,7 @@ fun StoryStage(cue: StageCue, look: LightLook, centrePx: Float, scale: Float, st
                 val dt = if (last == 0L) 0f else ((t - last) / 1e9f).coerceAtMost(0.05f)
                 last = t
                 if (!still) clock.floatValue += dt
-                val c = now
+                val c = cue
                 val k = if (still) 1f else 1f - exp(-dt / FOLLOW_SECONDS)
                 val sway = if (c.orbit && !still) sin(clock.floatValue * ORBIT_SPEED) * ORBIT_DEGREES else 0f
                 pose.viewYaw += (c.yaw + sway - pose.viewYaw) * k
@@ -108,6 +117,42 @@ fun StoryStage(cue: StageCue, look: LightLook, centrePx: Float, scale: Float, st
     }
 }
 
+/** How tall the stage zone is above a step's words. */
+private val STORY_ZONE = 290.dp
+
+/** A guided page: the pair in the zone under the bar, and below it each [step]'s words, which dissolve into the next. */
+@Composable
+fun <S> StoryPage(
+    title: String,
+    cue: StageCue,
+    look: LightLook,
+    scale: Float,
+    step: S,
+    key: (S) -> Any? = { it },
+    content: @Composable ColumnScope.(S) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+        val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val stagePx = with(density) { (maxWidth / STAGE_ASPECT).toPx() }
+        StoryStage(cue, look, with(density) { (top + BAR + STORY_ZONE / 2).toPx() }, scale, stagePx)
+        AnimatedContent(
+            targetState = step,
+            contentKey = key,
+            // Nothing slides, and the size stays put.
+            transitionSpec = { (fadeIn(tween(380, delayMillis = 90)) togetherWith fadeOut(tween(260))) using null },
+            label = "step",
+        ) { shown ->
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(top = top + BAR + STORY_ZONE, bottom = bottom + 20.dp).padding(horizontal = 24.dp),
+            ) { content(shown) }
+        }
+        TopBar(title)
+    }
+}
+
 /** A tone leaving a temple: rings that open out and fade, a glow where it starts. */
 private fun DrawScope.soundOut(c: Offset, t: Float, level: Float, tint: Color) {
     val reach = 70.dp.toPx() + 60.dp.toPx() * level
@@ -122,7 +167,12 @@ private fun DrawScope.soundOut(c: Offset, t: Float, level: Float, tint: Color) {
 /** A voice going into the frame: rings that close in, brighter as they arrive, and a core that swells with it. */
 private fun DrawScope.voiceIn(c: Offset, t: Float, level: Float, tint: Color) {
     val reach = 120.dp.toPx()
-    drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.45f * level), tint.copy(alpha = 0.2f * level), Color.Transparent), c, 50.dp.toPx() * (0.6f + level)), 50.dp.toPx() * (0.6f + level), c)
+    val core = 50.dp.toPx() * (0.6f + level)
+    drawCircle(
+        Brush.radialGradient(listOf(Color.White.copy(alpha = 0.45f * level), tint.copy(alpha = 0.2f * level), Color.Transparent), c, core),
+        core,
+        c,
+    )
     for (k in 0 until RINGS) {
         val phase = (t / RING_SECONDS + k / RINGS.toFloat()) % 1f
         val r = reach * (1f - phase) + 8.dp.toPx()

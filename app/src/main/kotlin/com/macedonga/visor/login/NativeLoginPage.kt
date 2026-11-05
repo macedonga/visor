@@ -1,7 +1,5 @@
 package com.macedonga.visor.login
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -14,26 +12,18 @@ import android.provider.Settings
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.browser.customtabs.CustomTabsIntent
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
-import com.macedonga.visor.core.identity.bloks.BloksHost
-import dagger.hilt.android.qualifiers.ApplicationContext
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -51,34 +41,38 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
@@ -90,30 +84,42 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.core.identity.bloks.Action
+import com.macedonga.visor.core.identity.bloks.BloksHost
 import com.macedonga.visor.core.identity.bloks.BloksSession
+import com.macedonga.visor.core.identity.bloks.Button
 import com.macedonga.visor.core.identity.bloks.Event
 import com.macedonga.visor.core.identity.bloks.Field
 import com.macedonga.visor.core.identity.bloks.Flat
 import com.macedonga.visor.core.identity.bloks.Heading
+import com.macedonga.visor.core.identity.bloks.Page
 import com.macedonga.visor.core.identity.bloks.Paragraph
-import com.macedonga.visor.core.identity.bloks.Screen
-import com.macedonga.visor.gallery.RoundIcon
+import com.macedonga.visor.core.identity.token.AuthorizeRequest
+import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.ProgressRing
+import com.macedonga.visor.settings.RoundIcon
+import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetTitle
+import com.macedonga.visor.settings.VisorSheet
+import com.macedonga.visor.settings.WidePill
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @HiltViewModel
 class NativeLoginViewModel @Inject constructor(val login: MetaLogin, @ApplicationContext private val context: Context) : ViewModel() {
     private var session: BloksSession? = null
+    private var startedFor: AuthorizeRequest? = null
     private val _state = MutableStateFlow<BloksSession.State?>(null)
-    val state: StateFlow<BloksSession.State?> = _state
+    val state: StateFlow<BloksSession.State?> = _state.asStateFlow()
 
     /** What a screen asked of the window (no screenshots, screen kept on) and a date it asked for. */
     val secure = MutableStateFlow(false)
@@ -139,17 +145,14 @@ class NativeLoginViewModel @Inject constructor(val login: MetaLogin, @Applicatio
         }
 
         override fun shareText(text: String) {
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-            runCatching { context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            runCatching { com.macedonga.visor.ui.shareText(context, text) }
         }
 
         override fun dial(number: String) {
             runCatching { context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         }
 
-        override fun copy(text: String) {
-            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("", text))
-        }
+        override fun copy(text: String) = com.macedonga.visor.ui.copy(context, text)
 
         override fun secure(on: Boolean) {
             secure.value = on
@@ -172,10 +175,16 @@ class NativeLoginViewModel @Inject constructor(val login: MetaLogin, @Applicatio
             get() = Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
 
-    /** Starts once per page; the session outlives recomposition and rotation with this model. */
+    /** Starts once per login request; the session outlives recomposition and rotation with this model. */
     fun start(onDone: () -> Unit): BloksSession? {
-        session?.let { return it }
         val request = login.pending ?: return null
+        session?.takeIf { startedFor === request }?.let { return it }
+        session?.close()
+        startedFor = request
+        _state.value = null
+        secure.value = false
+        keepOn.value = false
+        dateAsk.value = null
         return login.nativeSession(darkMode = true, host = host).also { s ->
             session = s
             s.onState = { _state.value = it }
@@ -192,10 +201,7 @@ class NativeLoginViewModel @Inject constructor(val login: MetaLogin, @Applicatio
     }
 }
 
-/**
- * Meta's login as the Meta AI app runs it, each of Meta's screens reduced to what it asks (a title, its lines, its
- * fields, its buttons) and drawn like the rest of the setup.
- */
+/** Meta's login screens, each reduced to its title, lines, fields and buttons. */
 @Composable
 fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewModel()) {
     val session = remember { model.start(onDone) }
@@ -203,11 +209,11 @@ fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewMo
         LaunchedEffect(Unit) { onDone() }
         return
     }
-    val state by produceState(model.state.value) { model.state.collect { value = it } }
+    val state by model.state.collectAsStateWithLifecycle()
     val s = state
     WindowFlags(model)
     DateAsked(model)
-    val screen = remember(s?.version) { Flat.of(s?.ui) }
+    val screen = remember(s?.version) { Flat.of(s?.ui, s?.title) }
     val back = { screen.back?.let(session::run) ?: session.back() }
     BackHandler(onBack = back)
     Column(
@@ -221,7 +227,7 @@ fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewMo
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             RoundIcon(VisorIcons.ChevronLeft, stringResource(R.string.settings_back), back)
         }
-        if (s == null || screen.loading || screen.items.isEmpty()) {
+        if (s == null || screen.items.isEmpty()) {
             // Nothing to draw and nothing on its way is a step Visor cannot show: say so instead of spinning forever.
             var stuck by remember(s?.version) { mutableStateOf(false) }
             LaunchedEffect(s?.version, s?.busy) {
@@ -235,7 +241,7 @@ fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewMo
                 if (stuck) {
                     Text(stringResource(R.string.native_login_stuck), style = Visor.type.body, color = Visor.colors.textSecondary, textAlign = TextAlign.Center)
                 } else {
-                    CircularProgressIndicator(Modifier.size(28.dp), color = Visor.colors.textSecondary, strokeWidth = 2.dp)
+                    ProgressRing(null, Modifier.size(28.dp), color = Visor.colors.textSecondary)
                 }
             }
         } else {
@@ -243,31 +249,26 @@ fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewMo
         }
     }
     s?.dialog?.let { d ->
-        AlertDialog(
-            onDismissRequest = { session.dismissDialog() },
-            containerColor = Visor.colors.raised,
-            titleContentColor = Visor.colors.textPrimary,
-            textContentColor = Visor.colors.textSecondary,
-            title = d.title?.let { { Text(it, style = Visor.type.title) } },
-            text = d.message?.let { { Text(it, style = Visor.type.body) } },
-            confirmButton = {
-                Row {
-                    d.buttons.forEach { (label, handler) ->
-                        TextButton(onClick = {
-                            session.dismissDialog()
-                            handler?.let { session.invoke(it, listOf(null, null)) }
-                        }) { Text(label, style = Visor.type.body, color = Visor.colors.textPrimary) }
-                    }
+        VisorSheet({ session.dismissDialog() }) {
+            val message = if (d.failed) stringResource(R.string.native_login_request_failed) else d.message
+            (d.title ?: message)?.let { SheetTitle(it, message.takeIf { d.title != null }) }
+            FlowRow(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Meta lists the main answer last; it goes first and white, as in every other sheet.
+                d.buttons.asReversed().forEachIndexed { i, (label, handler) ->
+                    ActionPill(label ?: stringResource(android.R.string.ok), {
+                        session.dismissDialog()
+                        handler?.let { session.invoke(it, listOf(null, null)) }
+                    }, quiet = i > 0)
                 }
-            },
-        )
+            }
+        }
     }
 }
 
 @Composable
-private fun Content(screen: Screen, s: BloksSession.State, session: BloksSession) {
-    val primary = screen.items.filterIsInstance<Action>().firstOrNull { it.primary }
-    val others = screen.items.filterIsInstance<Action>().filter { it !== primary }
+private fun Content(screen: Page, s: BloksSession.State, session: BloksSession) {
+    val primary = screen.items.filterIsInstance<Button>().firstOrNull { it.primary }
+    val others = screen.items.filterIsInstance<Button>().filter { it !== primary }
     val fields = screen.items.filterIsInstance<Field>()
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 24.dp)) {
@@ -275,22 +276,22 @@ private fun Content(screen: Screen, s: BloksSession.State, session: BloksSession
                 when (item) {
                     is Heading -> Text(item.text, style = Visor.type.title, color = Visor.colors.textPrimary, modifier = Modifier.asHeading().padding(bottom = 12.dp))
                     is Paragraph -> ParagraphText(item, session)
-                    is Field -> FieldWell(item, session, index = fields.indexOf(item), depth = s.depth) {
+                    is Field -> FieldWell(item, session, index = fields.indexOf(item), depth = s.depth, last = item === fields.last()) {
                         primary?.takeIf { it.enabled }?.let { session.run(it.event) }
                     }
-                    is Action -> {}
+                    is Button -> {}
                 }
             }
-            // The screen's other ways on (another code, a password instead): quiet chips under what it asks.
+            // The screen's other ways on (another code, a password instead): quiet pills under what it asks.
             if (others.isNotEmpty()) {
                 FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    others.forEach { action -> Chip(action.label, enabled = action.enabled && !s.busy) { session.run(action.event) } }
+                    others.forEach { action -> ActionPill(action.label, { session.run(action.event) }, quiet = true, enabled = action.enabled && !s.busy) }
                 }
             }
         }
         Toast(s)
         if (primary != null) {
-            Pill(primary.label, enabled = primary.enabled && !s.busy, busy = s.busy) { session.run(primary.event) }
+            WidePill(primary.label, { session.run(primary.event) }, Modifier.padding(top = 8.dp).fillMaxWidth(), enabled = primary.enabled && !s.busy, busy = s.busy)
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -321,8 +322,8 @@ private fun ParagraphText(item: Paragraph, session: BloksSession) {
 /** A screen's window wishes: no screenshots while it shows a secret, the screen kept on while it waits. */
 @Composable
 private fun WindowFlags(model: NativeLoginViewModel) {
-    val secure by model.secure.collectAsState()
-    val keepOn by model.keepOn.collectAsState()
+    val secure by model.secure.collectAsStateWithLifecycle()
+    val keepOn by model.keepOn.collectAsStateWithLifecycle()
     val window = (LocalActivity.current as? ComponentActivity)?.window ?: return
     DisposableEffect(secure, keepOn) {
         if (secure) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -334,27 +335,29 @@ private fun WindowFlags(model: NativeLoginViewModel) {
     }
 }
 
-/** A date a screen asks for (a birthday): the platform's picker, answered in unix seconds. */
+/** A date a screen asks for (a birthday), answered in unix seconds. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DateAsked(model: NativeLoginViewModel) {
-    val ask by model.dateAsk.collectAsState()
+    val ask by model.dateAsk.collectAsStateWithLifecycle()
     val current = ask ?: return
     val picker = rememberDatePickerState(initialSelectedDateMillis = current.initialSeconds?.times(1000))
     val answer = { seconds: Long? ->
         model.dateAsk.value = null
         current.done(seconds)
     }
-    DatePickerDialog(
-        onDismissRequest = { answer(null) },
-        confirmButton = { TextButton(onClick = { answer(picker.selectedDateMillis?.div(1000)) }) { Text(stringResource(R.string.settings_save)) } },
-        dismissButton = { TextButton(onClick = { answer(null) }) { Text(stringResource(R.string.language_cancel)) } },
-    ) { DatePicker(picker) }
+    VisorSheet({ answer(null) }, full = true) {
+        DatePicker(picker, title = null, headline = null, showModeToggle = false, colors = DatePickerDefaults.colors(containerColor = Visor.colors.surface))
+        Row(Modifier.padding(horizontal = SIDE).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ActionPill(stringResource(R.string.settings_save), { answer(picker.selectedDateMillis?.div(1000)) })
+            ActionPill(stringResource(R.string.cancel), { answer(null) }, quiet = true)
+        }
+    }
 }
 
 /** Meta's toast ("code sent"): a quiet line above the button for as long as Meta asks. */
 @Composable
-private fun Toast(s: BloksSession.State) {
+private fun ColumnScope.Toast(s: BloksSession.State) {
     var shown by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(s.toastCount) {
         if (s.toastCount == 0 || s.toast == null) return@LaunchedEffect
@@ -362,40 +365,28 @@ private fun Toast(s: BloksSession.State) {
         delay(s.toastMillis.coerceIn(1500L, 8000L))
         shown = null
     }
-    AnimatedVisibility(shown != null, enter = fadeIn(), exit = fadeOut()) {
+    AnimatedVisibility(shown != null, Modifier.align(Alignment.CenterHorizontally), enter = fadeIn(), exit = fadeOut()) {
         Text(
             shown.orEmpty(),
             style = Visor.type.label,
             color = Visor.colors.textPrimary,
             modifier = Modifier
                 .padding(bottom = 8.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Visor.colors.raised)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .clip(RoundedCornerShape(50))
+                .background(Visor.colors.control)
+                .padding(horizontal = 18.dp, vertical = 11.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
         )
     }
 }
 
-@Composable
-private fun Chip(text: String, enabled: Boolean, onClick: () -> Unit) {
-    Text(
-        text,
-        style = Visor.type.label,
-        color = Visor.colors.textPrimary,
-        modifier = Modifier
-            .alpha(if (enabled) 1f else 0.35f)
-            .clip(RoundedCornerShape(50))
-            .background(Visor.colors.raised)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 9.dp),
-    )
-}
-
 /** A field in the setup's look: a rounded well, its name inside while empty, the text in white as it is typed. */
 @Composable
-private fun FieldWell(item: Field, session: BloksSession, index: Int, depth: Int, onGo: () -> Unit) {
+private fun FieldWell(item: Field, session: BloksSession, index: Int, depth: Int, last: Boolean, onGo: () -> Unit) {
     val input = item.input
+    val focus = LocalFocusManager.current
+    // Go on the last field or one with its own submit; Next moves on to the field below.
+    val go = last || input.onSubmit != null
     // Meta redraws the screen on every keystroke and may hand a new node each time: the field is its place on the
     // screen, and it keeps its own text and cursor.
     var value by remember(depth, index) { mutableStateOf(TextFieldValue(input.text, TextRange(input.text.length))) }
@@ -405,7 +396,7 @@ private fun FieldWell(item: Field, session: BloksSession, index: Int, depth: Int
     val code = input.keyboard == "passcode"
     val label = item.label.ifEmpty { if (code) stringResource(R.string.login_code) else input.hint }
     val style = if (code) {
-        TextStyle(color = Visor.colors.textPrimary, fontSize = 28.sp, letterSpacing = 10.sp, textAlign = TextAlign.Center)
+        Visor.type.readoutSmall.copy(color = Visor.colors.textPrimary, fontSize = 28.sp, letterSpacing = 10.sp, textAlign = TextAlign.Center)
     } else {
         Visor.type.body.copy(color = Visor.colors.textPrimary)
     }
@@ -448,36 +439,14 @@ private fun FieldWell(item: Field, session: BloksSession, index: Int, depth: Int
                     "phone" -> KeyboardType.Phone
                     else -> KeyboardType.Text
                 },
-                imeAction = ImeAction.Go,
+                imeAction = if (go) ImeAction.Go else ImeAction.Next,
             ),
-            keyboardActions = KeyboardActions(onAny = { input.onSubmit?.let(session::run) ?: onGo() }),
+            keyboardActions = KeyboardActions(onAny = { if (go) input.onSubmit?.let(session::run) ?: onGo() else focus.moveFocus(FocusDirection.Down) }),
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(requester)
                 .onFocusChanged { f -> (if (f.isFocused) input.onFocus else input.onBlur)?.let(session::run) },
         )
-    }
-}
-
-/** The setup's main button: a wide white pill. */
-@Composable
-private fun Pill(text: String, enabled: Boolean, busy: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .padding(top = 8.dp)
-            .fillMaxWidth()
-            .height(54.dp)
-            .alpha(if (enabled || busy) 1f else 0.35f)
-            .clip(RoundedCornerShape(50))
-            .background(Color.White)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (busy) {
-            CircularProgressIndicator(Modifier.size(20.dp), color = Color.Black, strokeWidth = 2.dp)
-        } else {
-            Text(text, style = Visor.type.body, color = Color.Black, textAlign = TextAlign.Center)
-        }
     }
 }
 

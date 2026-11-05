@@ -48,5 +48,5 @@ body:
     id: log
     attributes:
       label: Event log
-      description: Settings, Advanced, Event log, Copy all. Paste the part around the problem.
+      description: Settings, Advanced, Event log, Share. Paste the part around the problem.
       render: text

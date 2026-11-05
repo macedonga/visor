@@ -21,10 +21,7 @@ fun Modifier.switchRow(on: Boolean): Modifier = semantics {
     role = Role.Switch
 }
 
-/**
- * The phone's "Remove animations", as Compose hands it to its own animations. Frame loops written by hand ask this
- * and hold still.
- */
+/** The phone's "Remove animations" as Compose sees it, for hand-written frame loops to hold still. */
 suspend fun animationsOff(): Boolean = (currentCoroutineContext()[MotionDurationScale]?.scaleFactor ?: 1f) == 0f
 
 /** [lines] at the usual text size, and no limit once the phone's font is large, so nothing is cut short. */

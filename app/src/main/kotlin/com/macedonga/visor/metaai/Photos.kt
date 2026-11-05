@@ -1,6 +1,5 @@
 package com.macedonga.visor.metaai
 
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.Composable
@@ -13,7 +12,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** The photos answers were given, read from the diary's folder and held in memory while they are looked at. */
+/** The diary's photos, decoded and cached in memory. */
 object DiaryPhotos {
     private val cache = object : LruCache<String, ImageBitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
@@ -35,12 +34,22 @@ object DiaryPhotos {
 @Composable
 fun rememberDiaryPhoto(path: String?, maxSide: Int = 1080): State<ImageBitmap?> =
     produceState(path?.let { DiaryPhotos.cached(it, maxSide) }, path, maxSide) {
+        value = path?.let { DiaryPhotos.cached(it, maxSide) }
         if (path != null && value == null) value = DiaryPhotos.load(path, maxSide)
     }
 
 /** A picture's colour as one value, for the light to lean towards. */
 fun averageColor(image: ImageBitmap): Color {
-    val source = image.asAndroidBitmap().let { if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it }
-    val one = Bitmap.createScaledBitmap(source, 1, 1, true).getPixel(0, 0)
-    return Color(one)
+    val bitmap = image.asAndroidBitmap()
+    val px = IntArray(bitmap.width * bitmap.height).also { bitmap.getPixels(it, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height) }
+    var r = 0L
+    var g = 0L
+    var b = 0L
+    for (p in px) {
+        r += (p shr 16) and 0xFF
+        g += (p shr 8) and 0xFF
+        b += p and 0xFF
+    }
+    val n = px.size.coerceAtLeast(1)
+    return Color((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
 }

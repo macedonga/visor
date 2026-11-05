@@ -1,5 +1,6 @@
 package com.macedonga.visor.settings
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -9,6 +10,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
@@ -19,21 +21,28 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.token.LinkedAccountRef
 import com.macedonga.visor.core.identity.token.LinkedAccountType
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class AccountRow { META, FACEBOOK, INSTAGRAM, THREADS }
+enum class AccountRow(val type: LinkedAccountType?, @StringRes val label: Int) {
+    META(null, R.string.accounts_meta),
+    FACEBOOK(LinkedAccountType.FACEBOOK, R.string.accounts_facebook_messenger),
+    INSTAGRAM(LinkedAccountType.INSTAGRAM, R.string.accounts_instagram),
+    THREADS(LinkedAccountType.THREADS, R.string.accounts_threads),
+}
 
 @HiltViewModel
 class AccountsModel @Inject constructor(
     val connection: GlassesConnection,
     private val linking: AccountLinking,
     private val prompt: LinkPrompt,
-    private val log: com.macedonga.visor.log.EventLog,
+    private val log: EventLog,
 ) : ViewModel() {
 
     /** The account the glasses asked for from one of their apps; its row leads. */
@@ -56,8 +65,15 @@ class AccountsModel @Inject constructor(
     private val _accounts = MutableStateFlow<Map<LinkedAccountType, LinkedAccountRef>?>(null)
     val accounts: StateFlow<Map<LinkedAccountType, LinkedAccountRef>?> = _accounts.asStateFlow()
 
-    fun refresh() {
+    // Rows whose last link failed without an outcome.
+    private val _failed = MutableStateFlow<Set<AccountRow>>(emptySet())
+    val failed: StateFlow<Set<AccountRow>> = _failed.asStateFlow()
+
+    fun refreshMeta() {
         viewModelScope.launch { linking.metaPresent()?.let { _meta.value = it } }
+    }
+
+    fun refreshAccounts() {
         viewModelScope.launch { linking.linkedAccounts()?.let { list -> _accounts.value = list.associateBy { it.type } } }
     }
 
@@ -66,23 +82,30 @@ class AccountsModel @Inject constructor(
         if (_metaResult.value == LinkOutcome.LINKED) _meta.value = true
     }
 
-    fun linkProvider(row: AccountRow, type: LinkedAccountType) = task(row) {
-        val outcome = linking.syncLinked(type)
-        _linkedResults.value = _linkedResults.value + (type to outcome)
-        if (outcome == LinkOutcome.LINKED && prompt.asked.value == type) prompt.answered()
+    fun linkProvider(row: AccountRow) {
+        val type = row.type ?: return
+        task(row) {
+            val outcome = linking.syncLinked(type)
+            _linkedResults.value = _linkedResults.value + (type to outcome)
+            if (outcome == LinkOutcome.LINKED && prompt.asked.value == type) prompt.answered()
+        }
     }
 
     private fun task(row: AccountRow, work: suspend () -> Unit) {
         if (_busy.value != null) return
         _busy.value = row
+        _failed.value -= row
         viewModelScope.launch {
             try {
                 work()
-            } catch (error: kotlinx.coroutines.CancellationException) {
+            } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                // A failure the linking did not foresee stays on this page; it must not take the app down.
+                // Reported on the row; a failure must not take the app down.
                 log.add("Accounts: ${error.javaClass.simpleName}: ${error.message}")
+                val type = row.type
+                if (type == null) _metaResult.value = null else _linkedResults.value -= type
+                _failed.value += row
             } finally {
                 _busy.value = null
             }
@@ -101,29 +124,32 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
     val linked by model.linkedResults.collectAsStateWithLifecycle()
     val accounts by model.accounts.collectAsStateWithLifecycle()
     val asked by model.asked.collectAsStateWithLifecycle()
-    LaunchedEffect(ready) { if (ready) model.refresh() }
-    val providers = listOf(
-        Triple(AccountRow.FACEBOOK, LinkedAccountType.FACEBOOK, R.string.finish_accounts_facebook_messenger),
-        Triple(AccountRow.INSTAGRAM, LinkedAccountType.INSTAGRAM, R.string.accounts_instagram),
-        Triple(AccountRow.THREADS, LinkedAccountType.THREADS, R.string.finish_accounts_threads),
-    ).sortedByDescending { it.second == asked }
+    val failed by model.failed.collectAsStateWithLifecycle()
+    LaunchedEffect(ready) { if (ready) model.refreshMeta() }
+    // Read again on return: an account linked meanwhile gets its Link.
+    LifecycleResumeEffect(Unit) {
+        model.refreshAccounts()
+        onPauseOrDispose { }
+    }
+    val providers = AccountRow.entries.filter { it.type != null }.sortedByDescending { it.type == asked }
 
     SettingsPage(stringResource(R.string.accounts_title), light = 0f) {
         item(key = "accounts") {
             Rows(
                 {
                     RowFrame(
-                        stringResource(R.string.accounts_meta),
+                        stringResource(AccountRow.META.label),
                         onClick = null,
-                        sub = metaResult?.let { outcomeWords(it) } ?: when (meta) {
+                        sub = metaResult?.takeIf(::settled)?.let { outcomeWords(it) } ?: when (meta) {
                             true -> stringResource(R.string.accounts_linked)
                             false -> stringResource(R.string.accounts_not_linked)
                             null -> stringResource(R.string.settings_unknown)
                         },
+                        problem = failure(metaResult, AccountRow.META in failed),
                         locked = !ready,
                         busy = busy == AccountRow.META,
                     ) {
-                        if (meta == false) {
+                        if (meta != true) {
                             ActionPill(
                                 stringResource(R.string.accounts_link), { model.linkMeta() },
                                 quiet = true, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
@@ -131,8 +157,8 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
                         }
                     }
                 },
-                *providers.map { (row, type, label) ->
-                    @Composable { LinkedRow(model, row, type, label, ready, busy, linked, accounts, lead = type == asked) }
+                *providers.map { row ->
+                    @Composable { LinkedRow(model, row, ready, busy, linked, accounts, failed = row in failed, lead = row.type == asked) }
                 }.toTypedArray(),
             )
         }
@@ -143,43 +169,59 @@ fun AccountsScreen(model: AccountsModel = hiltViewModel()) {
 private fun LinkedRow(
     model: AccountsModel,
     row: AccountRow,
-    type: LinkedAccountType,
-    label: Int,
     ready: Boolean,
     busy: AccountRow?,
     results: Map<LinkedAccountType, LinkOutcome>,
     accounts: Map<LinkedAccountType, LinkedAccountRef>?,
+    failed: Boolean,
     lead: Boolean,
 ) {
-    val account = accounts?.get(type)
+    val account = row.type?.let { accounts?.get(it) }
+    val result = row.type?.let { results[it] }
     RowFrame(
-        stringResource(label),
+        stringResource(row.label),
         onClick = null,
-        sub = results[type]?.let { outcomeWords(it) } ?: when {
+        sub = result?.takeIf(::settled)?.let { outcomeWords(it) } ?: when {
             accounts == null -> null
             account == null -> stringResource(R.string.accounts_not_linked)
-            account.forGlasses -> stringResource(R.string.accounts_linked_as, account.name)
+            account.forGlasses -> account.name
             else -> stringResource(R.string.accounts_off_for_glasses, account.name)
         },
+        problem = failure(result, failed),
         locked = !ready,
         busy = busy == row,
     ) {
-        ActionPill(
-            stringResource(R.string.accounts_link), { model.linkProvider(row, type) },
-            quiet = !lead, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
-        )
+        // Meta must list the account, and a row just linked has nothing left to do.
+        if ((accounts == null || account != null) && result != LinkOutcome.LINKED) {
+            ActionPill(
+                stringResource(R.string.accounts_link), { model.linkProvider(row) },
+                quiet = !lead, modifier = Modifier.padding(start = 12.dp), enabled = ready && busy == null,
+            )
+        }
     }
+}
+
+/** An outcome that is the row's state rather than an error. */
+private fun settled(outcome: LinkOutcome): Boolean = outcome == LinkOutcome.LINKED || outcome == LinkOutcome.NOT_LINKED
+
+/** What went wrong with the row's last link, if anything. */
+@Composable
+private fun failure(outcome: LinkOutcome?, failed: Boolean): String? = when {
+    failed -> stringResource(R.string.accounts_failed)
+    outcome != null && !settled(outcome) -> outcomeWords(outcome)
+    else -> null
 }
 
 @Composable
 private fun outcomeWords(outcome: LinkOutcome): String = stringResource(
     when (outcome) {
-        LinkOutcome.LINKED -> R.string.accounts_done
+        LinkOutcome.LINKED -> R.string.accounts_linked
         LinkOutcome.LOGGED_OUT -> R.string.accounts_logged_out
         LinkOutcome.UNREACHABLE -> R.string.accounts_unreachable
         LinkOutcome.NO_ANSWER -> R.string.accounts_no_answer
         LinkOutcome.REFUSED -> R.string.accounts_refused
+        LinkOutcome.META_REFUSED -> R.string.accounts_meta_refused
         LinkOutcome.NOT_LINKED -> R.string.accounts_not_linked
-        LinkOutcome.NEEDS_INTERNET -> R.string.finish_accounts_needs_internet
+        LinkOutcome.NEEDS_INTERNET -> R.string.accounts_needs_internet
     },
 )

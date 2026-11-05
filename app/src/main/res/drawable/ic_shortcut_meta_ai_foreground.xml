@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Meta AI on the 108 dp adaptive grid: a speech bubble with the home's voice bars in it, someone to talk to. -->
+<!-- The Meta AI icon on the 108 dp adaptive grid: the 24 grid scaled by 2.25 into the middle 54 dp. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

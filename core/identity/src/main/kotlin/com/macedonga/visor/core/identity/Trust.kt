@@ -15,8 +15,6 @@ import java.security.MessageDigest
 import java.security.Signature
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** The client proves it holds the owner key the glasses already know. */
-
 /** The secp256r1 group order. */
 private val SECP256R1_ORDER = BigInteger(
     "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16,
@@ -30,11 +28,11 @@ private val TRUST_PUSH_TYPES = setOf(
     IdentityMsgType.ENABLE_TRUST.value,
 )
 
-/** `run_trust_exchange`'s `timeout: float = 5.0`. */
-const val TRUST_TIMEOUT_MILLIS: Long = 5_000
+/** How long the trust exchange waits for both directions. */
+private const val TRUST_TIMEOUT_MILLIS: Long = 5_000
 
 /** ENABLE_TRUST, message type 0x1000. */
-fun buildEnableTrust(credentials: Credentials, txChallenge: ByteArray): ByteArray {
+private fun buildEnableTrust(credentials: BundleCredentials, txChallenge: ByteArray): ByteArray {
     require(txChallenge.size == 32) {
         "the channel binding is a SHA-256 digest and must be 32 bytes, got ${txChallenge.size}"
     }
@@ -45,16 +43,16 @@ fun buildEnableTrust(credentials: Credentials, txChallenge: ByteArray): ByteArra
 }
 
 /** The message body, given a DER signature. */
-internal fun enableTrustPayload(publicKey64: ByteArray, derSignature: ByteArray): ByteArray {
+private fun enableTrustPayload(publicKey64: ByteArray, derSignature: ByteArray): ByteArray {
     val (r, s) = decodeDerSignature(derSignature)
     val canonical = if (s > HALF_ORDER) SECP256R1_ORDER.subtract(s) else s
-    val raw = fixedWidth(r) + fixedWidth(canonical)
+    val raw = r.to32() + canonical.to32()
     return Wire.fieldBytes(1, MessageDigest.getInstance("SHA-256").digest(publicKey64)) +
         Wire.fieldBytes(2, raw) +
         Wire.fieldVarint(3, RESIGN_PROVISIONING_CAPABILITIES.toLong())
 }
 
-/** `utils.decode_dss_signature`: a SEQUENCE of two INTEGERs. */
+/** A DER ECDSA signature: a SEQUENCE of two INTEGERs, r then s. */
 private fun decodeDerSignature(der: ByteArray): Pair<BigInteger, BigInteger> = try {
     val sequence = DerReader(DerReader(der).read(DerReader.SEQUENCE))
     sequence.readInteger() to sequence.readInteger()
@@ -62,30 +60,8 @@ private fun decodeDerSignature(der: ByteArray): Pair<BigInteger, BigInteger> = t
     throw CredentialsException("the signature is not in the expected format", error)
 }
 
-/** 32 bytes, big endian, left padded. */
-private fun fixedWidth(value: BigInteger): ByteArray {
-    val bytes = value.toByteArray()
-    return when {
-        bytes.size == 32 -> bytes
-        bytes.size == 33 && bytes[0] == 0.toByte() -> bytes.copyOfRange(1, 33)
-        bytes.size < 32 -> ByteArray(32 - bytes.size) + bytes
-        else -> throw CredentialsException("the signature does not fit a P-256 coordinate")
-    }
-}
-
 /** The svc36 exchange, filling `:core:session`'s seam. */
-class IdentityTrustExchange internal constructor(
-    private val timeoutMillis: Long,
-    // A seam for the golden frame tests, and the reason is the same one the vector generator has:
-    // ECDSA is randomised, so a freshly signed body is different bytes every run and cannot be
-    // compared to a recorded frame.
-    private val enableTrust: (txChallenge: ByteArray) -> ByteArray,
-) : TrustExchange {
-
-    constructor(
-        credentials: Credentials,
-        timeoutMillis: Long = TRUST_TIMEOUT_MILLIS,
-    ) : this(timeoutMillis, { challenge -> buildEnableTrust(credentials, challenge) })
+class IdentityTrustExchange(private val credentials: BundleCredentials) : TrustExchange {
 
     override suspend fun run(
         connection: DataXConnection,
@@ -99,7 +75,7 @@ class IdentityTrustExchange internal constructor(
         val ourChannel = connection.openChannel(ServiceId.IDENTITY.value)
         connection.send(
             ourChannel,
-            enableTrust(binding.primary()),
+            buildEnableTrust(credentials, binding.txChallenge()),
             messageType = IdentityMsgType.ENABLE_TRUST.value,
             serviceId = ServiceId.IDENTITY.value,
         )
@@ -111,17 +87,16 @@ class IdentityTrustExchange internal constructor(
         // Anything this loop does not consume belongs to the caller.
         val deferred = mutableListOf<DataXMessage>()
         try {
-            withTimeoutOrNull(timeoutMillis) {
+            withTimeoutOrNull(TRUST_TIMEOUT_MILLIS) {
                 while (!(txOk && rxOk)) {
                     val message = connection.receive()
                     val info = message.info
                     when {
                         info.flags.hasError && info.channelId == ourStatusChannel -> {
-                            // Consumed either way, as the reference's if/elif chain does.
                             if (info.errorId == IdentityStatus.SUCCESS.value) txOk = true else refusal = info.errorId
                         }
 
-                        (info.channelId and 0x8000) != 0 &&
+                        DataXConnection.hasOriginatorBit(info.channelId) &&
                             info.serviceId == ServiceId.IDENTITY.value &&
                             info.messageType in TRUST_PUSH_TYPES -> {
                             connection.sendStatus(
@@ -142,6 +117,3 @@ class IdentityTrustExchange internal constructor(
         return TrustResult(txOk = txOk, rxOk = rxOk, refusal = refusal)
     }
 }
-
-// DIVERGENCE: the reference tests its 5.0 second deadline only BETWEEN reads, and its socket
-// timeout is 10.0 seconds, so a peer that goes silent costs up to 10 seconds there and 5 here.

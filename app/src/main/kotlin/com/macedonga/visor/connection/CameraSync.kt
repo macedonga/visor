@@ -1,9 +1,8 @@
-package com.macedonga.visor.settings
+package com.macedonga.visor.connection
 
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.media.GlassesConfig
-import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.Kind
@@ -16,13 +15,12 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** The glasses' own camera switches for Meta AI. With either off, they refuse every question about what the wearer sees. */
 val GLASSES_CAMERA_KEYS = setOf("cloud_ai_understanding_enabled", "camera_use_enabled")
 
 /** Meta's server switch for landscape capture, which the older landscape path needs with landscape_mode_enabled. */
-const val LANDSCAPE_FLAG = "mwa_ios_landscape_mode.enabled"
+private const val LANDSCAPE_FLAG = "mwa_ios_landscape_mode.enabled"
 
 private const val LANDSCAPE_MODE = "landscape_mode_enabled"
 // What the camera follows and marks each capture with: 1 landscape, 0 portrait.
@@ -32,34 +30,29 @@ private const val READ_MS = 5 * 60_000L
 /** Visor's "Use the camera" is the one switch: whenever it changes, and after every read, the glasses' two follow it. */
 fun keepCameraInLine(scope: CoroutineScope, settings: GlassesSettings, store: AssistantConfigStore, log: EventLog) {
     scope.launch {
+        var lastVision: Boolean? = null
         combine(
             store.config.map { it.vision }.distinctUntilChanged(),
             settings.state.map { it.readAt }.distinctUntilChanged(),
         ) { vision, readAt -> vision to readAt }.collect { (vision, readAt) ->
             if (readAt == null) return@collect
+            val flipped = vision != lastVision
+            lastVision = vision
             val state = settings.state.value
             val want = vision.toString()
-            // Not one already on its way, nor one the glasses have refused: that would write it after every read.
-            val sent = GLASSES_CAMERA_KEYS
-                .filter { it !in state.pending && it !in state.kept && !same(settings.catalogue[it]?.kind, settings.value(it), want) }
-                .filter { settings.write(it, want) }
-            if (sent.isNotEmpty()) log.add("Camera: the glasses' own camera use follows Visor's switch, ${if (vision) "on" else "off"}")
+            // After a read, not one on its way or one the glasses kept; a flip of the switch writes again.
+            val due = GLASSES_CAMERA_KEYS.filter { it !in state.pending && (flipped || it !in state.kept) && !same(settings.catalogue[it]?.kind, settings.value(it), want) }
+            if (due.count { settings.write(it, want) } > 0) log.add("Camera: the glasses' own camera use follows Visor's switch, ${if (vision) "on" else "off"}")
         }
     }
 }
 
-/**
- * Media orientation is the one landscape control. The camera follows capture_aspect_ratio and marks each capture with
- * it, still taking the whole portrait frame; Visor crops the landscape ones as it brings them over. The older
- * landscape_mode_enabled follows it, and with landscape Meta's landscape switch in the glasses' configuration goes on
- * too, which Meta's server turns off.
- */
+/** Keeps landscape_mode_enabled and Meta's landscape flag, which Meta's server turns off, in line with capture_aspect_ratio. */
 fun keepLandscape(
     scope: CoroutineScope,
     connection: GlassesConnection,
     settings: GlassesSettings,
     config: GlassesConfig,
-    media: MediaImport,
     log: EventLog,
 ) {
     scope.launch {
@@ -76,15 +69,8 @@ fun keepLandscape(
                 log.add("Camera: landscape mode follows Media orientation, ${if (on) "on" else "off"}")
             }
             if (!on) return@collectLatest
-            if (config.state.value.params.isEmpty()) {
-                // The configuration comes in a bug report: never on top of photos to bring over.
-                combine(media.importing, media.captures) { importing, captures -> !importing && captures.none { it.isNew && it.isMedia } }
-                    .first { it }
-                log.add("Camera: reading the glasses' configuration for landscape")
-                config.read()
-                withTimeoutOrNull(READ_MS) { config.state.first { it.params.isNotEmpty() } } ?: return@collectLatest
-            }
-            val state = config.state.first { it.busy.isEmpty() }
+            if (!config.readOnce(READ_MS) { log.add("Camera: reading the glasses' configuration for landscape") }) return@collectLatest
+            val state = config.state.first { it.busy == null }
             if (LANDSCAPE_FLAG !in state.params || state.values[LANDSCAPE_FLAG] == true) return@collectLatest
             log.add("Camera: turning on Meta's landscape switch")
             val why = config.send(mapOf(LANDSCAPE_FLAG to true))
@@ -93,10 +79,7 @@ fun keepLandscape(
     }
 }
 
-/**
- * Whether a video this size came out of the glasses' own two-stage stabilization, from the output sizes in their
- * settings (1080p, and 3K and 60 fps on firmware that has those). Any other video is steadied on the phone.
- */
+/** Whether a video this size was steadied on the glasses: one of their two-stage EIS output sizes. */
 fun steadiedOnGlasses(settings: GlassesSettings): (Int, Int) -> Boolean = { w, h ->
     listOf("", "_3k", "_60fps").any { suffix ->
         val ow = settings.value("two_stage_eis_output_width$suffix")?.trim()?.toIntOrNull()

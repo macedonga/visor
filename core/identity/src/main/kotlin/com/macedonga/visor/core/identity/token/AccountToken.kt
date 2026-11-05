@@ -1,17 +1,12 @@
 package com.macedonga.visor.core.identity.token
 
-import com.macedonga.visor.core.identity.HttpPost
-import com.macedonga.visor.core.identity.UrlConnectionPost
-import com.macedonga.visor.core.identity.pyUrlencode
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
+import com.macedonga.visor.core.identity.text
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.jsonObject
 
 /** The glasses' accounts app: the Meta account the Display keeps is minted for this app id and package. */
-const val ACCOUNTS_APP_ID = "1463123261063354"
-const val ACCOUNTS_PACKAGE = "com.meta.smartglass.app.accounts"
+private const val ACCOUNTS_APP_ID = "1463123261063354"
+private const val ACCOUNTS_PACKAGE = "com.meta.smartglass.app.accounts"
 
 /** What the token exchange answers for the Meta account. The access token is a secret: never log it. */
 class AccountIdentity(
@@ -27,42 +22,21 @@ class AccountIdentity(
 )
 
 /**
- * POST /app_token_exchange: an access token for [appId] and [packageName], minted from the user's own Meta login. The
+ * POST /app_token_exchange: an access token for the glasses' accounts app, minted from the user's own Meta login. The
  * user id and the account fields come back with it.
  */
-fun exchangeAccountToken(
-    userToken: Token,
-    appId: String = ACCOUNTS_APP_ID,
-    packageName: String = ACCOUNTS_PACKAGE,
-    http: HttpPost = UrlConnectionPost,
-): AccountIdentity {
-    val body = pyUrlencode(
+fun exchangeAccountToken(userToken: Token): AccountIdentity {
+    val payload = authPost(
+        "https://$AR_HOST/app_token_exchange",
         linkedMapOf(
-            "target_app_id" to appId,
-            "package_name" to packageName,
+            "target_app_id" to ACCOUNTS_APP_ID,
+            "package_name" to ACCOUNTS_PACKAGE,
             "extras" to "account_id,is_employee,is_test_user,name,profile_picture_url,analytics_claim",
         ),
-    ).toByteArray(Charsets.US_ASCII)
-    val reply = try {
-        http.post(
-            "https://$DEFAULT_AR_HOST/app_token_exchange",
-            mapOf(
-                "Authorization" to "OAuth ${userToken.value}",
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "User-Agent" to META_USER_AGENT,
-            ),
-            body,
-        )
-    } catch (error: Exception) {
-        throw TokenError("app_token_exchange: ${error.javaClass.simpleName}: ${error.message}", unreachable = true)
-    }
-    val payload: JsonObject = try {
-        Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject
-    } catch (error: Exception) {
-        throw TokenError("app_token_exchange: response was not JSON")
-    }
+        "OAuth ${userToken.value}",
+    )
     checkSession(payload)
-    payload["error"]?.let { throw TokenError("token exchange refused: ${(it as? JsonPrimitive)?.content ?: it}") }
+    payload.errorMessage()?.let { throw TokenError("token exchange refused: $it") }
     val token = payload.text("access_token")
     val userId = payload.text("user_id")
     if (token.isNullOrEmpty() || userId.isNullOrEmpty()) {
@@ -71,7 +45,7 @@ fun exchangeAccountToken(
     return AccountIdentity(
         accessToken = token,
         userId = userId,
-        appId = payload.text("app_id") ?: appId,
+        appId = payload.text("app_id") ?: ACCOUNTS_APP_ID,
         accountId = payload.text("account_id").orEmpty(),
         name = payload.text("name").orEmpty(),
         profilePictureUrl = payload.text("profile_picture_url").orEmpty(),

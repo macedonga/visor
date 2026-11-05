@@ -4,13 +4,11 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,8 +21,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,6 +28,7 @@ import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.VisorSheet
+import com.macedonga.visor.settings.WidePill
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,7 +47,7 @@ fun openLink(context: Context, url: String) {
     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
-/** Asks for a star on GitHub a day after Visor was first used; No asks again a week later. */
+/** Asks for a star on GitHub a day after Visor was first used; Later asks again a week later. */
 @Singleton
 class StarAsk @Inject constructor(@ApplicationContext context: Context) {
     private val prefs = context.getSharedPreferences("star", Context.MODE_PRIVATE)
@@ -84,10 +81,10 @@ class StarAsk @Inject constructor(@ApplicationContext context: Context) {
     }
 }
 
-/** The ask: a star lit by the glasses' warm light, and three answers. Swiping it away counts as No. */
+/** The ask: a star and three answers. Swiping it away counts as Later. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StarSheet(onOk: () -> Unit, onNo: () -> Unit, onNever: () -> Unit) {
+fun StarSheet(onOk: () -> Unit, onLater: () -> Unit, onNever: () -> Unit) {
     val colors = Visor.colors
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
@@ -95,36 +92,23 @@ fun StarSheet(onOk: () -> Unit, onNo: () -> Unit, onNever: () -> Unit) {
     fun answer(then: () -> Unit) {
         scope.launch { state.hide() }.invokeOnCompletion { then() }
     }
-    VisorSheet(onNo, state = state) {
+    VisorSheet(onLater, state = state) {
         Column(Modifier.fillMaxWidth().padding(horizontal = SIDE), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(132.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(132.dp).background(Brush.radialGradient(listOf(colors.lightWarm.copy(alpha = 0.22f), Color.Transparent))))
-                Box(Modifier.size(68.dp).clip(RoundedCornerShape(22.dp)).background(colors.raised), contentAlignment = Alignment.Center) {
-                    Icon(VisorIcons.Star, null, Modifier.size(32.dp), tint = colors.lightWarm)
-                }
+            Box(
+                Modifier.padding(bottom = 16.dp).size(68.dp).clip(RoundedCornerShape(22.dp)).background(colors.raised),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(VisorIcons.Star, null, Modifier.size(32.dp), tint = colors.textPrimary)
             }
-            Text(stringResource(R.string.star_title), style = Visor.type.title, color = colors.textPrimary, textAlign = TextAlign.Center, modifier = Modifier.asHeading())
             Text(
-                stringResource(R.string.star_text), style = Visor.type.body, color = colors.textSecondary, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 28.dp),
+                stringResource(R.string.star_title), style = Visor.type.title, color = colors.textPrimary, textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 28.dp).asHeading(),
             )
-            SheetButton(stringResource(R.string.star_ok), { answer(onOk) }, Modifier.fillMaxWidth())
+            WidePill(stringResource(R.string.star_ok), { answer(onOk) }, Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SheetButton(stringResource(R.string.star_never), { answer(onNever) }, Modifier.weight(1f), quiet = true)
-                SheetButton(stringResource(R.string.star_no), { answer(onNo) }, Modifier.weight(1f), quiet = true)
+                WidePill(stringResource(R.string.star_never), { answer(onNever) }, Modifier.weight(1f), quiet = true)
+                WidePill(stringResource(R.string.star_no), { answer(onLater) }, Modifier.weight(1f), quiet = true)
             }
         }
-    }
-}
-
-/** A full-width pill, white for the answer asked for and grey for the others. */
-@Composable
-private fun SheetButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, quiet: Boolean = false) {
-    Box(
-        modifier.heightIn(min = 52.dp).clip(RoundedCornerShape(50)).background(if (quiet) Visor.colors.control else Color.White)
-            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, style = Visor.type.body, color = if (quiet) Visor.colors.textPrimary else Color.Black, textAlign = TextAlign.Center)
     }
 }

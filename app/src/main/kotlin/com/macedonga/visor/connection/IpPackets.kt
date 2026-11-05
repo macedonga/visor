@@ -42,7 +42,8 @@ class IpPacket(
 
         /** An IP packet around [transport], its checksums filled in. */
         fun build(version: Int, src: ByteArray, dst: ByteArray, protocol: Int, transport: ByteArray, id: Int): ByteArray {
-            val sum = checksum(pseudoHeader(version, src, dst, protocol, transport.size), transport)
+            // A UDP checksum of 0 means none; it goes as 0xFFFF.
+            val sum = checksum(pseudoHeader(version, src, dst, protocol, transport.size), transport).let { if (protocol == UDP && it == 0) 0xFFFF else it }
             val at = if (protocol == TCP) 16 else 6
             transport[at] = (sum ushr 8).toByte()
             transport[at + 1] = sum.toByte()

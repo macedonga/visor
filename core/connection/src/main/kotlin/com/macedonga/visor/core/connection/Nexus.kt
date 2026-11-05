@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.connection
 
 import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.LinkState
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineStart
@@ -20,7 +21,7 @@ class Nexus(private val connection: GlassesConnection) {
     sealed interface Reply
 
     class Message(val type: Int, val payload: ByteArray) : Reply {
-        override fun toString(): String = "type $type " + payload.joinToString("") { "%02x".format(it) }
+        override fun toString(): String = "type $type " + payload.toHexString()
     }
 
     class Status(val status: Int) : Reply {
@@ -44,7 +45,7 @@ class Nexus(private val connection: GlassesConnection) {
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     connection.errors.collect { e ->
                         val channel = sent.get()
-                        if (e.serviceId == SERVICE || (channel >= 0 && (e.channelId and 0x7FFF) == (channel and 0x7FFF))) replies.trySend(Status(e.errorId))
+                        if (e.serviceId == SERVICE || (channel >= 0 && (e.channelId or DataXConnection.ORIGINATOR_BIT) == channel)) replies.trySend(Status(e.errorId))
                     }
                 },
             )

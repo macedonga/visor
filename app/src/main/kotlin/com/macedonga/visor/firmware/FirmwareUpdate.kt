@@ -1,14 +1,18 @@
 package com.macedonga.visor.firmware
 
 import android.content.Context
-import com.macedonga.visor.core.identity.token.withToken
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.SnApp
 import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.identity.firmware.FirmwareOffer
 import com.macedonga.visor.core.identity.firmware.fetchFirmwareOffer
 import com.macedonga.visor.core.identity.language.PackOffer
+import com.macedonga.visor.core.identity.token.withToken
 import com.macedonga.visor.core.media.AirshipReceiver
+import com.macedonga.visor.core.protocol.SVC_OTA
 import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.protocol.toBytes
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.ServiceData
@@ -17,10 +21,10 @@ import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.login.MetaLogin
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.nio.ByteBuffer
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -53,12 +57,7 @@ sealed interface FirmwareWork {
     data class Failed(val reason: String) : FirmwareWork
 }
 
-/**
- * The glasses' firmware from Meta, through the glasses' OTA service (svc29). [check] asks Meta for the newest image.
- * [install]: other glasses get its address and fetch it over their own Wi-Fi. The Display gets it as the Meta app sends
- * it without Wi-Fi: the phone downloads the zip, starts the OTA app, sends the install request with the zip's id, and
- * when the glasses ask for it sends the zip on airship `ota`; the glasses check it, apply it and restart.
- */
+/** Glasses firmware from Meta over svc29: a URL the glasses fetch, or on the Display the zip over airship `ota`. */
 @Singleton
 class FirmwareUpdate @Inject constructor(
     @ApplicationContext context: Context,
@@ -111,7 +110,7 @@ class FirmwareUpdate @Inject constructor(
             connection.state.map { it.info?.build }.distinctUntilChanged().filterNotNull().collect { build ->
                 val target = rebooting ?: return@collect
                 rebooting = null
-                val now = firmwareOf(build)
+                val now = parseBuild(build)?.firmware.orEmpty()
                 log.add(if (now == target) "Firmware: the glasses run $target" else "Firmware: the glasses came back on $now, not $target")
                 if (now != target && _work.value == FirmwareWork.Installed) _work.value = FirmwareWork.Failed("the glasses came back on $now")
             }
@@ -120,19 +119,16 @@ class FirmwareUpdate @Inject constructor(
 
     fun check() {
         if (_checking.value || job?.isActive == true) return
+        _checking.value = true
         scope.launch {
-            _checking.value = true
             try {
                 val info = connection.state.value.info ?: error("connect the glasses once, so they say which they are")
-                // Meta/greatwhite/greatwhite:14/UKQ1.250303.001/69951180085500080:user/release-keys
-                val parts = info.build.split('/')
-                val firmware = firmwareOf(info.build)
-                val type = parts.getOrNull(4)?.substringAfter(':', "user").orEmpty()
-                val product = parts.getOrNull(1).orEmpty()
-                if (firmware.isEmpty() || product.isEmpty()) error("the glasses' build is unknown")
+                val build = parseBuild(info.build)?.takeIf { it.firmware.isNotEmpty() && it.product.isNotEmpty() }
+                    ?: error("the glasses' build is unknown")
+                val firmware = build.firmware
                 val display = isDisplayBuild(info.build)
                 // The Display asks for a delta as the Meta app does; other glasses keep asking for the full image.
-                val found = login.source.withToken { fetchFirmwareOffer(it, info.serial, "ota.$product.$type", firmware, fullOnly = !display || fullNext) }
+                val found = login.source.withToken { fetchFirmwareOffer(it, info.serial, build.otaType, firmware, fullOnly = !display || fullNext) }
                     // Meta also offers the Display the build it already runs, which the glasses would refuse.
                     ?.takeUnless { display && it.targetVersion == firmware }
                 forDisplay = display
@@ -141,7 +137,7 @@ class FirmwareUpdate @Inject constructor(
                 _checked.value = true
                 log.add("Firmware: " + (found?.let { "${it.targetVersion} is offered" } ?: "no newer build is offered"))
             } catch (error: Throwable) {
-                if (error is kotlinx.coroutines.CancellationException) throw error
+                if (error is CancellationException) throw error
                 _problem.value = error.message ?: error::class.java.simpleName
                 log.add("Firmware: check failed: ${error.message}")
             } finally {
@@ -166,7 +162,7 @@ class FirmwareUpdate @Inject constructor(
                         if (connection.state.value.link != LinkState.READY) error("the glasses are not connected")
                         started = true
                         val failure = runCatching { installOn(offer, zip to transfer) }.exceptionOrNull() ?: break
-                        if (failure is kotlinx.coroutines.CancellationException) throw failure
+                        if (failure is CancellationException) throw failure
                         // A drop ends the glasses' side too; they take the same zip again from the start.
                         if (connection.state.value.link == LinkState.READY || ++drops > RETRIES) throw failure
                         log.add("Firmware: the link dropped (${failure.message}); starting again when the glasses are back")
@@ -179,15 +175,15 @@ class FirmwareUpdate @Inject constructor(
                 } else {
                     _work.value = FirmwareWork.Installing()
                     log.add("Firmware: installing ${offer.targetVersion} on the glasses")
-                    val why = runCatching { installOn(offer, null) }.exceptionOrNull()?.let { it.message ?: it::class.java.simpleName }
-                    if (why != null) error(why)
+                    started = true
+                    installOn(offer, null)
                 }
                 _offer.value = null
                 _work.value = FirmwareWork.Installed
                 log.add("Firmware: ${offer.targetVersion} is installed, the glasses restart")
-            } catch (error: kotlinx.coroutines.CancellationException) {
+            } catch (error: CancellationException) {
                 // The OTA app on the glasses stops too, or it keeps waiting for the image.
-                if (started) connection.submit { it.sendOnService(SVC_OTA, MT_STOP_APP, Wire.fieldVarint(1, APP_OTA)) }
+                if (started) connection.submit { it.sendOnService(SVC_OTA, SnApp.MT_STOP_APP, SnApp.app(Ota.APP)) }
                 _work.value = FirmwareWork.Idle
                 throw error
             } catch (error: Throwable) {
@@ -215,12 +211,10 @@ class FirmwareUpdate @Inject constructor(
         dir.listFiles()?.filterNot { it.name.startsWith("${offer.targetVersion}.") }?.forEach { it.delete() }
         if (zip.exists()) return zip
         val part = File(zip.path + ".part")
-        val need = offer.size - (if (part.exists()) part.length() else 0L)
-        if (dir.usableSpace < need + SPARE_BYTES) error("the phone needs ${(need + SPARE_BYTES) / 1_000_000} MB free")
         log.add("Firmware: downloading ${offer.targetVersion}, ${offer.size / 1_000_000} MB")
-        _work.value = FirmwareWork.Downloading(offer.size - need, offer.size)
+        _work.value = FirmwareWork.Downloading(if (part.exists()) part.length() else 0L, offer.size)
         val pack = PackOffer(feature = "", resource = offer.targetVersion, version = offer.targetVersion, url = offer.url, size = offer.size, sha256 = offer.checksum)
-        downloadPack(pack, zip) { _work.value = FirmwareWork.Downloading(it, offer.size) }
+        downloadPack(pack, zip, SPARE_BYTES) { _work.value = FirmwareWork.Downloading(it, offer.size) }
         return zip
     }
 
@@ -254,9 +248,9 @@ class FirmwareUpdate @Inject constructor(
             do {
                 m = fromGlasses.receive()
                 when (m.messageType) {
-                    MT_ERROR -> throw installError(m.payload)
-                    MT_FILE_STATUS -> if (image == null) error("the glasses asked for the image over Bluetooth, not over their Wi-Fi")
-                    MT_PROGRESS -> progress(m.payload)
+                    Ota.MT_ERROR -> throw installError(m.payload)
+                    Ota.MT_FILE_STATUS -> if (image == null) error("the glasses asked for the image over Bluetooth, not over their Wi-Fi")
+                    Ota.MT_PROGRESS -> progress(m.payload)
                 }
             } while (!wanted(m))
             m
@@ -264,36 +258,32 @@ class FirmwareUpdate @Inject constructor(
         try {
             val install = UUID.randomUUID().toString()
             val megabytes = if (image == null) (offer.size / 1_000_000 + 1) * 2 else (offer.payloadSize + MIB - 1) / MIB + SPACE_MARGIN_MB
-            val start = Wire.fieldVarint(1, APP_OTA) + Wire.fieldBytes(2, Wire.fieldBytes(1, Wire.fieldVarint(1, megabytes))) +
-                intent("ota_type", Wire.fieldBytes(5, str("firmware"))) + intent("attempt_id", Wire.fieldBytes(5, str(install)))
-            tell(MT_START_APP, start)
-            val started = next(ANSWER_MS) { it.messageType == MT_START_APP_RESPONSE } ?: error("the glasses' OTA service did not answer")
-            val code = runCatching { Wire.parse(started.payload).varint(1) }.getOrDefault(0)
-            // Already started: its workflow is up, and still takes the request.
-            if (code != SNAPP_SUCCESS && code != SNAPP_ALREADY_STARTED) error("the glasses would not start an install (code $code)")
+            tell(SnApp.MT_START_APP, Ota.start("firmware", install, megabytes, autoTransfer = false))
+            val started = next(ANSWER_MS) { it.messageType == SnApp.MT_START_APP_RESPONSE } ?: error("the glasses' OTA service did not answer")
+            Ota.checkStarted(started)
 
-            val key = Wire.fieldBytes(1, str(offer.sessionId)) + Wire.fieldBytes(2, str(install))
-            val raw = image?.second?.let { ByteBuffer.allocate(16).putLong(it.mostSignificantBits).putLong(it.leastSignificantBits).array() }
+            val key = Wire.fieldString(1, offer.sessionId) + Wire.fieldString(2, install)
+            val raw = image?.second?.toBytes()
             val request = Wire.fieldBytes(1, key) +
                 (raw?.let { Wire.fieldBytes(2, it) } ?: ByteArray(0)) +
-                Wire.fieldBytes(3, str(offer.baseVersion)) +
-                Wire.fieldBytes(4, str(offer.targetVersion)) +
+                Wire.fieldString(3, offer.baseVersion) +
+                Wire.fieldString(4, offer.targetVersion) +
                 Wire.fieldVarint(5, offer.payloadSize) +
                 Wire.fieldVarint(6, offer.payloadOffset) +
-                (if (offer.metaHeaders.isNotEmpty()) Wire.fieldBytes(7, str(offer.metaHeaders)) else ByteArray(0)) +
-                (if (image == null) Wire.fieldBytes(10, str(offer.url)) else ByteArray(0)) +
+                (if (offer.metaHeaders.isNotEmpty()) Wire.fieldString(7, offer.metaHeaders) else ByteArray(0)) +
+                (if (image == null) Wire.fieldString(10, offer.url) else ByteArray(0)) +
                 (offer.kekId?.let { Wire.fieldVarint(11, it) } ?: ByteArray(0)) +
-                (if (offer.kekHash.isNotEmpty()) Wire.fieldBytes(12, str(offer.kekHash)) else ByteArray(0)) +
-                (if (image != null && offer.releaseChannelId.isNotEmpty()) Wire.fieldBytes(14, str(offer.releaseChannelId)) else ByteArray(0))
-            tell(MT_INSTALL, request)
+                (if (offer.kekHash.isNotEmpty()) Wire.fieldString(12, offer.kekHash) else ByteArray(0)) +
+                (if (image != null && offer.releaseChannelId.isNotEmpty()) Wire.fieldString(14, offer.releaseChannelId) else ByteArray(0))
+            tell(Ota.MT_INSTALL, request)
             _work.value = FirmwareWork.Installing()
 
             // One reader from here on, beside the transfer: an error the glasses send meanwhile stops it.
             val asked = CompletableDeferred<ServiceData>()
             val end = async {
                 next(Long.MAX_VALUE) { m ->
-                    if (m.messageType == MT_FILE_STATUS) asked.complete(m)
-                    m.messageType == MT_INSTALL_COMPLETE || m.messageType == MT_PROGRESS && stage(m.payload) == STAGE_REBOOT
+                    if (m.messageType == Ota.MT_FILE_STATUS) asked.complete(m)
+                    m.messageType == Ota.MT_INSTALL_COMPLETE || m.messageType == Ota.MT_PROGRESS && stage(m.payload) == STAGE_REBOOT
                 }
             }
             if (image != null && link != null) {
@@ -339,26 +329,7 @@ class FirmwareUpdate @Inject constructor(
 
     private class InstallError(val stage: Long, message: String) : Exception(message)
 
-    private fun firmwareOf(build: String): String = build.split('/').getOrNull(4)?.substringBefore(':').orEmpty()
-
-    private fun str(s: String) = s.encodeToByteArray()
-
-    private fun intent(key: String, value: ByteArray) = Wire.fieldBytes(3, Wire.fieldBytes(1, str(key)) + value)
-
     private companion object {
-        const val SVC_OTA = 29
-        const val MT_INSTALL = 1
-        const val MT_PROGRESS = 2
-        const val MT_ERROR = 3
-        const val MT_FILE_STATUS = 4
-        const val MT_INSTALL_COMPLETE = 7
-        const val MT_START_APP = 2000
-        const val MT_START_APP_RESPONSE = 2001
-        const val MT_STOP_APP = 2002
-        // The OTA app, as the Meta app numbers it for svc29 starts.
-        const val APP_OTA = 1L
-        const val SNAPP_SUCCESS = 1L
-        const val SNAPP_ALREADY_STARTED = 12L
         // OtaUpdateFileStatus: the glasses hold it, want it now, or will want it.
         const val FILE_HAVE = 1L
         const val FILE_SEND = 2L
@@ -368,16 +339,16 @@ class FirmwareUpdate @Inject constructor(
         const val STAGE_REBOOT = 3L
         const val NAMESPACE = "ota"
         const val MIB = 1_048_576L
-        // Over the payload's size for the glasses' storage check; Meta's own margin is a MobileConfig value not read.
+        // Room over the payload for the glasses' storage check.
         const val SPACE_MARGIN_MB = 100L
         const val SPARE_BYTES = 200_000_000L
         const val ANSWER_MS = 15_000L
         const val FILE_ASK_MS = 30_000L
-        // After the image is there: the check and the A/B apply. A guess, no timing was read.
+        // The glasses' check and A/B apply, after the image is there.
         const val INSTALL_MS = 60 * 60_000L
         const val RETRIES = 3
         const val RECONNECT_MS = 5 * 60_000L
-        // OtaUpdateInstallStage, in the order the Meta app numbers them from 1.
+        // OtaUpdateInstallStage, numbered from 1.
         val STAGES = listOf("transfer", "apply", "reboot", "stopped", "startup", "complete", "download")
     }
 }

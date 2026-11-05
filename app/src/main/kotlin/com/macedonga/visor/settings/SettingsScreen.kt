@@ -1,10 +1,8 @@
 package com.macedonga.visor.settings
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -34,10 +32,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -51,47 +48,51 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLocale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.AboutKey
 import com.macedonga.visor.AdvancedKey
 import com.macedonga.visor.AssistantSettingsKey
 import com.macedonga.visor.BackupKey
+import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.DeviceKey
 import com.macedonga.visor.EventLogKey
 import com.macedonga.visor.FlagsKey
 import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.GlassesKey
+import com.macedonga.visor.IntegrationsKey
 import com.macedonga.visor.WebAppsKey
 import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.LanguageKey
@@ -103,55 +104,60 @@ import com.macedonga.visor.PhoneAccessKey
 import com.macedonga.visor.R
 import com.macedonga.visor.SettingsGroupKey
 import com.macedonga.visor.TopicKey
+import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.band.BandPair
+import com.macedonga.visor.band.BandPeers
+import com.macedonga.visor.band.BandSetup
+import com.macedonga.visor.band.BandUpdate
+import com.macedonga.visor.band.Bands
+import com.macedonga.visor.connection.GLASSES_CAMERA_KEYS
 import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
+import com.macedonga.visor.core.assistant.DEFAULT_CLAUDE_MODEL
+import com.macedonga.visor.core.assistant.Hearing
 import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.connection.GlassesState
+import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveSettingsStore
-import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.Control
-import com.macedonga.visor.core.settings.GROUPS
 import com.macedonga.visor.core.settings.GlassesSettings
-import com.macedonga.visor.core.settings.Kind
 import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.core.settings.asBool
-import com.macedonga.visor.core.settings.display
 import com.macedonga.visor.core.settings.offeredOn
 import com.macedonga.visor.features.Feature
+import com.macedonga.visor.features.Features
 import com.macedonga.visor.features.Standing
 import com.macedonga.visor.features.featureFace
 import com.macedonga.visor.gallery.ImportChoice
-import com.macedonga.visor.gallery.ProgressRing
-import com.macedonga.visor.gallery.RoundIcon
 import com.macedonga.visor.gallery.placesAllowed
-import com.macedonga.visor.gallery.words
+import com.macedonga.visor.gallery.title
+import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.StatusPill
+import com.macedonga.visor.language.VOICE_KEY
+import com.macedonga.visor.language.isPhoneVoice
 import com.macedonga.visor.language.languageOfVoice
+import com.macedonga.visor.language.voiceLanguageName
 import com.macedonga.visor.media.spanWords
 import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
+import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.stage.Choreography
-import com.macedonga.visor.stage.GlassesStage
-import com.macedonga.visor.stage.HOME_STRIP
 import com.macedonga.visor.stage.HOME_STRIP_SCALE
-import com.macedonga.visor.stage.LightPool
 import com.macedonga.visor.stage.LocalStage
-import com.macedonga.visor.stage.POOL_Y
 import com.macedonga.visor.stage.SHEET_RADIUS
 import com.macedonga.visor.stage.STAGE_ASPECT
-import com.macedonga.visor.stage.StageSpot
 import com.macedonga.visor.stage.closedOf
 import com.macedonga.visor.stage.liveliness
 import com.macedonga.visor.stage.moodAway
 import com.macedonga.visor.stage.sheetShape
+import com.macedonga.visor.stage.stageSpot
 import com.macedonga.visor.stage.turnsThePair
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.rememberTrailingFold
-import com.macedonga.visor.ui.asHeading
 import com.macedonga.visor.ui.lineLimit
+import com.macedonga.visor.update.Updates
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import java.time.ZoneId
@@ -159,8 +165,6 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import javax.inject.Inject
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -175,34 +179,28 @@ class SettingsViewModel @Inject constructor(
     val pins: Pins,
     val toggles: VisorToggles,
     val backups: Backups,
-    val updates: com.macedonga.visor.update.Updates,
-    val features: com.macedonga.visor.features.Features,
-    val lastSeen: com.macedonga.visor.home.LastSeen,
-    val hearing: com.macedonga.visor.core.assistant.Hearing,
-    val band: com.macedonga.visor.band.BandLink,
-    val bands: com.macedonga.visor.band.Bands,
-    val bandPeers: com.macedonga.visor.band.BandPeers,
-    val bandPair: com.macedonga.visor.band.BandPair,
-    val bandSetup: com.macedonga.visor.band.BandSetup,
-    val bandUpdate: com.macedonga.visor.band.BandUpdate,
-    val developer: com.macedonga.visor.outside.DeveloperMode,
+    val updates: Updates,
+    val features: Features,
+    val lastSeen: LastSeen,
+    val hearing: Hearing,
+    val band: BandLink,
+    val bands: Bands,
+    val bandPeers: BandPeers,
+    val bandPair: BandPair,
+    val bandSetup: BandSetup,
+    val bandUpdate: BandUpdate,
+    val developer: DeveloperMode,
 ) : ViewModel()
 
-/**
- * Settings: the glasses on the one stage, lit and posed as the home leaves them, a sheet under them with a search over
- * everything, the switches pinned as tiles, and the settings by what they are about, each saying where it stands. The
- * pair travels here from the home while the sheet rises, and back while it sinks. As the sheet scrolls the stage
- * folds into a strip, as on the home.
- */
+/** Settings: the lit pair on the stage, and a sheet with search, pinned tiles and topics that folds the stage as it scrolls. */
 @Composable
 fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewModel()) = SettingsHost(seeThrough = true) {
-    val context = LocalContext.current
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
-    // The selected pair's model: as read now, else as it last said, so its pages stay while it is away.
-    val seenProduct by model.lastSeen.product.collectAsStateWithLifecycle()
-    val product = state.product ?: seenProduct
+    // So the pair's pages stay while it is away.
+    val product = rememberProduct(model.settings, model.lastSeen)
     var query by rememberSaveable { mutableStateOf("") }
+    val hits = if (query.isBlank()) null else searchHits(query, model, state, product)
     val list = rememberLazyListState()
     val focus = LocalFocusManager.current
     val stage = LocalStage.current
@@ -227,8 +225,8 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
         }
         fun restHeight() = fullPx - scrollFold * (fullPx - stripPx)
         // Folded, the pair sits in the strip under the bar.
-        val spot = StageSpot(closedOf(glasses, mood, stage.lastFolded), liveliness(mood)) {
-            folding(fullPx, stripPx, scrollFold, STRIP_SCALE, barPx + pairPx / 2)
+        val spot = stageSpot(closedOf(glasses, mood, stage.lastFolded), liveliness(mood)) {
+            folding(fullPx, stripPx, scrollFold, HOME_STRIP_SCALE, barPx + pairPx / 2)
         }
         val sheetTop = remember {
             derivedStateOf {
@@ -254,11 +252,16 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
             item(key = "search") {
                 SearchField(query, { query = it }, stringResource(R.string.settings_search), Modifier.padding(horizontal = 16.dp).padding(top = 20.dp, bottom = 18.dp))
             }
-            if (query.isBlank()) {
+            if (hits == null) {
                 item(key = "tiles") { Tiles(model, open) }
+                item(key = "glasses") {
+                    Column(Modifier.padding(top = 18.dp)) {
+                        NavRow(VisorIcons.Glasses, stringResource(R.string.glasses_title), null, onClick = { open(GlassesKey) })
+                    }
+                }
                 // The Display's own pages, up front rather than inside the Glasses page.
                 if (isDisplayProduct(product)) item(key = "display") {
-                    Column(Modifier.padding(top = 18.dp)) {
+                    Column(Modifier.padding(top = 14.dp)) {
                         NavRow(VisorIcons.Wifi, stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) })
                         NavRow(VisorIcons.Globe, stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) })
                         NavRow(VisorIcons.People, stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) })
@@ -266,9 +269,9 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 }
                 for ((i, card) in Topic.CARDS.withIndex()) {
                     item(key = "card-$i") {
-                        Column(Modifier.padding(top = if (i == 0 && !isDisplayProduct(product)) 18.dp else 14.dp)) {
+                        Column(Modifier.padding(top = 14.dp)) {
                             for (topic in card.filter { it.shownOn(product) }) {
-                                NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state), onClick = { open(placeOf(topic)) })
+                                NavRow(topic.icon, stringResource(topic.title), summary(topic, model, state, product), onClick = { open(placeOf(topic)) })
                             }
                         }
                     }
@@ -277,7 +280,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     val all = allKeys(model.settings, state)
                     val changed = all.count { state.changed(it, model.settings.catalogue[it]) }
                     Column(Modifier.padding(top = 14.dp)) {
-                        NavRow(VisorIcons.Sliders, stringResource(R.string.advanced_title), stringResource(R.string.advanced_sum, all.size, changed), onClick = { open(AdvancedKey) })
+                        NavRow(VisorIcons.Code, stringResource(R.string.advanced_title), pluralStringResource(R.plurals.advanced_group_sum_changed, all.size, all.size, changed), onClick = { open(AdvancedKey) })
                         val last by model.backups.last.collectAsStateWithLifecycle()
                         NavRow(
                             VisorIcons.Archive, stringResource(R.string.backup_title),
@@ -285,7 +288,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                             onClick = { open(BackupKey) },
                         )
                         val newer by model.updates.newer.collectAsStateWithLifecycle()
-                        val version = com.macedonga.visor.BuildConfig.VERSION_NAME
+                        val version = BuildConfig.VERSION_NAME
                         NavRow(
                             VisorIcons.Info, stringResource(R.string.about_title),
                             newer?.let { stringResource(R.string.about_sum_update, version, it.version) } ?: stringResource(R.string.about_sum, version),
@@ -294,7 +297,7 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     }
                 }
             } else {
-                searchResults(query, model, state, glasses, product) { key ->
+                searchResults(hits, model, product) { key ->
                     focus.clearFocus()
                     open(key)
                 }
@@ -312,22 +315,18 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 }
                 .scrollable(list, Orientation.Vertical, reverseDirection = true)
                 .turnsThePair { host.haptics.tick(0.35f) }
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { open(GlassesKey) },
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() }, indication = null,
+                    onClickLabel = stringResource(R.string.glasses_title), role = Role.Button,
+                ) { open(GlassesKey) },
         ) {
             val remembered by model.lastSeen.battery.collectAsStateWithLifecycle()
             StatusPill(
-                glasses, mood, remembered, paired = glasses.target?.let { true }, allowed = true, importing = false, importProgress = 0f, waiting = 0,
-                onImport = {}, onAllow = {}, onSetUp = { open(OnboardingKey()) }, onChangeOwner = { open(OnboardingKey(login = true, address = it)) },
+                glasses, mood, remembered, onChangeOwner = { open(OnboardingKey(login = true, address = it)) },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp).graphicsLayer { alpha = (1f - (scrollFold * 2.5f).coerceIn(0f, 1f)) * stage.shown(spot) },
             )
         }
-        Row(
-            Modifier.fillMaxWidth().statusBarsPadding().height(BAR).padding(horizontal = 8.dp).graphicsLayer { alpha = stage.shown(spot) },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RoundIcon(VisorIcons.ChevronLeft, stringResource(R.string.settings_back), LocalBack.current)
-            Text(stringResource(R.string.settings_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading().padding(start = 4.dp))
-        }
+        TopBar(stringResource(R.string.settings_title), modifier = Modifier.graphicsLayer { alpha = stage.shown(spot) })
     }
 }
 
@@ -340,22 +339,25 @@ fun placeOf(topic: Topic): NavKey = when (topic) {
     else -> TopicKey(topic.name)
 }
 
-/**
- * The pinned switches, three to a row. A tap flips one, or opens its choices; held still, it opens its details;
- * held and moved, it follows the finger and the others make room.
- */
+/** The pinned tiles, three to a row: a tap acts, a hold opens details, a hold and drag reorders. */
 @Composable
 private fun Tiles(model: SettingsViewModel, open: (NavKey) -> Unit) {
     val host = LocalHost.current
     val ids by model.pins.ids.collectAsStateWithLifecycle()
+    // A pin the chosen provider cannot use stays stored and shows again once it can.
+    val unoffered by model.toggles.unoffered.collectAsStateWithLifecycle()
     val shown = ids.filter {
-        it.startsWith("v:") && model.toggles.byId(it.removePrefix("v:")) != null || it.startsWith("g:") ||
-            it.startsWith("f:") && Feature.byId(it.removePrefix("f:")) != null
+        when (val p = pinOf(it)) {
+            is GlassesPin -> true
+            is TogglePin -> model.toggles.byId(p.id) != null && p.id !in unoffered
+            is FeaturePin -> Feature.byId(p.id) != null
+            null -> false
+        }
     }
     // A pinned feature's switches come in the glasses' configuration: read it once they are there.
     val features by model.features.state.collectAsStateWithLifecycle()
     LaunchedEffect(host.ready) {
-        val pinned = shown.filter { it.startsWith("f:") }.mapNotNull { Feature.byId(it.removePrefix("f:")) }
+        val pinned = shown.mapNotNull { (pinOf(it) as? FeaturePin)?.let { p -> Feature.byId(p.id) } }
         if (host.ready && !features.configRead && !features.busy && pinned.any { it.needsConfig }) model.features.check()
     }
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -436,68 +438,90 @@ private fun Tiles(model: SettingsViewModel, open: (NavKey) -> Unit) {
     }
 }
 
-/**
- * One tile. A tap acts on it; held, it lifts ([onLift]) and follows the finger ([onMove]) until it is dropped
- * ([onDrop], with how far it travelled). One detector for all three, so a hold never also counts as a tap.
- */
+/** One tile, with one gesture detector so a hold never also counts as a tap. */
 @Composable
 private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, onLift: () -> Unit, onMove: (Offset) -> Unit, onDrop: (Float) -> Unit) {
     val host = LocalHost.current
-    val restriction = if (id.startsWith("f:")) null else languageRestriction(id.substringAfter(':'))
+    val pin = pinOf(id) ?: return
+    val restriction = when (pin) {
+        is GlassesPin -> languageRestriction(pin.key)
+        is TogglePin -> languageRestriction(pin.id)
+        is FeaturePin -> null
+    }
     val blocked = restriction ?: stringResource(R.string.settings_locked)
+    val refused = stringResource(R.string.settings_not_sent)
     var sheet by remember { mutableStateOf(false) }
     val title: String
     val state: String
     val on: Boolean?
     val locked: Boolean
+    val lockedWords: String
     val busy: Boolean
     val act: () -> Unit
-    if (id.startsWith("v:")) {
-        val toggle = model.toggles.byId(id.removePrefix("v:")) ?: return
-        val now by toggle.on.collectAsState()
-        title = stringResource(toggle.label)
-        on = now && restriction == null
-        state = if (restriction != null) stringResource(R.string.ai_voice_phone) else stringResource(if (now) R.string.sum_on else R.string.sum_off)
-        locked = restriction != null
-        busy = false
-        act = { toggle.set(!now) }
-    } else if (id.startsWith("f:")) {
-        val face = featureFace(Feature.byId(id.removePrefix("f:")) ?: return, model.features, model.hearing, open)
-        title = face.title
-        on = face.on
-        state = face.state
-        locked = !host.ready
-        busy = face.busy
-        act = face.act
-    } else {
-        val key = id.removePrefix("g:")
-        val info = host.settings.catalogue[key]
-        val spec = specOf(host.settings, key)
-        val value = host.state.valueOf(key, info)
-        title = spec.label
-        locked = !host.ready || info?.writable != true || restriction != null
-        busy = key in host.state.pending
-        on = if (spec.control == Control.Toggle) value?.let { asBool(it) != spec.invert } else null
-        state = value?.let { spec.display(it) } ?: stringResource(R.string.settings_not_read)
-        act = {
-            if (on != null) {
-                val bit = !on != spec.invert
-                if (!host.settings.write(key, if (info?.kind == Kind.INT) (if (bit) "1" else "0") else bit.toString())) host.notice.show(blocked)
-            } else if (spec.control is Control.Choice) {
-                sheet = true
-            } else {
-                host.openDetails(id)
-            }
+    when (pin) {
+        is TogglePin -> {
+            val toggle = model.toggles.byId(pin.id) ?: return
+            val now by toggle.on.collectAsState()
+            title = stringResource(toggle.label)
+            on = now && restriction == null
+            state = if (restriction != null) stringResource(R.string.ai_voice_phone) else stringResource(if (now) R.string.sum_on else R.string.sum_off)
+            locked = restriction != null
+            lockedWords = blocked
+            busy = false
+            act = { toggle.set(!now) }
         }
-        if (sheet && !locked) {
-            val c = spec.control as Control.Choice
-            ChoiceSheet(spec.label, c.options.filter { !it.hidden || it.value == value }.map { Triple(it.value, it.label, null) }, value?.trim(), onPick = { host.settings.write(key, it) }, onDismiss = { sheet = false })
+        is FeaturePin -> {
+            val face = featureFace(Feature.byId(pin.id) ?: return, model.features, model.hearing, open)
+            title = face.title
+            on = face.on
+            state = face.state
+            locked = !host.ready
+            lockedWords = blocked
+            busy = face.busy
+            act = face.act
+        }
+        is GlassesPin -> {
+            val key = pin.key
+            val info = host.settings.catalogue[key]
+            val spec = specOf(host.settings, key)
+            val value = host.state.valueOf(key, info)
+            title = spec.label
+            // A switch not read yet has no side to flip to.
+            locked = !host.ready || info?.writable != true || restriction != null || (spec.control == Control.Toggle && value == null)
+            lockedWords = when {
+                restriction != null || !host.ready -> blocked
+                info?.writable != true -> stringResource(R.string.settings_no_way_to_write)
+                else -> stringResource(R.string.settings_not_read)
+            }
+            busy = key in host.state.pending
+            on = if (spec.control == Control.Toggle) value?.let { asBool(it) != spec.invert } else null
+            state = value?.let { spec.words(it) } ?: stringResource(R.string.settings_not_read)
+            // A slider, number or text opens the page that holds its editor.
+            val place = Topic.of(key)?.takeIf { spec.offeredOn(host.product) }?.let(::placeOf) ?: SettingsGroupKey(spec.group)
+            act = {
+                if (on != null) {
+                    if (!host.settings.write(key, boolWire(info, !on != spec.invert))) host.notice.show(refused)
+                } else if (spec.control is Control.Choice) {
+                    sheet = true
+                } else {
+                    open(place)
+                }
+            }
+            LaunchedEffect(locked) { if (locked) sheet = false }
+            val c = spec.control
+            if (sheet && !locked && c is Control.Choice) {
+                val current = value?.trim().orEmpty()
+                ChoiceSheet(
+                    spec.label, c.shown(current, host.product).map { Triple(it.value, it.label, it.detail) }, current,
+                    onPick = { if (!host.settings.write(key, it)) host.notice.show(refused) }, onDismiss = { sheet = false },
+                )
+            }
         }
     }
     val tap by rememberUpdatedState {
         if (locked) {
             host.haptics.tick(0.3f)
-            host.notice.show(blocked)
+            host.notice.show(lockedWords)
         } else {
             host.haptics.toggle()
             act()
@@ -514,8 +538,14 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
         Modifier
             .fillMaxSize()
             .graphicsLayer { alpha = dim }
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(CARD_RADIUS))
             .background(back)
+            .semantics(mergeDescendants = true) {
+                role = if (on != null) Role.Switch else Role.Button
+                if (on != null) toggleableState = ToggleableState(on)
+                onClick { tap(); true }
+                onLongClick { host.openDetails(id); true }
+            }
             .pointerInput(id) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -557,23 +587,24 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
 
 /** A topic in a few words: where its main settings stand now. */
 @Composable
-private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState): String {
+private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState, product: Int?): String {
     val context = LocalContext.current
     val settings = model.settings
-    fun shown(key: String): String? = state.valueOf(key, settings.catalogue[key])?.let { specOf(settings, key).display(it) }
+    @Composable fun shown(key: String): String? = state.valueOf(key, settings.catalogue[key])?.let { specOf(settings, key).words(it) }
     fun isOn(key: String): Boolean? = state.valueOf(key, settings.catalogue[key])?.let { asBool(it) != specOf(settings, key).invert }
     val changed = topic.keys.count { state.changed(it, settings.catalogue[it]) }
     val base = when (topic) {
         Topic.META_AI -> {
             val config by model.assistant.config.collectAsStateWithLifecycle()
-            assistantWords(config.copy(glassesVoice = config.glassesVoice && settings.value("assistant_voice_id")?.startsWith("3p_") != true))
+            assistantWords(config.copy(glassesVoice = config.glassesVoice && !isPhoneVoice(settings.value(VOICE_KEY))))
         }
         Topic.LANGUAGE -> {
-            val language = languageOfVoice(settings.value("assistant_voice_id"))
+            val voice = settings.value(VOICE_KEY)
+            val language = languageOfVoice(voice)
             listOfNotNull(
-                language?.nativeName() ?: settings.value("assistant_voice_id"),
+                language?.nativeName() ?: voice?.let(::voiceLanguageName),
                 if (language?.partner == true) stringResource(R.string.ai_voice_phone)
-                else language?.voices?.firstOrNull { it.id == settings.value("assistant_voice_id") }?.label(),
+                else language?.voices?.firstOrNull { it.id == voice }?.label(),
             ).joinToString(" · ")
         }
         Topic.NOTIFICATIONS -> {
@@ -581,7 +612,7 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
             val muted by model.apps.muted.collectAsStateWithLifecycle()
             if (!on) stringResource(R.string.sum_notify_off)
             else listOfNotNull(
-                if (muted.isEmpty()) stringResource(R.string.sum_notify_all) else stringResource(R.string.sum_notify_muted, muted.size),
+                if (muted.isEmpty()) stringResource(R.string.sum_notify_all) else pluralStringResource(R.plurals.sum_notify_muted, muted.size, muted.size),
                 stringResource(R.string.sum_dnd).takeIf { isOn("sg_do_not_disturb") == true },
             ).joinToString(" · ")
         }
@@ -603,22 +634,21 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
         ).joinToString(" · ")
         Topic.HEARING -> {
             val features by model.features.state.collectAsStateWithLifecycle()
-            Feature.entries.filter { it.topic == Topic.HEARING && it.on(features.product) && features.standings[it] == Standing.ON }
-                .map { stringResource(it.title) }.joinToString(" · ").ifEmpty { stringResource(R.string.sum_all_off) }
+            val hearing = Feature.entries.filter { it.topic == Topic.HEARING && it.offeredOn(product) }
+            // Nothing read yet says nothing rather than all off.
+            val known = hearing.any { (features.standings[it] ?: Standing.UNKNOWN) != Standing.UNKNOWN }
+            hearing.filter { features.standings[it] == Standing.ON }
+                .map { stringResource(it.title) }.joinToString(" · ").ifEmpty { if (known) stringResource(R.string.sum_all_off) else "" }
         }
         Topic.WEAR -> listOfNotNull(
             stringResource(R.string.sum_wear_detection).takeIf { isOn("wear_detection_enabled") == true },
             stringResource(R.string.sum_battery_saver).takeIf { isOn("battery_saver_mode_enabled") == true },
-        ).joinToString(" · ").ifEmpty { stringResource(R.string.sum_all_off) }
+        ).joinToString(" · ")
         Topic.CAMERA -> listOfNotNull(shown("resolution_and_framerate"), shown("video_duration_ms")).joinToString(" · ")
         Topic.PHOTOS -> {
             val mode by model.importChoice.mode.collectAsStateWithLifecycle()
-            var places by remember { mutableStateOf(placesAllowed(context)) }
-            LifecycleResumeEffect(Unit) {
-                places = placesAllowed(context)
-                onPauseOrDispose { }
-            }
-            listOf(stringResource(R.string.sum_import, mode.words()), stringResource(if (places) R.string.sum_places_on else R.string.sum_places_off)).joinToString(" · ")
+            val places by rememberOnResume { placesAllowed(context) }
+            listOf(stringResource(R.string.sum_import, stringResource(mode.title).lowercase(LocalLocale.current.platformLocale)), stringResource(if (places) R.string.sum_places_on else R.string.sum_places_off)).joinToString(" · ")
         }
         Topic.LIVE -> {
             val live by model.live.settings.collectAsStateWithLifecycle()
@@ -627,27 +657,29 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
                 stringResource(R.string.sum_replay, spanWords(live.replaySeconds.toLong())),
             ).joinToString(" · ")
         }
-        Topic.PRIVACY -> stringResource(if (isOn("location_global_enabled") == true) R.string.sum_location_on else R.string.sum_location_off)
+        Topic.PRIVACY -> when (isOn("location_global_enabled")) {
+            true -> stringResource(R.string.sum_location_on)
+            false -> stringResource(R.string.sum_location_off)
+            null -> ""
+        }
         Topic.PHONE -> {
-            var missing by remember { mutableStateOf(missingNeeds(context).size) }
-            LifecycleResumeEffect(Unit) {
-                missing = missingNeeds(context).size
-                onPauseOrDispose { }
-            }
-            if (missing == 0) stringResource(R.string.sum_access_all) else stringResource(R.string.sum_access_missing, missing)
+            val missing by rememberOnResume { missingNeeds(context).size }
+            if (missing == 0) stringResource(R.string.sum_access_all) else pluralStringResource(R.plurals.sum_access_missing, missing, missing)
         }
     }
-    return if (changed > 0) listOf(base, stringResource(R.string.sum_changed, changed)).filter { it.isNotEmpty() }.joinToString(" · ") else base
+    val words = if (changed > 0) listOf(base, pluralStringResource(R.plurals.sum_changed, changed, changed)).filter { it.isNotEmpty() }.joinToString(" · ") else base
+    // A model id keeps its own case.
+    return if (topic == Topic.META_AI) words else words.replaceFirstChar { it.titlecase(LocalLocale.current.platformLocale) }
 }
 
 @Composable
 internal fun assistantWords(config: AssistantConfig): String {
-    val configured = config.apiKey.isNotBlank() || config.provider == Provider.OPENAI_COMPATIBLE
+    val configured = config.hasModel
     return when {
         !config.enabled -> stringResource(R.string.sum_ai_off)
         !configured -> stringResource(R.string.sum_ai_unset)
         else -> listOfNotNull(
-            modelWords(config.model.ifBlank { if (config.provider == Provider.CLAUDE) DEFAULT_CLAUDE else "" }),
+            modelWords(config.model.ifBlank { if (config.provider == Provider.CLAUDE) DEFAULT_CLAUDE_MODEL else "" }),
             stringResource(R.string.sum_ai_glasses_voice).takeIf { config.glassesVoice },
         ).filter { it.isNotEmpty() }.joinToString(" · ")
     }
@@ -662,82 +694,84 @@ fun modelWords(id: String): String {
     return if (version.isEmpty()) name else "$name $version"
 }
 
-const val DEFAULT_CLAUDE = "claude-sonnet-5-5"
+/** What a search finds: pages (title, words, place), Visor's own switches and glasses settings. */
+private class SearchHits(val pages: List<Triple<Int, Int?, NavKey>>, val toggles: List<VisorToggle>, val keys: List<String>)
 
-/** Search over every page, Visor's own switches and every glasses setting; rows work right where they are found. */
-private fun androidx.compose.foundation.lazy.LazyListScope.searchResults(
-    query: String,
+/** Search over every page, Visor's own switches and every glasses setting. */
+@Composable
+private fun searchHits(query: String, model: SettingsViewModel, state: SettingsState, product: Int?): SearchHits {
+    val needle = query.trim().lowercase()
+    // A word may be a stem, which then also catches the whole word typed out.
+    val pages = pageHits(product).filter { (title, words, _) ->
+        needle in stringResource(title).lowercase() ||
+            words?.let { stringResource(it).split(',') }.orEmpty().any { needle in it || (it.length >= 4 && it in needle) }
+    }
+    val unoffered by model.toggles.unoffered.collectAsStateWithLifecycle()
+    val toggles = model.toggles.all.filter { t ->
+        t.id !in unoffered && (needle in stringResource(t.label).lowercase() || (t.note?.let { needle in stringResource(it).lowercase() } ?: false))
+    }
+    val display = isDisplayProduct(product)
+    val keys = remember(needle, state.stored.keys, product) {
+        // The glasses' camera switches follow Visor's own, which the toggles above find.
+        allKeys(model.settings, state).filter { key ->
+            val spec = specOf(model.settings, key)
+            key !in GLASSES_CAMERA_KEYS &&
+                (needle in spec.label.lowercase() || needle.replace(' ', '_') in key || needle in spec.note.orEmpty().lowercase() || needle in spec.group.lowercase())
+        }.sortedWith(compareBy({ Topic.of(it) == null || !specOf(model.settings, it).offeredOn(product) }, { specOf(model.settings, it).group in DISPLAY_GROUPS && !display }, { specOf(model.settings, it).label }))
+            .take(MAX_RESULTS)
+    }
+    return SearchHits(pages, toggles, keys)
+}
+
+/** The hits as rows, one lazy item each; rows work right where they are found. */
+private fun LazyListScope.searchResults(
+    hits: SearchHits,
     model: SettingsViewModel,
-    state: SettingsState,
-    glasses: GlassesState,
     product: Int?,
     open: (NavKey) -> Unit,
 ) {
-    val needle = query.trim().lowercase()
-    item(key = "results") {
-        val pages = pageHits(product).filter { (title, words, _) -> needle in stringResource(title).lowercase() || words.any { needle in it } }
-        val toggles = model.toggles.all.filter { t -> needle in stringResource(t.label).lowercase() || (t.note?.let { needle in stringResource(it).lowercase() } ?: false) }
-        val display = hasDisplay(glasses.info?.build)
-        val keys = remember(needle, state.stored.keys) {
-            // The glasses' camera switches follow Visor's own, which the toggles above find.
-            allKeys(model.settings, state).filter { key ->
-                val spec = specOf(model.settings, key)
-                key !in GLASSES_CAMERA_KEYS &&
-                    (needle in spec.label.lowercase() || needle.replace(' ', '_') in key || needle in spec.note.orEmpty().lowercase() || needle in spec.group.lowercase())
-            }.sortedWith(compareBy({ Topic.of(it) == null || !specOf(model.settings, it).offeredOn(state.product) }, { specOf(model.settings, it).group in DISPLAY_GROUPS && !display }, { specOf(model.settings, it).label }))
-                .take(MAX_RESULTS)
+    if (hits.pages.isEmpty() && hits.toggles.isEmpty() && hits.keys.isEmpty()) {
+        item(key = "nothing") {
+            Text(stringResource(R.string.nothing_found), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE, vertical = 12.dp))
         }
-        if (pages.isEmpty() && toggles.isEmpty() && keys.isEmpty()) {
-            Text(stringResource(R.string.settings_nothing_found), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE, vertical = 12.dp))
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            if (pages.isNotEmpty()) {
-                Column { for ((title, _, key) in pages) NavRow(null, stringResource(title), null, onClick = { open(key) }) }
-            }
-            if (toggles.isNotEmpty()) {
-                Rows(*toggles.map { t -> @Composable { VisorToggleRow(t, overline = stringResource(t.topic.title)) } }.toTypedArray())
-            }
-            if (keys.isNotEmpty()) {
-                val advanced = stringResource(R.string.advanced_title)
-                Rows(
-                    *keys.map { key ->
-                        @Composable {
-                            // A row the Meta app keeps for other glasses lives in Advanced only.
-                            val topic = Topic.of(key)?.takeIf { specOf(model.settings, key).offeredOn(state.product) }
-                            GlassesRow(key, overline = topic?.let { stringResource(it.title) } ?: "$advanced · ${specOf(model.settings, key).group}")
-                        }
-                    }.toTypedArray(),
-                )
-            }
+        return
+    }
+    items(hits.pages, key = { "p:${it.first}" }) { (title, _, key) -> NavRow(null, stringResource(title), null, onClick = { open(key) }) }
+    if (hits.toggles.isNotEmpty()) {
+        if (hits.pages.isNotEmpty()) item(key = "toggles-gap") { Spacer(Modifier.height(14.dp)) }
+        cardItems(hits.toggles, { "v:" + it.id }) { t -> VisorToggleRow(t, overline = stringResource(t.topic.title)) }
+    }
+    if (hits.keys.isNotEmpty()) {
+        if (hits.pages.isNotEmpty() || hits.toggles.isNotEmpty()) item(key = "keys-gap") { Spacer(Modifier.height(14.dp)) }
+        cardItems(hits.keys, { "g:$it" }) { key ->
+            // A row the Meta app keeps for other glasses lives in Advanced only.
+            val topic = Topic.of(key)?.takeIf { specOf(model.settings, key).offeredOn(product) }
+            GlassesRow(key, overline = topic?.let { stringResource(it.title) } ?: "${stringResource(R.string.advanced_title)} · ${groupTitle(specOf(model.settings, key).group)}")
         }
     }
 }
 
-private fun displayPages(product: Int?): List<Triple<Int, List<String>, NavKey>> = if (!isDisplayProduct(product)) emptyList() else listOf(
-    Triple(R.string.wifi_networks, listOf("wifi", "wi-fi", "network", "rete", "reti"), WifiNetworksKey),
-    Triple(R.string.webapps_row, listOf("web", "app", "browser"), WebAppsKey),
-    Triple(R.string.accounts_title, listOf("account", "facebook", "instagram", "messenger", "threads", "link", "collega"), AccountsKey),
+private fun displayPages(product: Int?): List<Triple<Int, Int?, NavKey>> = if (!isDisplayProduct(product)) emptyList() else listOf(
+    Triple(R.string.wifi_networks, R.string.search_words_wifi, WifiNetworksKey),
+    Triple(R.string.webapps_row, R.string.search_words_webapps, WebAppsKey),
+    Triple(R.string.accounts_title, R.string.search_words_accounts, AccountsKey),
 )
 
-/** The pages search can find by name or by what they hold. */
-private fun pageHits(product: Int?): List<Triple<Int, List<String>, NavKey>> =
-    Topic.entries.filter { it.shownOn(product) }.map { Triple(it.title, emptyList<String>(), placeOf(it)) } + displayPages(product) + listOf(
-    Triple(R.string.glasses_title, listOf("battery", "batteria", "firmware", "serial", "seriale", "account", "owner", "proprietario", "case", "custodia", "rename", "nome"), GlassesKey),
-    Triple(R.string.advanced_title, listOf("all", "tutte", "engineering"), AdvancedKey),
-    Triple(R.string.backup_title, listOf("export", "esporta", "import", "restore", "ripristina"), BackupKey),
-    Triple(R.string.about_title, listOf("version", "versione", "licen"), AboutKey),
-    Triple(R.string.notify_apps_title, listOf("app", "notification", "notifiche", "mute"), NotifyAppsKey),
-    Triple(R.string.settings_flags, listOf("flag", "mobileconfig", "gate"), FlagsKey),
-    Triple(
-        R.string.topic_hearing,
-        listOf("conversation focus", "focus", "hearing correction", "hearing aid", "group conversation", "udito", "conversazion", "apparecchio"),
-        TopicKey(Topic.HEARING.name),
-    ),
-    Triple(R.string.settings_diagnostics, listOf("diagnos", "link", "verdict"), DeviceKey),
-    Triple(R.string.settings_event_log, listOf("log", "events", "eventi"), EventLogKey),
-    Triple(R.string.meta_ai_memories, listOf("memor", "ricord", "remember"), MemoriesKey),
-    Triple(R.string.mcp_title, listOf("mcp", "integra", "tool", "strument", "connector", "server"), com.macedonga.visor.IntegrationsKey),
-)
+/** The pages search can find by name or by the comma-separated words they hold. */
+private fun pageHits(product: Int?): List<Triple<Int, Int?, NavKey>> =
+    Topic.entries.filter { it.shownOn(product) }.map { Triple(it.title, if (it == Topic.HEARING) R.string.search_words_hearing else null, placeOf(it)) } +
+        displayPages(product) + listOf(
+            Triple(R.string.glasses_title, R.string.search_words_glasses, GlassesKey),
+            Triple(R.string.advanced_title, R.string.search_words_advanced, AdvancedKey),
+            Triple(R.string.backup_title, R.string.search_words_backup, BackupKey),
+            Triple(R.string.about_title, R.string.search_words_about, AboutKey),
+            Triple(R.string.notify_apps_title, R.string.search_words_notify_apps, NotifyAppsKey),
+            Triple(R.string.settings_flags, R.string.search_words_flags, FlagsKey),
+            Triple(R.string.settings_diagnostics, R.string.search_words_diagnostics, DeviceKey),
+            Triple(R.string.settings_event_log, R.string.search_words_event_log, EventLogKey),
+            Triple(R.string.meta_ai_memories, R.string.search_words_memories, MemoriesKey),
+            Triple(R.string.mcp_title, R.string.search_words_mcp, IntegrationsKey),
+        )
 
 private const val MAX_RESULTS = 60
 private const val COLUMNS = 3
@@ -746,14 +780,5 @@ private const val STILL_PX = 24f
 private val STRIP = 148.dp
 /** Under the folded pair, before the sheet. */
 private val STRIP_GAP = 20.dp
-private const val STRIP_SCALE = HOME_STRIP_SCALE
-
-internal fun timeWords(at: Long): String = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(at))
 
 internal fun dateWords(at: Long): String = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(at))
-
-/** All of a firmware group's keys, for Advanced. */
-internal fun groupKeys(settings: GlassesSettings, state: SettingsState, group: String): List<String> =
-    allKeys(settings, state).filter { specOf(settings, it).group == group }
-
-internal val ALL_GROUPS = GROUPS + OTHER

@@ -9,6 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -22,11 +24,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,10 +59,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.macedonga.visor.R
@@ -66,32 +76,39 @@ import com.macedonga.visor.core.media.Darkroom
 import com.macedonga.visor.core.media.Edit
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.coverScale
+import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.BAR
+import com.macedonga.visor.settings.ConfirmSheet
+import com.macedonga.visor.settings.Pills
+import com.macedonga.visor.settings.ProgressRing
 import com.macedonga.visor.ui.rememberHaptics
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** The cut's shape, width over height; [ORIGINAL] keeps the photo's own. */
-private enum class Aspect(val ratio: Float?, val label: Int?) {
-    ORIGINAL(null, R.string.editor_original), SQUARE(1f, R.string.editor_square), FOUR_FIVE(0.8f, null), NINE_SIXTEEN(9f / 16f, null);
+private enum class Aspect(val ratio: Float?) {
+    ORIGINAL(null),
+    SQUARE(1f),
+    FOUR_FIVE(0.8f),
+    NINE_SIXTEEN(9f / 16f);
 
-    fun words(): String? = when (this) {
+    @Composable
+    fun label(): String = when (this) {
+        ORIGINAL -> stringResource(R.string.editor_original)
+        SQUARE -> stringResource(R.string.editor_square)
         FOUR_FIVE -> "4:5"
         NINE_SIXTEEN -> "9:16"
-        else -> null
     }
 }
 
-/**
- * Changes a photo the way it was taken: for a live photo, which instant of its clip it is; for any photo, how
- * straight it stands and how it is cut. The glasses measured the head's tilt at the shutter, so one touch levels
- * the horizon.
- */
+/** Picks a live photo's frame, straightens and crops a photo. */
 @Composable
 fun Editor(
     kept: Kept,
@@ -106,7 +123,6 @@ fun Editor(
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    BackHandler(onBack = onCancel)
 
     var frameUs by remember { mutableStateOf(kept.edit.frameUs) }
     var angle by remember { mutableFloatStateOf(kept.edit.angle) }
@@ -115,6 +131,7 @@ fun Editor(
     var centre by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     var touching by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
     var restored by remember { mutableStateOf(false) }
 
     val times by produceState(emptyList<Long>(), kept.handle) { value = darkroom.frameTimes(kept) }
@@ -124,7 +141,14 @@ fun Editor(
     }
     // The picture being cut: a strip frame at once while scrubbing, then the real one.
     val picked by produceState(shown?.takeIf { kept.edit.isOriginal && frameUs == null }, frameUs) {
-        val bitmap = darkroom.source(kept, frameUs) ?: return@produceState
+        val bitmap = darkroom.source(kept, frameUs) ?: run {
+            // Nothing to cut: the editor closes.
+            if (value == null) {
+                haptics.error()
+                onCancel()
+            }
+            return@produceState
+        }
         value = withContext(Dispatchers.Default) { previewOf(bitmap) }
     }
     var scrubbing by remember { mutableStateOf<Int?>(null) }
@@ -148,7 +172,7 @@ fun Editor(
     }
 
     fun cropOf(): List<Float> {
-        val (cw, ch) = if (ratio <= w / h) (ratio * h / w / zoom) to (1f / zoom) else (1f / zoom) to (w / (ratio * h) / zoom)
+        val (cw, ch) = if (ratio <= w / h) (ratio * h / w / zoom).coerceAtMost(1f) to (1f / zoom) else (1f / zoom) to (w / (ratio * h) / zoom).coerceAtMost(1f)
         val cx = centre.x.coerceIn(cw / 2f, 1f - cw / 2f)
         val cy = centre.y.coerceIn(ch / 2f, 1f - ch / 2f)
         return listOf(cx - cw / 2f, cy - ch / 2f, cx + cw / 2f, cy + ch / 2f)
@@ -156,14 +180,18 @@ fun Editor(
     val crop = cropOf()
     val edit = Edit(frameUs, (angle * 10).roundToInt() / 10f, crop.map { (it * 10000).roundToInt() / 10000f })
     val changed = edit != kept.edit
+    LaunchedEffect(edit) { failed = false }
+    var discarding by remember { mutableStateOf(false) }
+    BackHandler { if (changed) discarding = true else onCancel() }
 
     Column(Modifier.fillMaxSize().background(Color.Black).statusBarsPadding().navigationBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().height(BAR).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                stringResource(R.string.editor_cancel),
+                stringResource(R.string.cancel),
                 style = Visor.type.label,
                 color = colors.textPrimary,
-                modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = onCancel).padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.clip(RoundedCornerShape(50)).clickable { if (changed) discarding = true else onCancel() }
+                    .heightIn(min = 48.dp).wrapContentHeight().padding(horizontal = 14.dp),
             )
             Spacer(Modifier.weight(1f))
             if (!edit.isOriginal) {
@@ -178,33 +206,38 @@ fun Editor(
                         aspect = Aspect.ORIGINAL
                         zoom = 1f
                         centre = Offset(0.5f, 0.5f)
-                    }.padding(horizontal = 14.dp, vertical = 10.dp),
+                    }.heightIn(min = 48.dp).wrapContentHeight().padding(horizontal = 14.dp),
                 )
             }
             if (saving) {
                 ProgressRing(null, Modifier.padding(horizontal = 18.dp).size(26.dp))
             } else {
-                Pill(stringResource(R.string.editor_done), {
-                    if (!changed) return@Pill onCancel()
+                ActionPill(stringResource(if (failed) R.string.try_again else R.string.done), {
+                    if (!changed) return@ActionPill onCancel()
                     saving = true
                     haptics.done()
                     scope.launch {
-                        runCatching { darkroom.apply(kept, edit) }
-                            .onSuccess(onSaved)
-                            .onFailure { saving = false; haptics.error() }
+                        try {
+                            onSaved(darkroom.apply(kept, edit))
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            saving = false
+                            failed = true
+                            haptics.error()
+                        }
                     }
-                }, small = true)
+                })
             }
         }
 
         // The picture under its cut: drag and pinch move it beneath the frame; outside the frame it is dimmed.
-        BoxWithConstraints(
+        Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .pointerInput(ratio, w, h) {
                     detectTransformGestures { _, pan, gesture, _ ->
-                        touching = true
                         val frame = frameRect(Size(size.width.toFloat(), size.height.toFloat()), ratio, 24.dp.toPx())
                         val (l, _, r, _) = cropOf()
                         val k = frame.width / ((r - l) * w)
@@ -214,10 +247,19 @@ fun Editor(
                         centre = Offset((c[0] + c[2]) / 2f, (c[1] + c[3]) / 2f)
                     }
                 }
-                .pointerInput(Unit) { detectTapGestures(onPress = { touching = true; tryAwaitRelease(); touching = false }) },
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        touching = true
+                        do {
+                            val event = awaitPointerEvent(PointerEventPass.Final)
+                        } while (event.changes.any { it.pressed })
+                        touching = false
+                    }
+                },
         ) {
             val grid by animateFloatAsState(if (touching) 1f else 0f, tween(220), label = "grid")
-            LaunchedEffect(touching) { if (touching) kotlinx.coroutines.delay(900).also { touching = false } }
+            if (picture == null) ProgressRing(null, Modifier.align(Alignment.Center).size(26.dp))
             picture?.let { image ->
                 Canvas(Modifier.fillMaxSize()) {
                     val frame = frameRect(size, ratio, 24.dp.toPx())
@@ -249,12 +291,6 @@ fun Editor(
                             drawLine(Color.White.copy(alpha = 0.35f * grid), Offset(x, frame.top), Offset(x, frame.bottom), 1.dp.toPx())
                             drawLine(Color.White.copy(alpha = 0.35f * grid), Offset(frame.left, y), Offset(frame.right, y), 1.dp.toPx())
                         }
-                    }
-                    val arm = 18.dp.toPx()
-                    val stroke = 3.dp.toPx()
-                    for ((corner, dir) in listOf(frame.topLeft to Offset(1f, 1f), frame.topRight to Offset(-1f, 1f), frame.bottomLeft to Offset(1f, -1f), frame.bottomRight to Offset(-1f, -1f))) {
-                        drawLine(Color.White, corner, corner + Offset(arm * dir.x, 0f), stroke, StrokeCap.Square)
-                        drawLine(Color.White, corner, corner + Offset(0f, arm * dir.y), stroke, StrokeCap.Square)
                     }
                 }
             }
@@ -294,28 +330,17 @@ fun Editor(
             modifier = Modifier.padding(top = 14.dp),
         )
 
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        ) {
-            for (a in Aspect.entries) {
-                val on = a == aspect
-                Text(
-                    a.label?.let { stringResource(it) } ?: a.words().orEmpty(),
-                    style = Visor.type.label,
-                    color = if (on) Color.Black else colors.textPrimary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (on) Color.White else colors.raised)
-                        .clickable {
-                            haptics.tick(0.4f)
-                            aspect = a
-                            zoom = 1f
-                        }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                )
+        Box(Modifier.fillMaxWidth().padding(vertical = 14.dp), contentAlignment = Alignment.Center) {
+            Pills(Aspect.entries.map { it to it.label() }, aspect) { a ->
+                haptics.tick(0.4f)
+                aspect = a
+                zoom = 1f
             }
         }
+    }
+
+    if (discarding) {
+        ConfirmSheet(stringResource(R.string.editor_discard_title), null, stringResource(R.string.editor_discard), onCancel, { discarding = false }, dismiss = stringResource(R.string.editor_keep))
     }
 }
 
@@ -331,6 +356,13 @@ private fun FrameStrip(frames: List<Bitmap>, picked: Int?, still: Int?, onScrub:
             .fillMaxWidth()
             .padding(horizontal = 20.dp)
             .height(60.dp)
+            .then(
+                if (images.isEmpty()) Modifier
+                else Modifier.semantics {
+                    progressBarRangeInfo = ProgressBarRangeInfo(current.toFloat(), 0f..(images.size - 1).toFloat(), steps = (images.size - 2).coerceAtLeast(0))
+                    setProgress { onPick(it.roundToInt().coerceIn(0, images.size - 1)); true }
+                },
+            )
             .pointerInput(images.size) {
                 if (images.isEmpty()) return@pointerInput
                 fun index(x: Float) = ((x / size.width) * images.size).toInt().coerceIn(0, images.size - 1)
@@ -365,33 +397,35 @@ private fun FrameStrip(frames: List<Bitmap>, picked: Int?, still: Int?, onScrub:
     }
 }
 
-/**
- * A ruler of degrees under a fixed mark: drag it to turn the photo. The glasses' own reading of the tilt sits on it
- * as a dot, and "Level" goes straight there.
- */
+/** A degree ruler: drag to turn; Level goes to the glasses' tilt. */
 @Composable
 private fun AngleDial(angle: Float, sensor: Float?, onAngle: (Float) -> Unit, onLevel: () -> Unit, modifier: Modifier) {
     val colors = Visor.colors
     val density = LocalDensity.current
     val step = with(density) { 12.dp.toPx() }
+    val latest by rememberUpdatedState(angle)
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 "%.1f°".format(angle),
                 style = Visor.type.label,
                 color = colors.textPrimary,
-                modifier = Modifier.clip(RoundedCornerShape(50)).background(colors.raised).padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             )
-            if (sensor != null && abs(sensor - angle) > 0.05f) Pill(stringResource(R.string.editor_level), onLevel, small = true)
+            if (sensor != null && abs(sensor - angle) > 0.05f) ActionPill(stringResource(R.string.editor_level), onLevel)
         }
         Canvas(
             Modifier
                 .padding(top = 10.dp)
                 .fillMaxWidth()
                 .height(40.dp)
+                .semantics {
+                    progressBarRangeInfo = ProgressBarRangeInfo(angle, -MAX_ANGLE..MAX_ANGLE)
+                    setProgress { onAngle(it.coerceIn(-MAX_ANGLE, MAX_ANGLE)); true }
+                }
                 .pointerInput(Unit) {
-                    var value = angle
-                    detectHorizontalDragGestures(onDragStart = { value = angle }) { change, dx ->
+                    var value = latest
+                    detectHorizontalDragGestures(onDragStart = { value = latest }) { change, dx ->
                         change.consume()
                         value = (value - dx / step).coerceIn(-MAX_ANGLE, MAX_ANGLE)
                         onAngle(value)

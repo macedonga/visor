@@ -17,8 +17,8 @@ const val MT_PEER_DEVICE_INFO: Int = 3
 
 private const val PLATFORM_ANDROID = 2L
 
-/** Ask svc100 for the device info, so the glasses answer with their build info. */
-suspend fun announcePeerAppInfo(connection: DataXConnection) {
+/** The canary: ask svc100 for the glasses' build info. */
+suspend fun askPeerDeviceInfo(connection: DataXConnection) {
     val channel = connection.openChannel(SVC_PEER_BUILD_INFO)
     connection.send(
         channel,
@@ -31,5 +31,5 @@ suspend fun announcePeerAppInfo(connection: DataXConnection) {
 /** AppInfo {1 platform Android, 2 appVersion, 3 osVersion, 4 manufacturer, 5 phoneId, 6 model}; empty strings left out. */
 fun encodePeerAppInfo(appVersion: String, osVersion: String, manufacturer: String, phoneId: String, model: String): ByteArray =
     listOf(appVersion, osVersion, manufacturer, phoneId, model).withIndex().fold(Wire.fieldVarint(1, PLATFORM_ANDROID)) { out, (i, s) ->
-        if (s.isEmpty()) out else out + Wire.fieldBytes(i + 2, s.encodeToByteArray())
+        if (s.isEmpty()) out else out + Wire.fieldString(i + 2, s)
     }

@@ -30,34 +30,49 @@ fun interface Responder {
     suspend fun closed(channelId: Int, connection: DataXConnection) {}
 }
 
-/** The bounded wait this session owns ran out. See [GlassesSession.withLinkDeadline]. */
+/** A bounded wait on the link ran out. See [withLinkDeadline]. */
 class LinkTimeoutException(what: String) : Exception(what)
+
+/** Run [body], closing [transport] if it waits on the peer longer than [millis]. */
+suspend fun <T> withLinkDeadline(
+    transport: Transport,
+    millis: Long,
+    what: String,
+    body: suspend () -> T,
+): T = coroutineScope {
+    // One atomic decides which of the two finished first.
+    val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+    val watchdog = launch {
+        delay(millis)
+        if (settled.compareAndSet(false, true)) transport.close()
+    }
+    try {
+        val result = body()
+        // Claim, so a watchdog that has not fired yet cannot close a link that is up.
+        settled.compareAndSet(false, true)
+        result
+    } catch (error: Throwable) {
+        // A failed claim means the watchdog got there first, so this failure IS the deadline.
+        if (error !is CancellationException && !settled.compareAndSet(false, true)) {
+            throw LinkTimeoutException(what).apply { initCause(error) }
+        }
+        throw error
+    } finally {
+        watchdog.cancel()
+    }
+}
 
 /** The one object that owns the link. */
 class GlassesSession(
     private val transport: Transport,
     private val trust: TrustExchange? = null,
-    private val settleMillis: Long = CHANNEL_SETTLE_MILLIS,
-    private val linkSetupReadTimeoutMillis: Long = LINK_SETUP_READ_TIMEOUT_MILLIS,
-    // A factory rather than a link, because a new one is built for every connection
-    // attempt: its ciphers are per session and a reconnect derives fresh keys.
-    private val linkFactory: (Transport) -> SecureLink = ::SecureLink,
 ) {
-
-    init {
-        // A positive settle cannot be honoured on this platform.
-        require(settleMillis == 0L) {
-            "a positive channel settle cannot be implemented on a transport with no read " +
-                "timeout, and the measured value is 0. See ChannelRegistry for why."
-        }
-    }
 
     // An unlimited channel rather than a SharedFlow.
     private val eventChannel = Channel<SessionEvent>(Channel.UNLIMITED)
     private val commandChannel = Channel<SessionCommand>(Channel.UNLIMITED)
 
-    // Concurrent because addResponder and removeResponder are public, non-suspending and documented
-    // for callers, while handleMessage reads the map from the reader coroutine on another thread.
+    // Read from the reader coroutine.
     private val responders = java.util.concurrent.ConcurrentHashMap<Int, Responder>()
     private val stopSignal = CompletableDeferred<Unit>()
 
@@ -107,10 +122,6 @@ class GlassesSession(
         responders[serviceId] = responder
     }
 
-    fun removeResponder(serviceId: Int) {
-        responders.remove(serviceId)
-    }
-
     private fun publish(event: SessionEvent) {
         eventChannel.trySend(event)
     }
@@ -138,12 +149,10 @@ class GlassesSession(
             transport.connect()
             publish(LinkStateChanged(LinkState.LINK_SETUP))
 
-            // Each phase is bounded on its own, because the reference's timeout is per read rather
-            // than cumulative: `settimeout(10.0)` bounds how long one read may wait, and its
-            // connect can legitimately take twenty seconds.
-            val link = linkFactory(WireTap(transport, ::publish))
+            // Each phase has its own deadline.
+            val link = SecureLink(transport)
             secureLink = link
-            withLinkDeadline(linkSetupReadTimeoutMillis, "the glasses stopped answering during link setup") {
+            withLinkDeadline(transport, LINK_SETUP_READ_TIMEOUT_MILLIS, "the glasses stopped answering during link setup") {
                 link.open()
             }
 
@@ -159,7 +168,6 @@ class GlassesSession(
                     val exchange = trust
                     if (exchange != null) {
                         publish(LinkStateChanged(LinkState.TRUST))
-                        // Still unbounded from here.
                         val result = exchange.run(mux, checkNotNull(link.binding))
                         trustResult = result
                         if (!result.complete) {
@@ -206,7 +214,7 @@ class GlassesSession(
 
     /** Wait for the glasses' own EndLinkSetup, then acknowledge it on the mirror. */
     private suspend fun answerTheirEndLinkSetup(mux: DataXConnection) {
-        withLinkDeadline(END_LINK_SETUP_TIMEOUT_MILLIS, "the glasses did not send their EndLinkSetup") {
+        withLinkDeadline(transport, END_LINK_SETUP_TIMEOUT_MILLIS, "the glasses did not send their EndLinkSetup") {
             while (true) {
                 val message = mux.receive()
                 if (isTheirEndLinkSetup(message)) {
@@ -224,7 +232,7 @@ class GlassesSession(
         val info = message.info
         if (info.messageType != LinkSetupMsgType.END_LINK_SETUP.value || info.flags.hasError) return false
         return info.channelId == LINK_SETUP_CHANNEL ||
-            ((info.channelId and 0x8000) != 0 && info.serviceId == 0 && registry.serviceForInbound(info.channelId) == 0)
+            (DataXConnection.hasOriginatorBit(info.channelId) && info.serviceId == 0 && registry.serviceForInbound(info.channelId) == 0)
     }
 
     /** Drain what the glasses said during link setup before anyone allocates a local channel. */
@@ -238,12 +246,9 @@ class GlassesSession(
     /** Read the link until [stop], with commands going out beside the reads, not between. */
     private suspend fun pump() = coroutineScope {
         val commands = launch {
-            for (command in commandChannel) command.run(this@GlassesSession)
+            for (command in commandChannel) guarded("a command") { command.run(this@GlassesSession) }
         }
         try {
-            // DataXConnection.receive drains its own inbox before touching the socket, so the
-            // reference's "drain what is decoded BEFORE waiting on the socket" rule is structural
-            // here rather than a check.
             while (isActive && !stopped) {
                 handleMessage(checkNotNull(connection).receive())
             }
@@ -262,7 +267,7 @@ class GlassesSession(
         val serviceId = registry.serviceForInbound(info.channelId)
 
         if (serviceId in REFUSED_PEER_SERVICES &&
-            (info.channelId and 0x8000) != 0 &&
+            DataXConnection.hasOriginatorBit(info.channelId) &&
             !info.flags.hasError
         ) {
             // The glasses open svc30, their device-peer trust, and svc79, constellation auth,
@@ -272,7 +277,7 @@ class GlassesSession(
 
         // svc4, connection_monitor: the glasses' delivery check (type 0, a counter) is confirmed with a bare OK status.
         if (serviceId == CONNECTION_MONITOR &&
-            (info.channelId and 0x8000) != 0 &&
+            DataXConnection.hasOriginatorBit(info.channelId) &&
             !info.flags.hasError &&
             !info.flags.isClosed
         ) {
@@ -281,23 +286,24 @@ class GlassesSession(
 
         val responder = responders[serviceId]
         if (responder != null && !info.flags.hasError) {
-            guarded(serviceId, message.payload) { responder.respond(message, mux) }
+            guarded("responder for service $serviceId") { responder.respond(message, mux) }
         }
         val closing = responders[message.closedService]
         if (closing != null && info.flags.isClosed && !info.flags.hasError) {
-            guarded(message.closedService, message.payload) { closing.closed(info.channelId, mux) }
+            guarded("responder for service ${message.closedService}") { closing.closed(info.channelId, mux) }
         }
 
         if (info.flags.hasError) {
             if (info.errorId != SUCCESS) {
-                publish(
-                    ProtocolError(
-                        // Locale.ROOT: a device set to a locale with native digits would otherwise
-                        // render these in them.
-                        "service %d answered status 0x%04x on channel 0x%04x"
-                            .format(java.util.Locale.ROOT, serviceId, info.errorId, info.channelId),
-                    ),
-                )
+                if (info.errorId != OK) {
+                    publish(
+                        ProtocolError(
+                            // Locale.ROOT: ASCII digits.
+                            "service %d answered status 0x%04x on channel 0x%04x"
+                                .format(java.util.Locale.ROOT, serviceId, info.errorId, info.channelId),
+                        ),
+                    )
+                }
                 publish(DataXError(serviceId, info.channelId, info.errorId))
             }
             return
@@ -307,42 +313,14 @@ class GlassesSession(
         publish(ServiceData(serviceId, info.messageType, message.payload))
     }
 
-    /** A responder that fails is reported; the link goes on. */
-    private suspend fun guarded(serviceId: Int, payload: ByteArray, work: suspend () -> Unit) {
+    /** A responder or command that fails is reported; the link goes on. */
+    private suspend fun guarded(what: String, work: suspend () -> Unit) {
         try {
             work()
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
-            publish(ProtocolError("responder for service $serviceId failed: ${error.message}", payload))
-        }
-    }
-
-    /** Run [body] with a bound on how long it may wait for the peer. */
-    private suspend fun <T> withLinkDeadline(
-        millis: Long,
-        what: String,
-        body: suspend () -> T,
-    ): T = coroutineScope {
-        // One atomic decides which of the two finished first.
-        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
-        val watchdog = launch {
-            delay(millis)
-            if (settled.compareAndSet(false, true)) transport.close()
-        }
-        try {
-            val result = body()
-            // Claim, so a watchdog that has not fired yet cannot close a link that is up.
-            settled.compareAndSet(false, true)
-            result
-        } catch (error: Throwable) {
-            // A failed claim means the watchdog got there first, so this failure IS the deadline.
-            if (error !is CancellationException && !settled.compareAndSet(false, true)) {
-                throw LinkTimeoutException(what).apply { initCause(error) }
-            }
-            throw error
-        } finally {
-            watchdog.cancel()
+            publish(ProtocolError("$what failed: ${error.message}"))
         }
     }
 
@@ -369,42 +347,11 @@ class GlassesSession(
             "(txOk=${result.txOk} rxOk=${result.rxOk})"
     }
 
-    /** A [Transport] view that publishes every SDU it carries. */
-    private class WireTap(
-        private val transport: Transport,
-        private val publish: (SessionEvent) -> Unit,
-    ) : Transport {
-
-        override suspend fun connect() = transport.connect()
-
-        override suspend fun send(frame: ByteArray) {
-            publish(WireFrame(outbound = true, data = frame))
-            transport.send(frame)
-        }
-
-        override suspend fun receive(): ByteArray {
-            val frame = transport.receive()
-            publish(WireFrame(outbound = false, data = frame))
-            return frame
-        }
-
-        override fun close() = transport.close()
-    }
-
     companion object {
-        /**
-         * The glasses send their own EndLinkSetup on the secure link setup channel, the one our
-         * RequestEncryption opened.
-         */
-        const val LINK_SETUP_CHANNEL = 0x8001
-
-        /** 5.0 seconds, because the working client waits exactly that long at this point. */
+        /** How long the glasses get to send their EndLinkSetup. */
         const val END_LINK_SETUP_TIMEOUT_MILLIS = 5_000L
 
-        /** 0.0 seconds. See [settleChannels] for why it is zero and why it stays zero. */
-        const val CHANNEL_SETTLE_MILLIS = 0L
-
-        /** The reference bounds every read with `settimeout(10.0)` on its socket. */
+        /** How long one read may wait during link setup. */
         const val LINK_SETUP_READ_TIMEOUT_MILLIS = 10_000L
 
         private val BACKOFF_MILLIS = longArrayOf(1_000, 2_000, 4_000, 8_000)

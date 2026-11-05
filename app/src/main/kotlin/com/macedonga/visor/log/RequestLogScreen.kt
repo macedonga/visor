@@ -1,21 +1,16 @@
 package com.macedonga.visor.log
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,14 +21,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesRequest
 import com.macedonga.visor.connection.RequestLog
+import com.macedonga.visor.connection.RequestSource
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.gallery.RoundIcon
+import com.macedonga.visor.settings.ConfirmSheet
 import com.macedonga.visor.settings.Footnote
-import com.macedonga.visor.settings.Hairline
 import com.macedonga.visor.settings.LocalHost
 import com.macedonga.visor.settings.MONO
+import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.SettingsPage
+import com.macedonga.visor.settings.cardItems
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.copy
+import com.macedonga.visor.ui.sizeWords
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.Instant
 import java.time.ZoneId
@@ -48,24 +47,23 @@ class RequestLogViewModel @Inject constructor(val log: RequestLog) : ViewModel()
 fun RequestLogScreen(model: RequestLogViewModel = hiltViewModel()) {
     val items by model.log.items.collectAsStateWithLifecycle()
     val shown = items.asReversed()
+    var clearing by remember { mutableStateOf(false) }
     SettingsPage(
         stringResource(R.string.requests_title),
         light = 0.3f,
-        actions = { RoundIcon(VisorIcons.Trash, stringResource(R.string.event_log_clear), model.log::clear) },
+        actions = { RoundIcon(VisorIcons.Trash, stringResource(R.string.event_log_clear), { clearing = true }) },
+        sheet = {
+            if (clearing) {
+                ConfirmSheet(
+                    stringResource(R.string.event_log_clear_title), null, stringResource(R.string.event_log_clear),
+                    onConfirm = { model.log.clear() },
+                    onDismiss = { clearing = false },
+                )
+            }
+        },
     ) {
         if (shown.isEmpty()) item(key = "empty") { Footnote(stringResource(R.string.requests_empty)) }
-        itemsIndexed(shown, key = { _, r -> r.id }) { i, r ->
-            val shape = when {
-                shown.size == 1 -> RoundedCornerShape(18.dp)
-                i == 0 -> RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)
-                i == shown.lastIndex -> RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp)
-                else -> RectangleShape
-            }
-            Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(shape).background(Visor.colors.raised)) {
-                if (i > 0) Hairline()
-                RequestRow(r)
-            }
-        }
+        cardItems(shown, { it.id }) { RequestRow(it) }
     }
 }
 
@@ -77,7 +75,7 @@ private fun RequestRow(r: GlassesRequest) {
     val copied = stringResource(R.string.requests_copied)
     Column(
         Modifier.fillMaxWidth().clickable {
-            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("url", r.url))
+            copy(context, r.url, "url")
             host.notice.show(copied)
         }.padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
@@ -87,15 +85,15 @@ private fun RequestRow(r: GlassesRequest) {
             TIME.format(Instant.ofEpochMilli(r.at).atZone(ZoneId.systemDefault())),
             r.times.takeIf { it > 1 }?.let { "×$it" },
             outcome,
-            r.bytes.takeIf { it > 0 }?.let(::size),
+            r.bytes.takeIf { it > 0 }?.let { sizeWords(context, it) },
             r.millis.takeIf { r.outcome != null }?.let { "$it ms" },
             when (r.source) {
-                -1 -> stringResource(R.string.requests_tunnel)
-                -2 -> stringResource(R.string.requests_meta)
-                -3 -> stringResource(R.string.requests_location)
-                -4 -> stringResource(R.string.requests_sms)
-                -5 -> stringResource(R.string.requests_calls)
-                -6 -> stringResource(R.string.navigation_requests_maps)
+                RequestSource.TUNNEL -> stringResource(R.string.requests_tunnel)
+                RequestSource.META -> stringResource(R.string.requests_meta)
+                RequestSource.LOCATION -> stringResource(R.string.requests_location)
+                RequestSource.SMS -> stringResource(R.string.requests_sms)
+                RequestSource.CALLS -> stringResource(R.string.requests_calls)
+                RequestSource.MAPS -> stringResource(R.string.requests_maps)
                 else -> stringResource(R.string.requests_source, r.source)
             },
             r.options.ifEmpty { null },
@@ -107,13 +105,7 @@ private fun RequestRow(r: GlassesRequest) {
 /** Host and path; the query, often a long signature, is left to the copied link. */
 private fun place(url: String): String {
     val noQuery = url.substringBefore('?')
-    return noQuery.substringAfter("://").ifEmpty { url }.let { if (url.startsWith("http")) it else noQuery }
-}
-
-private fun size(bytes: Long): String = when {
-    bytes >= 1_000_000 -> "%.1f MB".format(bytes / 1_000_000.0)
-    bytes >= 1_000 -> "${bytes / 1_000} KB"
-    else -> "$bytes B"
+    return if (url.startsWith("http")) noQuery.substringAfter("://") else noQuery
 }
 
 private val TIME = DateTimeFormatter.ofPattern("HH:mm:ss")

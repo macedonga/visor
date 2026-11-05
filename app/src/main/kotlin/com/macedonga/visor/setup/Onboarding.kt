@@ -1,10 +1,12 @@
 package com.macedonga.visor.setup
 
 import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.content.Context
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -20,14 +22,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -61,14 +61,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -83,7 +81,6 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -97,29 +94,36 @@ import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesTarget
-import com.macedonga.visor.core.session.LinkState
-import com.macedonga.visor.settings.hasDisplay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.design.Visor
+import com.macedonga.visor.core.design.VisorColors
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.provision.ProvisionStep
-import com.macedonga.visor.gallery.allows
+import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.login.MetaLogin
+import com.macedonga.visor.settings.CARD_RADIUS
+import com.macedonga.visor.settings.Hairline
 import com.macedonga.visor.settings.Need
+import com.macedonga.visor.settings.Pills
+import com.macedonga.visor.settings.ProgressBar
+import com.macedonga.visor.settings.Spinner
+import com.macedonga.visor.settings.WidePill
+import com.macedonga.visor.settings.errandProblem
 import com.macedonga.visor.settings.openAppPage
 import com.macedonga.visor.settings.openListenerPage
+import com.macedonga.visor.settings.pairWords
 import com.macedonga.visor.stage.LightLook
 import com.macedonga.visor.stage.LocalStage
 import com.macedonga.visor.stage.Mood
+import com.macedonga.visor.stage.SETTLE_EASE
 import com.macedonga.visor.stage.STAGE_ASPECT
 import com.macedonga.visor.stage.StageDebug
 import com.macedonga.visor.stage.StageLight
-import com.macedonga.visor.stage.StageSpot
 import com.macedonga.visor.stage.lookOf
 import com.macedonga.visor.stage.nod
 import com.macedonga.visor.stage.shake
+import com.macedonga.visor.stage.stageSpot
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
 import com.macedonga.visor.ui.rememberHaptics
@@ -133,7 +137,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -153,6 +160,7 @@ class OnboardingViewModel @Inject constructor(
     private val connection: GlassesConnection,
     val bandPair: BandPair,
     val bandLink: BandLink,
+    private val log: EventLog,
 ) : ViewModel() {
     var page by mutableStateOf(Page.WELCOME)
         private set
@@ -171,6 +179,7 @@ class OnboardingViewModel @Inject constructor(
         private set
     var bonding by mutableStateOf(false)
         private set
+    private var bondJob: Job? = null
     var bondFailure by mutableStateOf<BondFailed.Why?>(null)
         private set
     /** Meta's login page was opened from here: once logged in, the setup goes on by itself. */
@@ -180,8 +189,13 @@ class OnboardingViewModel @Inject constructor(
     // Setting a known pair up again: it is taken as soon as it is found, bonded or heard, with nothing to pick.
     private var wanted: String? = null
 
+    /** True once [begin] has run on this model. */
+    var begun = false
+        private set
+
     /** A fresh setup: from the welcome on the first run, otherwise from the first page with something to do. */
-    fun begin(welcome: Boolean, login: Boolean, address: String? = null) {
+    fun begin(welcome: Boolean, changeOwner: Boolean, address: String? = null) {
+        begun = true
         wanted = address
         history.clear()
         asked = emptySet()
@@ -189,11 +203,12 @@ class OnboardingViewModel @Inject constructor(
         chosen = null
         bondFailure = null
         provisioner.reset()
+        login.refresh()
         firstRun = welcome
         page = when {
             welcome -> Page.WELCOME
             // Changing owner starts at the login, whoever is logged in now.
-            login -> Page.LOGIN
+            changeOwner -> Page.LOGIN
             else -> after(Page.WELCOME)
         }
     }
@@ -204,10 +219,11 @@ class OnboardingViewModel @Inject constructor(
         if (to == page) return
         // A known pair this phone is bonded to needs no pairing page: straight to linking it.
         val known = if (to == Page.PAIRING && chosen == null) wanted?.let { a ->
-            runCatching { nearby.bonded() }.getOrDefault(emptyList()).firstOrNull { it.address.equals(a, ignoreCase = true) }
+            nearby.bonded().firstOrNull { it.address.equals(a, ignoreCase = true) }
         } else null
         history += page
         if (known != null) {
+            history += Page.PAIRING
             chosen = known
             page = Page.LINKING
             link()
@@ -236,6 +252,7 @@ class OnboardingViewModel @Inject constructor(
             bonded = withContext(Dispatchers.IO) { nearby.bonded() }
             setUpHere = withContext(Dispatchers.IO) { runCatching { store.all().map { it.glassesAddress.uppercase() }.toSet() }.getOrDefault(emptySet()) }
             takeWanted(bonded)
+            var lastError: String? = null
             while (true) {
                 if (!nearby.enabled) {
                     bluetoothOff = true
@@ -253,7 +270,11 @@ class OnboardingViewModel @Inject constructor(
                 } catch (stop: CancellationException) {
                     throw stop
                 } catch (failed: Exception) {
-                    delay(3_000)
+                    if (failed.message != lastError) {
+                        lastError = failed.message
+                        log.add("Setup: scan failed: ${failed.message}")
+                    }
+                    if (nearby.enabled) delay(3_000)
                 }
             }
         }
@@ -289,7 +310,7 @@ class OnboardingViewModel @Inject constructor(
     /** True for a Display, false for other glasses, null until the session with [serial] is up. */
     fun display(serial: String): Flow<Boolean?> = connection.state.map { s ->
         val build = s.info?.build
-        if (s.target?.serial == serial && s.link == LinkState.READY && build != null) hasDisplay(build) else null
+        if (s.target?.serial == serial && s.link == LinkState.READY && build != null) isDisplayBuild(build) else null
     }.distinctUntilChanged()
 
     fun toBand() {
@@ -302,7 +323,7 @@ class OnboardingViewModel @Inject constructor(
         val pair = chosen ?: return
         bondFailure = null
         provisioner.reset()
-        viewModelScope.launch {
+        bondJob = viewModelScope.launch {
             bonding = true
             val address = try {
                 nearby.bond(pair.address)
@@ -315,12 +336,16 @@ class OnboardingViewModel @Inject constructor(
             provisioner.start(address)
         }
     }
+
+    /** Gives up a bond still waiting on the glasses. */
+    fun stopBond() {
+        if (!bonding) return
+        bondJob?.cancel()
+        chosen?.let { nearby.cancelBond(it.address) }
+    }
 }
 
-/**
- * The setup, as one cinematic sequence over the shared stage: welcome, what the phone is asked for, the Meta login,
- * pairing mode shown on the pair itself, the glasses heard nearby, then the bond and the change of owner.
- */
+/** The setup over the shared stage: welcome, access, login, pairing, then the change of owner. */
 @Composable
 fun OnboardingScreen(
     welcome: Boolean,
@@ -332,11 +357,8 @@ fun OnboardingScreen(
     onLeave: () -> Unit,
     model: OnboardingViewModel = hiltViewModel(),
 ) {
-    // Saved with the entry, so coming back from the login page goes on where it was.
-    rememberSaveable {
-        model.begin(welcome, login, address)
-        true
-    }
+    // Once per model: back from the login page it goes on where it was.
+    if (!model.begun) model.begin(welcome, login, address)
     val debugPage by StageDebug.onboardingPage.collectAsStateWithLifecycle()
     LaunchedEffect(debugPage) { debugPage?.let { p -> Page.entries.firstOrNull { it.name == p }?.let(model::go) } }
 
@@ -346,56 +368,32 @@ fun OnboardingScreen(
     val haptics = rememberHaptics()
     val status by model.provisioner.status.collectAsStateWithLifecycle()
     val band by model.bandPair.status.collectAsStateWithLifecycle()
-    val busy = page == Page.LINKING && (model.bonding || status is Provisioner.Status.Running) ||
+    val busy = page == Page.LINKING && status is Provisioner.Status.Running ||
         page == Page.BAND && band is BandPair.Status.Running
-    // While the glasses are being bonded or handed over, back does nothing: leaving would cut it half done.
-    BackHandler { if (!busy && !model.back()) onLeave() }
+    val done = status as? Provisioner.Status.Done
+    // Back does nothing mid-handover, which it would cut half done; once the pair is owned it finishes, as Open does.
+    BackHandler {
+        when {
+            busy -> Unit
+            done != null && (page == Page.LINKING || page == Page.BAND) -> {
+                model.bandPair.reset()
+                model.provisioner.reset()
+                onDone(done.target)
+            }
+            else -> {
+                model.stopBond()
+                if (!model.back()) onLeave()
+            }
+        }
+    }
 
     // The welcome opens on the mark: at launch it is already playing, opened later it plays again from here.
     val withMark = remember { welcome && page == Page.WELCOME }
     val replay = remember { (withMark && !stage.intro.showing).also { if (it) stage.intro.arm() } }
     LaunchedEffect(Unit) { if (replay) stage.intro.play { haptics.tick(0.4f) } }
 
-    // The pairing page's story runs on one clock; elsewhere it rests at 0 and the pair turns home.
-    val clock = remember { mutableFloatStateOf(0f) }
-    val zoom = remember { mutableFloatStateOf(1f) }
-    val pivot = remember { mutableFloatStateOf(0.5f) }
-    val debugTime by StageDebug.demoAt.collectAsStateWithLifecycle()
     val demo = page == Page.PAIRING
-    LaunchedEffect(demo) { if (demo) clock.floatValue = 0f }
-    val demoNow by rememberUpdatedState(demo)
-    val debugNow by rememberUpdatedState(debugTime)
-    LaunchedEffect(stage) {
-        var last = 0L
-        val pose = stage.pose
-        while (true) {
-            withFrameNanos { now ->
-                val dt = if (last == 0L) 0f else ((now - last) / 1e9f).coerceAtMost(0.05f)
-                last = now
-                val demo = demoNow
-                if (demo) clock.floatValue = debugNow ?: ((clock.floatValue + dt) % Demo.LOOP)
-                val t = clock.floatValue
-                val k = 1f - exp(-dt / FOLLOW_SECONDS)
-                pose.viewYaw += ((if (demo) Demo.yaw(t) else 0f) - pose.viewYaw) * k
-                pose.viewPitch += ((if (demo) Demo.pitch(t) else 0f) - pose.viewPitch) * k
-                pose.button = if (demo) Demo.button(t) else (pose.button - dt * 4f).coerceAtLeast(0f)
-                pose.innerLed = if (demo) Demo.led(t) else (pose.innerLed - dt * 4f).coerceAtLeast(0f)
-                val slow = 1f - exp(-dt / CAMERA_SECONDS)
-                zoom.floatValue += ((if (demo) Demo.zoom(t) else 1f) - zoom.floatValue) * slow
-                val towards = (if (demo) Demo.focus(t) else null)?.let { stage.renderer.partOnScreen(it)?.first } ?: 0.5f
-                pivot.floatValue += (towards.coerceIn(0.15f, 0.85f) - pivot.floatValue) * slow
-                stage.renderer.invalidate()
-            }
-        }
-    }
-    DisposableEffect(stage) {
-        onDispose {
-            stage.pose.viewYaw = 0f
-            stage.pose.viewPitch = 0f
-            stage.pose.button = 0f
-            stage.pose.innerLed = 0f
-        }
-    }
+    val story = rememberPairingStory(demo)
 
     val context = LocalContext.current
     var accessTick by remember { mutableIntStateOf(0) }
@@ -404,34 +402,14 @@ fun OnboardingScreen(
         onPauseOrDispose { }
     }
     val granted = remember(accessTick) { ASKED.count { it.granted(context) } }
-    val done = status as? Provisioner.Status.Done
     val failed = page == Page.LINKING && (model.bondFailure != null || status is Provisioner.Status.Failed)
-    val closedDemo by remember { derivedStateOf { clock.floatValue in Demo.FOLD..Demo.OPEN } }
+    val closedDemo by remember { derivedStateOf { story.clock.floatValue in Demo.FOLD..Demo.OPEN } }
     val closed = when (page) {
         Page.PAIRING -> closedDemo
         Page.LINKING -> done == null
         else -> false
     }
-    val look = when (page) {
-        Page.WELCOME -> lookOf(Mood.CONNECTED, colors)
-        Page.ACCESS -> {
-            val f = granted / ASKED.size.toFloat()
-            LightLook(lerp(colors.lightCold, colors.lightNeutral, f), lerp(colors.lightCold, colors.lightWarm, f), level = 0.3f + 0.65f * f, spread = 0.8f + 0.2f * f, breathSeconds = 9f, breathDepth = 0.06f)
-        }
-        Page.LOGIN -> lookOf(Mood.CONNECTED, colors).copy(level = 0.8f)
-        Page.PAIRING -> lookOf(Mood.SEARCHING, colors)
-        Page.LINKING -> when {
-            done != null -> lookOf(Mood.CONNECTED, colors)
-            failed -> lookOf(Mood.FAR, colors)
-            else -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
-        }
-        Page.BAND -> when (band) {
-            is BandPair.Status.Running -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
-            is BandPair.Status.Failed -> lookOf(Mood.FAR, colors)
-            else -> lookOf(Mood.CONNECTED, colors)
-        }
-    }
-    StageLight(look)
+    StageLight(pageLook(page, granted, done != null, failed, band, colors))
     LaunchedEffect(Unit) { if (welcome && page == Page.WELCOME) stage.light.dark() }
     LaunchedEffect(done != null) {
         if (done != null) {
@@ -462,55 +440,128 @@ fun OnboardingScreen(
         val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val topPx = with(density) { top.toPx() }
         val stagePx = widthPx / STAGE_ASPECT
-        // Where each page wants the pair: the height of its centre on the window, and its size.
-        val (centreTo, scaleTo) = when (page) {
-            Page.WELCOME -> heightPx * 0.38f to 1.05f
-            Page.ACCESS -> topPx + stagePx * 0.2f to 0.5f
-            Page.LOGIN -> topPx + stagePx * 0.36f to 0.78f
-            Page.PAIRING -> topPx + stagePx * 0.4f to 1f
-            Page.LINKING -> heightPx * 0.36f to 1f
-            Page.BAND -> heightPx * 0.3f to 0.8f
-        }
-        val centre by animateFloatAsState(centreTo, spring(dampingRatio = 0.9f, stiffness = 40f), label = "centre")
-        val scale by animateFloatAsState(scaleTo, spring(dampingRatio = 0.9f, stiffness = 40f), label = "scale")
+        val placed = page.placement(heightPx, topPx, stagePx)
+        val centre by animateFloatAsState(placed.centre, spring(dampingRatio = 0.9f, stiffness = 40f), label = "centre")
+        val scale by animateFloatAsState(placed.scale, spring(dampingRatio = 0.9f, stiffness = 40f), label = "scale")
         val liveliness = when (page) {
             Page.PAIRING -> 0.12f
             Page.LINKING -> if (done != null) 1f else 1.3f
             else -> 0.6f
         }
-        StageSpot(closed, liveliness) {
-            val s = scale * zoom.floatValue
+        stageSpot(closed, liveliness) {
+            val s = scale * story.zoom.floatValue
             val h = stagePx * max(s, 1f)
             this.top = centre - h / 2
             height = h
             this.scale = s
-            pivotX = pivot.floatValue
+            pivotX = story.pivot.floatValue
             pivotY = 0.5f
             shift = (h - stagePx) / 2
             alpha = 1f
         }
-        if (demo) Marks(clock)
+        if (demo) Marks(story.clock)
 
         val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         AnimatedContent(
             targetState = page,
             transitionSpec = {
-                (fadeIn(tween(520, delayMillis = 160)) + slideInVertically(tween(620, delayMillis = 160, easing = SETTLE)) { it / 14 })
+                (fadeIn(tween(520, delayMillis = 160)) + slideInVertically(tween(620, delayMillis = 160, easing = SETTLE_EASE)) { it / 14 })
                     .togetherWith(fadeOut(tween(200)))
             },
             label = "page",
         ) { shown ->
-            val frame = Modifier.fillMaxSize().padding(top = top, bottom = bottom + 20.dp).padding(horizontal = 24.dp)
+            val contentTop = with(density) { shown.placement(heightPx, topPx, stagePx).contentTop.toDp() }
+            val frame = Modifier.fillMaxSize().padding(top = top, bottom = bottom + 20.dp).padding(horizontal = 24.dp).padding(top = contentTop)
             when (shown) {
                 Page.WELCOME -> WelcomePage(welcome, frame, before = { if (withMark) stage.intro.awaitLetGo() }) { model.next() }
-                Page.ACCESS -> AccessPage(model, accessTick, { accessTick++ }, frame.padding(top = with(density) { (stagePx * 0.42f).toDp() }))
-                Page.LOGIN -> LoginPage(model, onLogin, onEventLog, frame.padding(top = with(density) { (stagePx * 0.7f).toDp() }))
-                Page.PAIRING -> PairingPage(model, clock, frame.padding(top = with(density) { (stagePx * 0.8f).toDp() }))
+                Page.ACCESS -> AccessPage(model, accessTick, { accessTick++ }, frame)
+                Page.LOGIN -> LoginPage(model, onLogin, onEventLog, frame)
+                Page.PAIRING -> PairingPage(model, story.clock, frame)
                 Page.LINKING -> LinkingPage(model, status, onDone, frame)
                 Page.BAND -> BandPage(model, status, onDone, frame)
             }
         }
     }
+}
+
+private class PairingStory(val clock: MutableFloatState, val zoom: MutableFloatState, val pivot: MutableFloatState)
+
+/** The pairing page's story runs on one clock; elsewhere it rests at 0 and the pair turns home. */
+@Composable
+private fun rememberPairingStory(demo: Boolean): PairingStory {
+    val stage = LocalStage.current
+    val clock = remember { mutableFloatStateOf(0f) }
+    val zoom = remember { mutableFloatStateOf(1f) }
+    val pivot = remember { mutableFloatStateOf(0.5f) }
+    val debugTime by StageDebug.demoAt.collectAsStateWithLifecycle()
+    LaunchedEffect(demo) { if (demo) clock.floatValue = 0f }
+    val demoNow by rememberUpdatedState(demo)
+    val debugNow by rememberUpdatedState(debugTime)
+    LaunchedEffect(stage) {
+        var last = 0L
+        val pose = stage.pose
+        while (true) {
+            withFrameNanos { now ->
+                val dt = if (last == 0L) 0f else ((now - last) / 1e9f).coerceAtMost(0.05f)
+                last = now
+                val on = demoNow
+                if (on) clock.floatValue = debugNow ?: ((clock.floatValue + dt) % Demo.LOOP)
+                val t = clock.floatValue
+                val k = 1f - exp(-dt / FOLLOW_SECONDS)
+                pose.viewYaw += ((if (on) Demo.yaw(t) else 0f) - pose.viewYaw) * k
+                pose.viewPitch += ((if (on) Demo.pitch(t) else 0f) - pose.viewPitch) * k
+                pose.button = if (on) Demo.button(t) else (pose.button - dt * 4f).coerceAtLeast(0f)
+                pose.innerLed = if (on) Demo.led(t) else (pose.innerLed - dt * 4f).coerceAtLeast(0f)
+                val slow = 1f - exp(-dt / CAMERA_SECONDS)
+                zoom.floatValue += ((if (on) Demo.zoom(t) else 1f) - zoom.floatValue) * slow
+                val towards = (if (on) Demo.focus(t) else null)?.let { stage.renderer.partOnScreen(it)?.first } ?: 0.5f
+                pivot.floatValue += (towards.coerceIn(0.15f, 0.85f) - pivot.floatValue) * slow
+                stage.renderer.invalidate()
+            }
+        }
+    }
+    DisposableEffect(stage) {
+        onDispose {
+            stage.pose.viewYaw = 0f
+            stage.pose.viewPitch = 0f
+            stage.pose.button = 0f
+            stage.pose.innerLed = 0f
+        }
+    }
+    return remember { PairingStory(clock, zoom, pivot) }
+}
+
+/** The stage light on each page; on the access page it warms as Visor gets what it asks for. */
+private fun pageLook(page: Page, granted: Int, done: Boolean, failed: Boolean, band: BandPair.Status, colors: VisorColors): LightLook = when (page) {
+    Page.WELCOME -> lookOf(Mood.CONNECTED, colors)
+    Page.ACCESS -> {
+        val f = granted / ASKED.size.toFloat()
+        LightLook(lerp(colors.lightCold, colors.lightNeutral, f), lerp(colors.lightCold, colors.lightWarm, f), level = 0.3f + 0.65f * f, spread = 0.8f + 0.2f * f, breathSeconds = 9f, breathDepth = 0.06f)
+    }
+    Page.LOGIN -> lookOf(Mood.CONNECTED, colors).copy(level = 0.8f)
+    Page.PAIRING -> lookOf(Mood.SEARCHING, colors)
+    Page.LINKING -> when {
+        done -> lookOf(Mood.CONNECTED, colors)
+        failed -> lookOf(Mood.FAR, colors)
+        else -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
+    }
+    Page.BAND -> when (band) {
+        is BandPair.Status.Running -> lookOf(Mood.SEARCHING, colors).copy(breathSeconds = 2.2f)
+        is BandPair.Status.Failed -> lookOf(Mood.FAR, colors)
+        else -> lookOf(Mood.CONNECTED, colors)
+    }
+}
+
+/** Where a page wants the pair (the height of its centre on the window, and its size) and where its content starts. */
+private class Placement(val centre: Float, val scale: Float, val contentTop: Float)
+
+private fun Page.placement(heightPx: Float, topPx: Float, stagePx: Float): Placement = when (this) {
+    Page.WELCOME -> Placement(heightPx * 0.38f, 1.05f, 0f)
+    Page.ACCESS -> Placement(topPx + stagePx * 0.2f, 0.5f, stagePx * 0.42f)
+    Page.LOGIN -> Placement(topPx + stagePx * 0.36f, 0.78f, stagePx * 0.7f)
+    Page.PAIRING -> Placement(topPx + stagePx * 0.4f, 1f, stagePx * 0.8f)
+    Page.LINKING -> Placement(heightPx * 0.36f, 1f, 0f)
+    Page.BAND -> Placement(heightPx * 0.3f, 0.8f, 0f)
 }
 
 /** The welcome: after [before], the pair comes up out of the dark and opens, then the words. */
@@ -520,14 +571,13 @@ private fun WelcomePage(firstRun: Boolean, modifier: Modifier, before: suspend (
     LaunchedEffect(Unit) {
         before()
         delay(1_300)
-        rise.animateTo(1f, tween(900, easing = SETTLE))
+        rise.animateTo(1f, tween(900, easing = SETTLE_EASE))
     }
     Column(modifier, verticalArrangement = Arrangement.Bottom) {
         Column(Modifier.graphicsLayer { alpha = rise.value; translationY = (1f - rise.value) * 28.dp.toPx() }) {
             Text(stringResource(R.string.app_name), style = Visor.type.display, color = Visor.colors.textPrimary, modifier = Modifier.asHeading())
-            Text(stringResource(R.string.onboard_tagline), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
             Spacer(Modifier.height(36.dp))
-            BigPill(stringResource(R.string.onboard_begin), onBegin)
+            WidePill(stringResource(R.string.onboard_begin), onBegin, Modifier.fillMaxWidth())
         }
     }
 }
@@ -536,6 +586,7 @@ private fun WelcomePage(firstRun: Boolean, modifier: Modifier, before: suspend (
 @Composable
 private fun AccessPage(model: OnboardingViewModel, tick: Int, onAnswered: () -> Unit, modifier: Modifier) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
     val given = remember(tick) { ASKED.filter { it.granted(context) }.toSet() }
     // Nearby devices stays first until it is given: nothing works without it. All the time comes after location, or not at all.
     val next = ASKED.firstOrNull {
@@ -544,9 +595,9 @@ private fun AccessPage(model: OnboardingViewModel, tick: Int, onAnswered: () -> 
     var asking by remember { mutableStateOf<Need?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         val need = asking
-        // Turned down for good, Android asks no more: Visor's own page is the way left for what it cannot start without.
-        if (need == Need.NEARBY && !need.granted(context) && result.values.none { it }) openAppPage(context)
-        if (need == Need.MIC) context.getSharedPreferences("home", Context.MODE_PRIVATE).edit().putBoolean("asked_hearing", true).apply()
+        // Refused for good, Android asks no more: Visor's own page is the way left.
+        val refused = need == Need.NEARBY && Need.NEARBY.ask(context).none { result[it] == true }
+        if (refused && activity?.shouldShowRequestPermissionRationale(Manifest.permission.BLUETOOTH_SCAN) == false) openAppPage(context)
         onAnswered()
     }
     fun ask(need: Need) {
@@ -558,26 +609,23 @@ private fun AccessPage(model: OnboardingViewModel, tick: Int, onAnswered: () -> 
 
     Column(modifier) {
         Text(stringResource(R.string.onboard_access_title), style = Visor.type.title, color = Visor.colors.textPrimary, modifier = Modifier.asHeading())
-        Text(stringResource(R.string.onboard_access_lede), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 8.dp))
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 20.dp)) {
             for (need in ASKED) AccessRow(need, need in given, need == next, onClick = { ask(need) })
-            Text(stringResource(R.string.onboard_access_foot), style = Visor.type.label, color = Visor.colors.textTertiary, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
         }
-        val nearbyGiven = Need.NEARBY in given
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             // "Not now" slides in beside Allow for what can wait, and out again when only Continue is left.
             AnimatedVisibility(
                 visible = next != null && next != Need.NEARBY,
-                enter = fadeIn(tween(240)) + expandHorizontally(tween(320, easing = SETTLE)),
-                exit = fadeOut(tween(160)) + shrinkHorizontally(tween(280, easing = SETTLE)),
+                enter = fadeIn(tween(240)) + expandHorizontally(tween(320, easing = SETTLE_EASE)),
+                exit = fadeOut(tween(160)) + shrinkHorizontally(tween(280, easing = SETTLE_EASE)),
             ) {
                 Row {
-                    QuietButton(stringResource(R.string.onboard_skip)) { next?.let { model.asked += it } }
+                    WidePill(stringResource(R.string.onboard_skip), { next?.let { model.asked += it } }, quiet = true)
                     Spacer(Modifier.width(12.dp))
                 }
             }
-            if (next != null) BigPill(stringResource(R.string.onboard_allow), { ask(next) }, Modifier.weight(1f))
-            else BigPill(stringResource(R.string.onboard_continue), { model.next() }, Modifier.weight(1f), enabled = nearbyGiven)
+            if (next != null) WidePill(stringResource(R.string.allow), { ask(next) }, Modifier.weight(1f))
+            else WidePill(stringResource(R.string.onboard_continue), { model.next() }, Modifier.weight(1f))
         }
     }
 }
@@ -587,7 +635,7 @@ private fun AccessRow(need: Need, given: Boolean, current: Boolean, onClick: () 
     val colors = Visor.colors
     val titleColour by animateColorAsState(if (given || current) colors.textPrimary else colors.textSecondary, tween(300), label = "title")
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = !given, onClick = onClick).padding(vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(enabled = !given, onClick = onClick).padding(vertical = 13.dp),
         verticalAlignment = Alignment.Top,
     ) {
         val fill by animateFloatAsState(if (given) 1f else 0f, spring(dampingRatio = 0.55f, stiffness = 380f), label = "check")
@@ -599,7 +647,7 @@ private fun AccessRow(need: Need, given: Boolean, current: Boolean, onClick: () 
                 .background(Color.White.copy(alpha = fill)),
             contentAlignment = Alignment.Center,
         ) {
-            if (given) Icon(VisorIcons.Check, stringResource(R.string.onboard_allowed), Modifier.size(16.dp), tint = Color.Black)
+            if (given) Icon(VisorIcons.Check, stringResource(R.string.access_allowed), Modifier.size(16.dp), tint = Color.Black)
         }
         Column(Modifier.padding(start = 14.dp).weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -608,7 +656,9 @@ private fun AccessRow(need: Need, given: Boolean, current: Boolean, onClick: () 
                     Text(stringResource(R.string.onboard_needed), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(start = 8.dp))
                 }
             }
-            Text(stringResource(need.why), style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(top = 3.dp))
+            AnimatedVisibility(current) {
+                Text(stringResource(need.why), style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(top = 3.dp))
+            }
         }
     }
 }
@@ -631,45 +681,38 @@ private fun LoginPage(model: OnboardingViewModel, onLogin: () -> Unit, onEventLo
     }
     Column(modifier) {
         Text(stringResource(R.string.onboard_login_title), style = Visor.type.title, color = Visor.colors.textPrimary, modifier = Modifier.asHeading())
-        Text(stringResource(R.string.onboard_login_body), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
-        val line = when (val s = status) {
+        val line = when (status) {
             MetaLogin.Status.LoggedIn -> stringResource(R.string.onboard_login_done)
-            MetaLogin.Status.Working -> stringResource(R.string.onboard_login_working)
-            is MetaLogin.Status.Failed -> stringResource(R.string.onboard_login_failed, s.reason)
-            MetaLogin.Status.LoggedOut -> null
+            MetaLogin.Status.Failed -> stringResource(R.string.onboard_login_failed)
+            MetaLogin.Status.Working, MetaLogin.Status.LoggedOut -> null
         }
         if (line != null) Text(line, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.padding(top = 20.dp))
         Spacer(Modifier.weight(1f))
-        Text(stringResource(R.string.onboard_login_foot), style = Visor.type.label, color = Visor.colors.textTertiary)
-        // The log is reachable from here, so a login that goes round in circles can be read before any setup is done.
-        Text(
-            stringResource(R.string.onboard_login_log),
-            style = Visor.type.label,
-            color = Visor.colors.textSecondary,
-            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp).clip(RoundedCornerShape(50)).clickable(onClick = onEventLog).padding(vertical = 6.dp),
-        )
         if (status == MetaLogin.Status.LoggedIn) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                QuietButton(stringResource(R.string.onboard_login_other)) {
+                WidePill(stringResource(R.string.onboard_login_other), {
                     model.login.logOut()
                     open()
-                }
+                }, quiet = true)
                 Spacer(Modifier.width(12.dp))
-                BigPill(stringResource(R.string.onboard_continue), { model.next() }, Modifier.weight(1f))
+                WidePill(stringResource(R.string.onboard_continue), { model.next() }, Modifier.weight(1f))
             }
         } else {
-            BigPill(stringResource(R.string.onboard_login_button), open, enabled = status != MetaLogin.Status.Working)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // A login that failed or came back undone can be read in the log.
+                if (status == MetaLogin.Status.Failed || (model.loginOpened && status == MetaLogin.Status.LoggedOut)) {
+                    WidePill(stringResource(R.string.onboard_login_log), onEventLog, quiet = true)
+                    Spacer(Modifier.width(12.dp))
+                }
+                WidePill(stringResource(R.string.onboard_login_button), open, Modifier.weight(1f), busy = status == MetaLogin.Status.Working)
+            }
         }
     }
 }
 
-/**
- * Pairing mode, told by the pair: the arms fold, it turns to show the capture button lit with a ring that fills over
- * the five seconds, then turns to show the light inside blinking blue. The lines follow the story; a tap on one
- * replays its part. Below, the glasses heard nearby, as the Meta app lists them.
- */
+/** Pairing mode shown on the pair, then the glasses heard nearby. */
 @Composable
-private fun PairingPage(model: OnboardingViewModel, clock: androidx.compose.runtime.MutableFloatState, modifier: Modifier) {
+private fun PairingPage(model: OnboardingViewModel, clock: MutableFloatState, modifier: Modifier) {
     DisposableEffect(model) {
         model.watch()
         onDispose { model.stopWatching() }
@@ -677,7 +720,8 @@ private fun PairingPage(model: OnboardingViewModel, clock: androidx.compose.runt
     val heard by model.heard.collectAsStateWithLifecycle()
     val pairs = remember(heard, model.bonded) {
         val byAddress = heard.associateBy { it.address }
-        heard.sortedWith(compareByDescending<NearbyPair> { it.pairing }.thenByDescending { it.rssi ?: -127 }) +
+        // First heard first, so rows do not swap under the finger as signal strength moves.
+        heard.sortedByDescending { it.pairing } +
             model.bonded.filter { it.address !in byAddress }
     }
     var waited by remember { mutableStateOf(false) }
@@ -701,13 +745,13 @@ private fun PairingPage(model: OnboardingViewModel, clock: androidx.compose.runt
             when {
                 model.bluetoothOff -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.onboard_bluetooth_off), style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
-                    BigPill(stringResource(R.string.onboard_turn_on), {
+                    WidePill(stringResource(R.string.onboard_turn_on), {
                         runCatching { context.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     }, Modifier.width(140.dp))
                 }
                 pairs.isEmpty() -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        com.macedonga.visor.settings.Spinner()
+                        Spinner()
                         Text(stringResource(R.string.onboard_looking), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
                     }
                     AnimatedVisibility(waited, enter = fadeIn(tween(600))) {
@@ -715,10 +759,10 @@ private fun PairingPage(model: OnboardingViewModel, clock: androidx.compose.runt
                     }
                 }
                 else -> {
-                    Text(stringResource(R.string.onboard_nearby), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(bottom = 8.dp))
-                    Column(Modifier.clip(RoundedCornerShape(18.dp)).background(Visor.colors.surface)) {
+                    Text(stringResource(R.string.onboard_nearby), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.asHeading().padding(bottom = 8.dp))
+                    Column(Modifier.clip(RoundedCornerShape(CARD_RADIUS)).background(Visor.colors.raised)) {
                         pairs.forEachIndexed { i, pair ->
-                            if (i > 0) Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(0.5.dp).background(Visor.colors.hairline))
+                            if (i > 0) Hairline()
                             PairRow(pair, pair.address.uppercase() in model.setUpHere) { model.choose(pair) }
                         }
                     }
@@ -736,7 +780,7 @@ private fun StepLine(index: Int, text: String, current: Boolean, seconds: Int?, 
         Text("$index", style = Visor.type.label, color = colour, modifier = Modifier.width(22.dp).padding(top = 3.dp))
         Text(text, style = Visor.type.body, color = colour, modifier = Modifier.weight(1f))
         if (seconds != null && current) {
-            Text(stringResource(R.string.onboard_pair_seconds, seconds), style = Visor.type.label, color = colors.lightCold, modifier = Modifier.padding(start = 10.dp, top = 3.dp))
+            Text(stringResource(R.string.onboard_pair_seconds, seconds), style = Visor.type.label, color = colors.textPrimary, modifier = Modifier.padding(start = 10.dp, top = 3.dp))
         }
     }
 }
@@ -757,7 +801,7 @@ private fun PairRow(pair: NearbyPair, setUpHere: Boolean, onClick: () -> Unit) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(pair.name, style = Visor.type.body, color = colors.textPrimary)
-            Text(stringResource(state), style = Visor.type.label, color = if (pair.pairing) colors.lightCold else colors.textSecondary, modifier = Modifier.padding(top = 2.dp))
+            Text(stringResource(state), style = Visor.type.label, color = if (state == R.string.onboard_ready_to_pair) colors.textPrimary else colors.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
         pair.rssi?.let { SignalBars(it) }
         Icon(VisorIcons.Chevron, null, Modifier.padding(start = 10.dp).size(16.dp), tint = colors.textTertiary)
@@ -782,7 +826,7 @@ private fun SignalBars(rssi: Int) {
                 if (i < level) on else off,
                 topLeft = Offset(i * 2 * w, size.height - h),
                 size = Size(w, h),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2),
+                cornerRadius = CornerRadius(w / 2),
             )
         }
     }
@@ -796,6 +840,7 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
     val done = status as? Provisioner.Status.Done
     val failure = status as? Provisioner.Status.Failed
     val reached = (status as? Provisioner.Status.Running)?.reached.orEmpty()
+    val enable = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { if (it.resultCode == Activity.RESULT_OK) model.link() }
     Column(modifier, verticalArrangement = Arrangement.Bottom) {
         when {
             done != null -> {
@@ -804,7 +849,6 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                     stringResource(R.string.onboard_ready_sub, model.chosen?.name ?: stringResource(R.string.glasses_default_name)),
                     style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp),
                 )
-                if (!done.reusedKey) Text(stringResource(R.string.onboard_new_key), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
                 Spacer(Modifier.height(32.dp))
                 // A Display goes on to its band, which can wait; other glasses are done here.
                 LaunchedEffect(done.target) { model.connect(done.target) }
@@ -820,12 +864,15 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                 }
                 when {
                     display == true -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        QuietButton(stringResource(R.string.onboard_band_later), open)
+                        WidePill(stringResource(R.string.onboard_band_later), open, quiet = true)
                         Spacer(Modifier.width(12.dp))
-                        BigPill(stringResource(R.string.onboard_band_next), model::toBand, Modifier.weight(1f))
+                        WidePill(stringResource(R.string.onboard_band_next), model::toBand, Modifier.weight(1f))
                     }
-                    display == null && !waited -> BigPill(stringResource(R.string.onboard_band_connecting), {}, enabled = false)
-                    else -> BigPill(stringResource(R.string.onboard_open), open)
+                    display == null && !waited -> Row(Modifier.height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Spinner()
+                        Text(stringResource(R.string.onboard_band_connecting), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+                    }
+                    else -> WidePill(stringResource(R.string.onboard_open), open, Modifier.fillMaxWidth())
                 }
             }
             bondFailure != null || failure != null -> {
@@ -834,21 +881,26 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                     BondFailed.Why.REFUSED -> stringResource(R.string.onboard_bond_refused)
                     BondFailed.Why.NO_ANSWER -> stringResource(R.string.onboard_bond_no_answer)
                     BondFailed.Why.BLUETOOTH_OFF -> stringResource(R.string.onboard_bluetooth_off)
-                    null -> if (failure?.wrongOwner == true) stringResource(R.string.onboard_wrong_owner) else failure?.reason.orEmpty()
+                    null -> if (failure?.wrongOwner == true) {
+                        stringResource(R.string.onboard_wrong_owner)
+                    } else {
+                        failure?.reached?.lastOrNull()?.let { stringResource(R.string.onboard_stopped_at, stringResource(it.label())) }.orEmpty()
+                    }
                 }
-                Text(reason, style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
-                if (failure != null) Text(stringResource(R.string.onboard_failed_untouched), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
+                if (reason.isNotEmpty()) Text(reason, style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
                 Spacer(Modifier.height(32.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    QuietButton(stringResource(R.string.onboard_choose_again)) {
+                    WidePill(stringResource(R.string.onboard_choose_again), {
                         model.provisioner.reset()
                         model.back()
-                    }
+                    }, quiet = true)
                     Spacer(Modifier.width(12.dp))
-                    if (failure?.wrongOwner == true) {
-                        BigPill(stringResource(R.string.onboard_login_other), model::otherAccount, Modifier.weight(1f))
-                    } else {
-                        BigPill(stringResource(R.string.onboard_try_again), { model.link() }, Modifier.weight(1f))
+                    when {
+                        failure?.wrongOwner == true -> WidePill(stringResource(R.string.onboard_login_other), model::otherAccount, Modifier.weight(1f))
+                        bondFailure == BondFailed.Why.BLUETOOTH_OFF -> WidePill(stringResource(R.string.onboard_turn_on), {
+                            runCatching { enable.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
+                        }, Modifier.weight(1f))
+                        else -> WidePill(stringResource(R.string.try_again), { model.link() }, Modifier.weight(1f))
                     }
                 }
             }
@@ -856,17 +908,15 @@ private fun LinkingPage(model: OnboardingViewModel, status: Provisioner.Status, 
                 val bonding = model.bonding || status == Provisioner.Status.Idle
                 Text(
                     stringResource(if (bonding) R.string.onboard_linking_title else R.string.onboard_owning_title),
-                    style = Visor.type.title, color = colors.textPrimary,
+                    style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading(),
                 )
                 AnimatedContent(
                     targetState = if (bonding) R.string.onboard_confirm else reached.lastOrNull()?.label() ?: R.string.onboard_step_connect,
                     transitionSpec = { fadeIn(tween(300, delayMillis = 120)) togetherWith fadeOut(tween(120)) },
                     label = "step",
                 ) { text -> Text(stringResource(text), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp)) }
-                val progress by animateFloatAsState(if (bonding) 0.04f else (reached.size + 0.5f) / ProvisionStep.entries.size, tween(600, easing = SETTLE), label = "progress")
-                Box(Modifier.padding(top = 22.dp).fillMaxWidth().height(2.dp).clip(CircleShape).background(colors.control)) {
-                    Box(Modifier.fillMaxWidth(progress).height(2.dp).background(Color.White))
-                }
+                val progress by animateFloatAsState(if (bonding) 0.04f else (reached.size + 0.5f) / ProvisionStep.entries.size, tween(600, easing = SETTLE_EASE), label = "progress")
+                ProgressBar(progress, Modifier.padding(top = 22.dp))
                 Text(stringResource(R.string.onboard_keep_close), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
             }
         }
@@ -893,45 +943,41 @@ private fun BandPage(model: OnboardingViewModel, status: Provisioner.Status, onD
             BandPair.Status.Done -> {
                 Text(stringResource(R.string.onboard_band_done), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
                 Text(stringResource(R.string.onboard_band_wrist), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
-                Row(Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    for (left in listOf(true, false)) {
-                        val words = stringResource(if (left) R.string.onboard_band_left else R.string.onboard_band_right)
-                        val pick: () -> Unit = {
-                            if (!wristBusy) {
-                                wristBusy = true
-                                wristProblem = null
-                                scope.launch {
-                                    val outcome = model.bandLink.setWrist(left)
-                                    if (outcome == BandErrand.DONE) wrist = left else wristProblem = outcome
-                                    wristBusy = false
-                                }
-                            }
-                        }
-                        if (wrist == left) BigPill(words, pick, Modifier.width(120.dp)) else QuietButton(words, pick)
+                fun pick(left: Boolean) {
+                    if (wristBusy) return
+                    wristBusy = true
+                    wristProblem = null
+                    scope.launch {
+                        val outcome = model.bandLink.setWrist(left)
+                        if (outcome == BandErrand.DONE) wrist = left else wristProblem = outcome
+                        wristBusy = false
                     }
-                    if (wristBusy) com.macedonga.visor.settings.Spinner()
                 }
-                if (wristProblem != null) {
-                    Text(stringResource(R.string.band_pair_fail_no_answer), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 10.dp))
+                Row(Modifier.padding(top = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Pills(listOf(true to stringResource(R.string.band_left), false to stringResource(R.string.band_right)), wrist, on = Visor.colors.raised) { left -> pick(left) }
+                    if (wristBusy) Spinner()
+                }
+                errandProblem(wristProblem)?.let {
+                    Text(it, style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 10.dp))
                 }
                 Spacer(Modifier.height(32.dp))
-                BigPill(stringResource(R.string.onboard_open), finish, enabled = !wristBusy)
+                WidePill(stringResource(R.string.onboard_open), finish, Modifier.fillMaxWidth(), enabled = !wristBusy)
             }
             is BandPair.Status.Failed -> {
                 Text(stringResource(R.string.onboard_band_failed), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
-                Text(com.macedonga.visor.settings.pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
+                Text(pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
                 Spacer(Modifier.height(32.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    QuietButton(stringResource(R.string.onboard_band_later), finish)
+                    WidePill(stringResource(R.string.onboard_band_later), finish, quiet = true)
                     Spacer(Modifier.width(12.dp))
-                    BigPill(stringResource(R.string.onboard_try_again), model.bandPair::start, Modifier.weight(1f))
+                    WidePill(stringResource(R.string.try_again), model.bandPair::start, Modifier.weight(1f))
                 }
             }
             is BandPair.Status.Running -> {
                 Text(stringResource(R.string.onboard_band_title), style = Visor.type.title, color = colors.textPrimary, modifier = Modifier.asHeading())
                 Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    com.macedonga.visor.settings.Spinner()
-                    Text(com.macedonga.visor.settings.pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+                    Spinner()
+                    Text(pairWords(s).orEmpty(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
                 }
                 Text(stringResource(R.string.onboard_band_keep_close), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.padding(top = 14.dp))
             }
@@ -940,9 +986,9 @@ private fun BandPage(model: OnboardingViewModel, status: Provisioner.Status, onD
                 Text(stringResource(R.string.onboard_band_body), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 10.dp))
                 Spacer(Modifier.height(32.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    QuietButton(stringResource(R.string.onboard_band_later), finish)
+                    WidePill(stringResource(R.string.onboard_band_later), finish, quiet = true)
                     Spacer(Modifier.width(12.dp))
-                    BigPill(stringResource(R.string.onboard_band_pair), model.bandPair::start, Modifier.weight(1f))
+                    WidePill(stringResource(R.string.onboard_band_pair), model.bandPair::start, Modifier.weight(1f))
                 }
             }
         }
@@ -950,23 +996,14 @@ private fun BandPage(model: OnboardingViewModel, status: Provisioner.Status, onD
 }
 
 private fun ProvisionStep.label(): Int = when (this) {
-    ProvisionStep.TOKEN -> R.string.onboard_step_token
-    ProvisionStep.CONNECT -> R.string.onboard_step_connect
-    ProvisionStep.SECURE_LINK -> R.string.onboard_step_secure
-    ProvisionStep.IDENTITY -> R.string.onboard_step_identity
-    ProvisionStep.SKIP_CHALLENGE -> R.string.onboard_step_skip
-    ProvisionStep.PAIR_REQUEST -> R.string.onboard_step_pair_request
-    ProvisionStep.START_CHANGE_OWNER -> R.string.onboard_step_start
-    ProvisionStep.PAIR -> R.string.onboard_step_pair
-    ProvisionStep.FINISH_CHANGE_OWNER -> R.string.onboard_step_finish
+    ProvisionStep.TOKEN -> R.string.onboard_step_meta
+    ProvisionStep.CONNECT, ProvisionStep.SECURE_LINK, ProvisionStep.IDENTITY, ProvisionStep.SKIP_CHALLENGE -> R.string.onboard_step_connect
+    ProvisionStep.PAIR_REQUEST, ProvisionStep.START_CHANGE_OWNER, ProvisionStep.PAIR, ProvisionStep.FINISH_CHANGE_OWNER -> R.string.onboard_step_finish
 }
 
-/**
- * On the pair, where the 3D parts are: a soft white-to-blue light around the capture button, a gradient ring turning
- * around it and the five seconds closing as an arc; then the inner LED's blue bloom, blinking with it.
- */
+/** The capture button's light and hold ring, and the inner LED, drawn over the pair. */
 @Composable
-private fun Marks(clock: androidx.compose.runtime.MutableFloatState) {
+private fun Marks(clock: MutableFloatState) {
     val stage = LocalStage.current
     val cold = Visor.colors.lightCold
     Canvas(Modifier.fillMaxSize()) {
@@ -1085,77 +1122,7 @@ private object Demo {
     private const val BLINK_SECONDS = 0.9f
 }
 
-/**
- * The one kind of button that moves the setup on: a white pill, wide, with a soft glow under it. It gives a little
- * under the finger, a new label slides in over the old one, and it fades when it cannot be pressed.
- */
-@Composable
-internal fun BigPill(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    val touch = remember { MutableInteractionSource() }
-    val pressed by touch.collectIsPressedAsState()
-    val give by animateFloatAsState(if (pressed) 0.96f else 1f, spring(dampingRatio = 0.6f, stiffness = 700f), label = "press")
-    val shown by animateFloatAsState(if (enabled) 1f else 0.35f, tween(260), label = "enabled")
-    Box(
-        modifier
-            .fillMaxWidth()
-            .height(54.dp)
-            .graphicsLayer {
-                scaleX = give
-                scaleY = give
-                alpha = shown
-            }
-            .drawBehind {
-                // A glow under the pill, as if it gave off light of its own.
-                drawRoundRect(
-                    Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f * shown), Color.Transparent), startY = size.height * 0.4f, endY = size.height + 18.dp.toPx()),
-                    topLeft = Offset(10.dp.toPx(), size.height * 0.4f),
-                    size = Size(size.width - 20.dp.toPx(), size.height * 0.6f + 18.dp.toPx()),
-                    cornerRadius = CornerRadius(27.dp.toPx()),
-                )
-            }
-            .clip(RoundedCornerShape(50))
-            .background(Brush.verticalGradient(listOf(Color.White, Color(0xFFE9E9EC))))
-            .clickable(interactionSource = touch, indication = null, enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        AnimatedContent(
-            targetState = text,
-            transitionSpec = {
-                (fadeIn(tween(220, delayMillis = 60)) + slideInVertically(tween(320, easing = SETTLE)) { it / 2 })
-                    .togetherWith(fadeOut(tween(140)) + slideOutVertically(tween(220)) { -it / 2 })
-            },
-            label = "label",
-        ) { words ->
-            Text(words, style = Visor.type.body, color = Color.Black, textAlign = TextAlign.Center)
-        }
-    }
-}
-
-/** The other way on, for what can wait: an outlined pill that gives a little under the finger. */
-@Composable
-internal fun QuietButton(text: String, onClick: () -> Unit) {
-    val touch = remember { MutableInteractionSource() }
-    val pressed by touch.collectIsPressedAsState()
-    val give by animateFloatAsState(if (pressed) 0.95f else 1f, spring(dampingRatio = 0.6f, stiffness = 700f), label = "press")
-    Box(
-        Modifier
-            .height(54.dp)
-            .graphicsLayer {
-                scaleX = give
-                scaleY = give
-            }
-            .clip(RoundedCornerShape(50))
-            .border(1.dp, Visor.colors.control, RoundedCornerShape(50))
-            .clickable(interactionSource = touch, indication = null, onClick = onClick)
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, style = Visor.type.body, color = Visor.colors.textSecondary)
-    }
-}
-
-internal val SETTLE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-internal val LED_BLUE = Color(0xFF2F6BFF)
+private val LED_BLUE = Color(0xFF2F6BFF)
 /** How closely the pair follows the story's turns: a camera with a little weight. */
 private const val FOLLOW_SECONDS = 0.18f
 private const val CAMERA_SECONDS = 0.5f

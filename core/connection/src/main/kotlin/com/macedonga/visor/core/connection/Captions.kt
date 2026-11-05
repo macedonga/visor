@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.connection
 
+import com.macedonga.visor.core.protocol.SVC_TRANSLATION
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.LinkState
 import java.util.UUID
@@ -52,7 +53,7 @@ class Captions(private val connection: GlassesConnection) {
         scope.launch {
             connection.serviceData.collect { data ->
                 when (data.serviceId) {
-                    SVC_COMPANION -> fromAppManager(data.messageType, runCatching { Wire.parse(data.payload).varint(1) }.getOrDefault(0L))
+                    SVC_STATUS -> fromAppManager(data.messageType, data.payload)
                     SVC_TRANSLATION -> runCatching { fromSession(data.messageType, Wire.parse(data.payload)) }
                 }
             }
@@ -67,10 +68,12 @@ class Captions(private val connection: GlassesConnection) {
     /** Start [mode] for a wearer speaking [self] with others speaking [other], codes such as "en"; the same for captions. */
     fun start(mode: CaptionsMode, self: String, other: String) {
         if (connection.state.value.link != LinkState.READY) return
-        val data = intent("action.lst_lc.self_lang", self) + intent("action.lst_lc.other_lang", other) +
-            intent("action.lst_lc.request_id", UUID.randomUUID().toString()) + intent("action.lst_lc.action", action(mode, "start"))
+        val data = listOf(
+            SnApp.data("action.lst_lc.self_lang", self), SnApp.data("action.lst_lc.other_lang", other),
+            SnApp.data("action.lst_lc.request_id", UUID.randomUUID().toString()), SnApp.data("action.lst_lc.action", action(mode, "start")),
+        )
         _state.value = _state.value.restart(CaptionsPhase.STARTING, mode)
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_START_APP, Wire.fieldVarint(1, APP_TRANSLATION) + data) }
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_START_APP, SnApp.app(APP_TRANSLATION, data)) }
         settleAfter { if (it.phase == CaptionsPhase.STARTING) it.copy(phase = CaptionsPhase.LIVE) else it }
     }
 
@@ -78,21 +81,22 @@ class Captions(private val connection: GlassesConnection) {
         val now = _state.value
         if (now.phase == CaptionsPhase.IDLE) return
         _state.update { it.copy(phase = CaptionsPhase.STOPPING) }
-        val data = intent("action.lst_lc.action", action(now.mode, "stop")) + intent("action.lst_lc.request_id", UUID.randomUUID().toString())
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_STOP_APP, Wire.fieldVarint(1, APP_TRANSLATION) + data) }
+        val data = listOf(SnApp.data("action.lst_lc.action", action(now.mode, "stop")), SnApp.data("action.lst_lc.request_id", UUID.randomUUID().toString()))
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_STOP_APP, SnApp.app(APP_TRANSLATION, data)) }
         settleAfter { if (it.phase == CaptionsPhase.STOPPING) it.copy(phase = CaptionsPhase.IDLE) else it }
     }
 
     // Other apps' starts and stops are answered here too; only the one being waited for counts.
-    private fun fromAppManager(type: Int, code: Long) {
+    private fun fromAppManager(type: Int, payload: ByteArray) {
         val phase = _state.value.phase
-        if (type == MT_START_APP_RESPONSE && phase == CaptionsPhase.STARTING) {
+        if (type == SnApp.MT_START_APP_RESPONSE && phase == CaptionsPhase.STARTING) {
+            val code = runCatching { Wire.parse(payload).varint(1) }.getOrDefault(0L)
             wait?.cancel()
             _state.update {
-                if (code == Teleprompter.SNAPP_SUCCESS || code == Teleprompter.SNAPP_ALREADY_STARTED) it.copy(phase = CaptionsPhase.LIVE)
+                if (SnApp.started(code)) it.copy(phase = CaptionsPhase.LIVE)
                 else it.copy(phase = CaptionsPhase.IDLE, refusal = code)
             }
-        } else if (type == MT_STOP_APP_RESPONSE && phase == CaptionsPhase.STOPPING) {
+        } else if (type == SnApp.MT_STOP_APP_RESPONSE && phase == CaptionsPhase.STOPPING) {
             wait?.cancel()
             _state.update { it.copy(phase = CaptionsPhase.IDLE) }
         }
@@ -155,16 +159,7 @@ class Captions(private val connection: GlassesConnection) {
     private fun action(mode: CaptionsMode, verb: String) =
         if (mode == CaptionsMode.TRANSLATION) "action.speech_translation.$verb" else "action.speech_caption.$verb"
 
-    private fun intent(key: String, value: String): ByteArray =
-        Wire.fieldBytes(3, Wire.fieldBytes(1, key.encodeToByteArray()) + Wire.fieldBytes(5, value.encodeToByteArray()))
-
     private companion object {
-        const val SVC_COMPANION = 28
-        const val SVC_TRANSLATION = 72
-        const val MT_START_APP = 2000
-        const val MT_START_APP_RESPONSE = 2001
-        const val MT_STOP_APP = 2002
-        const val MT_STOP_APP_RESPONSE = 2003
         const val MT_TWO_WAY_TRANSLATION = 1
         const val MT_INVITE_TO_JOIN = 2
         const val MT_END_FROM_FRAME = 4

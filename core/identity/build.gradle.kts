@@ -28,11 +28,9 @@ android {
 }
 
 dependencies {
-    // api rather than implementation: this module's public API is largely made of the session
-    // layer's types.
+    // api: this module's API exposes session types.
     api(project(":core:session"))
 
-    // The two third-party dependencies in this module.
     implementation(libs.bouncycastle)
     implementation(libs.kotlinx.serialization.json)
 }

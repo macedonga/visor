@@ -6,28 +6,19 @@ import java.security.PrivateKey
 import java.security.interfaces.ECPrivateKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
+import org.bouncycastle.asn1.x9.ECNamedCurveTable
 
 /** The PEM is not a key, or not a key of the right kind. */
 class CredentialsException(message: String, cause: Throwable? = null) :
     Exception(message, cause)
 
-/** Where the client's identity comes from. */
-interface Credentials {
+/** The owner key of an [IdentityBundle]. */
+class BundleCredentials(private val bundle: IdentityBundle) {
 
-    val appEcKey: PrivateKey
+    val appEcKey: PrivateKey by lazy { readPrivateKeyPem(bundle.privateKeyPem) }
 
-    /** The public key as 64 raw bytes, x concatenated with y. */
-    val appPublicKey: ByteArray
-}
-
-/** A [Credentials] backed by an [IdentityBundle]. */
-class BundleCredentials(private val bundle: IdentityBundle) : Credentials {
-
-    private val key: PrivateKey by lazy { readPrivateKeyPem(bundle.privateKeyPem) }
-
-    override val appEcKey: PrivateKey get() = key
-
-    override val appPublicKey: ByteArray by lazy { publicKeyOf(key) }
+    /** The public key as 64 raw bytes, x then y. */
+    val appPublicKey: ByteArray by lazy { publicKeyOf(appEcKey) }
 
     /** Says which identity, never anything about the key. */
     override fun toString(): String = "BundleCredentials(serial=${bundle.serial})"
@@ -41,15 +32,13 @@ internal fun publicKeyOf(key: PrivateKey): ByteArray {
     return point.affineXCoord.encoded + point.affineYCoord.encoded
 }
 
-private val SECP256R1 = org.bouncycastle.asn1.x9.ECNamedCurveTable.getByName("secp256r1")
+private val SECP256R1 = ECNamedCurveTable.getByName("secp256r1")
 
-/** What `serialization.load_pem_private_key(pem, password=None)` does, spelled out. */
+/** The EC private key in a PKCS#8 or SEC1 PEM. */
 fun readPrivateKeyPem(pem: ByteArray): PrivateKey {
     val text = String(pem, Charsets.US_ASCII)
     return when {
-        text.contains(ENCRYPTED_HEADER) -> throw CredentialsException(
-            "the owner key is encrypted. Export it without a passphrase and import it again.",
-        )
+        text.contains(ENCRYPTED_HEADER) -> throw CredentialsException("the owner key is encrypted")
 
         text.contains(SEC1_HEADER) ->
             Ecdh.privateKeyFromScalar(sec1Scalar(derBody(text, SEC1_HEADER, SEC1_FOOTER)))
@@ -59,9 +48,7 @@ fun readPrivateKeyPem(pem: ByteArray): PrivateKey {
             val key = try {
                 KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
             } catch (error: Exception) {
-                // An RSA key in a PKCS#8 PEM lands here: the header is identical and only the
-                // algorithm identifier inside says otherwise, so the EC key factory is what
-                // discovers it.
+                // An RSA key in a PKCS#8 PEM fails here.
                 throw CredentialsException("the owner key is not an elliptic curve key", error)
             }
             key
@@ -102,5 +89,3 @@ private fun sec1Scalar(der: ByteArray): ByteArray = try {
 } catch (error: DerException) {
     throw CredentialsException("the owner key is not in the expected format", error)
 }
-
-// DIVERGENCE: `ExtractedCredentials` does not port.

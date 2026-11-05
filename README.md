@@ -46,7 +46,7 @@ Visor works with Ray-Ban Meta, Oakley Meta and the other Meta glasses. It speaks
 ## Requirements
 
 - **Glasses:** a pair of Meta glasses, such as Ray-Ban Meta, Oakley Meta or the Meta Ray-Ban Display. Support for the Display and its Neural Band is newer and does not yet cover everything the Meta AI app does.
-- **Phone:** Android 10 or later.
+- **Phone:** Android 12 or later.
 - **Meta account**, for setup. Log in with a password or an email code. Passkeys do not work.
 - **For the assistant:** an API key from Anthropic or from an OpenAI-compatible service.
 
@@ -76,10 +76,12 @@ Visor has no server of its own, no analytics and no crash reporting. It connects
 
 | To | When | What for |
 |---|---|---|
-| Meta (`accounts.meta.com`, `graph.facebook-hardware.com`) | During setup | The login, and the ownership receipt that makes Visor the owner app of your glasses |
-| Meta (`ar-genai.graph.meta.com`) | When it needs to | Your pair's frame style and lens colour, and assistant language packs |
+| Meta (`accounts.meta.com`, `api.accounts.meta.com`, `meta.graph.meta.com`, `ar.graph.meta.com`, `graph.facebook-hardware.com`) | During setup | The login, and the ownership receipt that makes Visor the owner app of your glasses |
+| Meta (`ar-genai.graph.meta.com`) | When it needs to | Your pair's frame style and lens colour, assistant language packs, and the Display's weather, sports and stocks |
+| Meta (`ar.graph.meta.com`, `graph.facebook.com`, `i.instagram.com`) | When you link a Facebook, Instagram or Threads account to the glasses | That account's tokens and ids, which Visor hands to the glasses |
 | Your model provider | When you ask the assistant | Your question, with your own API key |
 | Your RTMP server | When you broadcast from the Live view | The broadcast |
+| OpenStreetMap (`nominatim.openstreetmap.org`, `routing.openstreetmap.de`) | When Maps on the Display searches or plans a route | The search with your position, and the route's start and end |
 | GitHub (`api.github.com`) | Twice a day | The latest release, to tell you about a new version. Turn it off in Settings, About. |
 
 Everything else stays between the phone and the glasses.
@@ -142,7 +144,7 @@ A tag like `v1.2.3` builds the signed release APK in CI and publishes it as a Gi
 | Module | What it holds |
 |---|---|
 | `core/protocol` | Wire format, ciphers, handshake messages. Plain JVM. |
-| `core/transport` | The RFCOMM byte pipe and the wire log. |
+| `core/transport` | The LE L2CAP, RFCOMM and TCP byte pipes, and the wire log. |
 | `core/session` | The link: handshake, channel mux, reconnect ladder. |
 | `core/identity` | Owner key store, trust, Meta login, change of owner, language packs. |
 | `core/connection` | `GlassesConnection` and `GlassesState`, device status. |

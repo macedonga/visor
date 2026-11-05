@@ -20,7 +20,7 @@ internal fun publish(resolver: ContentResolver, uri: Uri): String {
         // A plain query leaves pending rows out.
         resolver.query(uri, ROW, null, null, null)?.use { c ->
             if (c.moveToFirst()) {
-                val taken = c.getLong(3).takeIf { it > 0 }?.let { " taken " + TAKEN.format(Instant.ofEpochMilli(it)) } ?: ", no date"
+                val taken = c.getLong(3).takeIf { it > 0 }?.let { " taken " + TAKEN.format(Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault())) } ?: ", no date"
                 return "${c.getString(0).orEmpty()}${c.getString(1).orEmpty()}, ${sizeWords(c.getLong(2))}$taken"
             }
         }
@@ -33,4 +33,4 @@ private val ROW = arrayOf(
     MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_TAKEN,
 )
 
-private val TAKEN: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy HH:mm").withZone(ZoneId.systemDefault())
+private val TAKEN: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy HH:mm")

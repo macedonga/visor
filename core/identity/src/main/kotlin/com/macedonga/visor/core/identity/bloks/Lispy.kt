@@ -28,7 +28,7 @@ object Lispy {
     private class Reader(val text: String) {
         var at = 0
 
-        private fun isSpace(c: Char) = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == '﻿'
+        private fun isSpace(c: Char) = c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == ',' || c == '\u000c' || c == '\uFEFF'
 
         fun skipSpace() {
             while (at < text.length && isSpace(text[at])) at++
@@ -66,7 +66,7 @@ object Lispy {
 
         private fun readAtom(): String {
             val start = at
-            while (at < text.length && !isSpace(text[at]) && text[at] != '(' && text[at] != ')' && text[at] != '\u000c') at++
+            while (at < text.length && !isSpace(text[at]) && text[at] != '(' && text[at] != ')') at++
             require(at > start) { "empty atom at $start" }
             return text.substring(start, at)
         }
@@ -108,7 +108,7 @@ object Lispy {
     }
 }
 
-/** Function ids and names, from the Meta AI 294 runtime (`X/AbstractC33928IQo`). */
+/** Function ids and names of the Meta AI 294 runtime. */
 object Functions {
     private val byId: Map<Int, String>
     private val byName: Map<String, Int>
@@ -120,10 +120,6 @@ object Functions {
     }
 
     fun name(id: Int): String = byId[id] ?: "#$id"
-
-    fun names(): Collection<String> = byId.values
-
-    val count: Int get() = byId.size
 
     fun id(name: String): Int = byName[name] ?: throw IllegalArgumentException("unknown function $name")
 }

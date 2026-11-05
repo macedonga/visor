@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import com.macedonga.visor.R
+import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.transport.META_LE_SERVICE
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -37,18 +38,14 @@ class BondFailed(val why: Why) : Exception(why.name) {
     enum class Why { REFUSED, NO_ANSWER, BLUETOOTH_OFF }
 }
 
-/**
- * Finds glasses the way the Meta app does: an LE scan for Meta's company id (0x01AB) or their GATT service (0xFD5F),
- * whose manufacturer data says the product and whether pairing is open (lensbreak's link/ble.py). Bonds them over LE;
- * the glasses derive the classic key from it, so RFCOMM and L2CAP both work afterwards.
- */
+/** Finds Meta glasses (company id 0x01AB or service 0xFD5F) and bonds them over LE; the glasses derive the classic key from it. */
 @Singleton
 class NearbyGlasses @Inject constructor(@ApplicationContext private val context: Context) {
     private val adapter: BluetoothAdapter? get() = context.getSystemService(BluetoothManager::class.java)?.adapter
 
     val enabled: Boolean get() = adapter?.isEnabled == true
 
-    /** What is heard nearby, newest state first, refreshed while collected; a pair not heard for a while drops out. */
+    /** What is heard nearby, refreshed while collected; a pair not heard for a while drops out. */
     @SuppressLint("MissingPermission")
     fun scan(): Flow<List<NearbyPair>> = callbackFlow {
         val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner
@@ -89,6 +86,11 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         val sweep = launch {
             while (true) {
                 delay(SWEEP_MS)
+                // Bluetooth turned off stops the scan with no callback.
+                if (adapter?.isEnabled != true) {
+                    close(BondFailed(BondFailed.Why.BLUETOOTH_OFF))
+                    break
+                }
                 publish()
             }
         }
@@ -106,11 +108,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
             .map { NearbyPair(it.address, it.name, null, pairing = false, bonded = true) }
     }.getOrDefault(emptyList())
 
-    /**
-     * Bonds [address] if it is not already, and returns the address the bond is kept under: the glasses' identity
-     * address, which may differ from the one they advertised with. Watched by polling, not by the bond broadcast: that
-     * one names the identity address, so it never matched the advertised one and the setup waited for nothing.
-     */
+    /** Bonds [address]; returns the identity address the bond is kept under. Polled: the bond broadcast names only that address. */
     @SuppressLint("MissingPermission")
     suspend fun bond(address: String): String {
         val adapter = adapter?.takeIf { it.isEnabled } ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
@@ -161,7 +159,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
     }
 
     /** Stops a bond still under way with [address]. */
-    @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission", "NewApi") // public from 37, a hidden but callable method before; runCatching takes a refusal
     fun cancelBond(address: String): Boolean = runCatching { adapter?.getRemoteDevice(address)?.cancelBondProcess() == true }.getOrDefault(false)
 
     /** Every bonded device as address and type (1 classic, 2 LE, 3 dual). */
@@ -214,11 +212,11 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         else Advert(u(0) or (u(1) shl 8), u(2) and 1 != 0)
     }
 
-    private fun productName(product: Int?) = when (product) {
-        257 -> "Ray-Ban Stories"
-        259, 270, 271 -> "Meta Ray-Ban Display"
-        264 -> "Oakley Meta Vanguard"
-        265 -> "Oakley Meta HSTN"
+    private fun productName(product: Int?) = when {
+        product == 257 -> "Ray-Ban Stories"
+        isDisplayProduct(product) -> "Meta Ray-Ban Display"
+        product == 264 -> "Oakley Meta Vanguard"
+        product == 265 -> "Oakley Meta HSTN"
         else -> context.getString(R.string.glasses_default_name)
     }
 
@@ -231,8 +229,8 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         const val BAND_SCAN_MS = 15_000L
         const val POLL_MS = 400L
         val GLASSES_NAME = Regex("ray-?ban|meta|oakley|stories", RegexOption.IGNORE_CASE)
-
-        // The Neural Band, "Meta Band 0064": set up from the Display's settings, never as glasses.
-        val BAND_NAME = Regex("^meta band", RegexOption.IGNORE_CASE)
     }
 }
+
+// The Neural Band, "Meta Band 0064": never listed as glasses.
+internal val BAND_NAME = Regex("^meta band", RegexOption.IGNORE_CASE)

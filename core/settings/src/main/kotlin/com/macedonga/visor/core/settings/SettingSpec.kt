@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.settings
 
+import com.macedonga.visor.core.connection.objects
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,8 +13,6 @@ data class SettingSpec(
     val control: Control,
     // The key says "disabled" and the label is the positive form, so the switch shows the opposite.
     val invert: Boolean,
-    // Shown by the Meta app; the rest are internal knobs.
-    val userFacing: Boolean,
     val confidence: String,
     // Meta product ids the Meta app shows this on (null: all), and ones it never does.
     val products: Set<Int>? = null,
@@ -27,16 +26,6 @@ fun Control.Option.offeredOn(product: Int?) = offered(products, notProducts, pro
 
 private fun offered(only: Set<Int>?, not: Set<Int>, product: Int?) =
     product == null || (product !in not && (only == null || product in only))
-
-/** The Meta app's product ids by the codename a build fingerprint names, "Meta/hammerhead/greathammerhead:14/...". */
-private val PRODUCT_IDS = mapOf(
-    "stella" to 257, "hammerhead" to 258, "greatwhite" to 259, "zebra" to 262, "lager" to 263, "mako" to 264,
-    "pylades" to 265, "greathammerhead" to 266, "topaz" to 267, "orca" to 268, "oatmeal" to 269, "diamond" to 514,
-    "colada" to 770, "tiki" to 771, "swiftlet" to 1537, "ithaca" to 1538, "amethyst" to 1793, "solvang" to 2049,
-)
-
-fun productId(build: String?): Int? =
-    build?.split('/')?.getOrNull(2)?.substringBefore(':')?.lowercase()?.let { PRODUCT_IDS[it] }
 
 sealed interface Control {
     data object Toggle : Control
@@ -57,12 +46,6 @@ sealed interface Control {
 
     /** An open count or size: no bounds exist beyond the optional [min] and [max]. */
     data class Number(val unit: String, val min: Long?, val max: Long?) : Control
-
-    /** Stored in [unit] ("ms", "s" or "min"), either one of [options] or anywhere in [min]..[max]. */
-    data class Duration(val unit: String, val options: List<Long>, val min: Long?, val max: Long?) : Control
-
-    /** An instant the glasses keep, in [unit] since the epoch. */
-    data class Timestamp(val unit: String) : Control
 
     data class Text(val max: Int, val what: String) : Control
 
@@ -86,7 +69,7 @@ sealed interface Control {
     /** An encoded value with a known layout; [schema] is the field map an editor is built from. */
     data class Structured(val format: String, val schema: JSONObject) : Control
 
-    data class ReadOnly(val why: String) : Control
+    data object ReadOnly : Control
 }
 
 /** The display order of groups. */
@@ -100,7 +83,7 @@ val GROUPS = listOf(
 internal fun loadSpecs(): Map<String, SettingSpec> {
     val stream = GlassesSettings::class.java.getResourceAsStream("settings_ui.json") ?: return emptyMap()
     val array = JSONArray(stream.bufferedReader().use { it.readText() })
-    return (0 until array.length()).map { parseSpec(array.getJSONObject(it)) }.associateBy { it.key }
+    return array.objects().map(::parseSpec).associateBy { it.key }
 }
 
 // The Meta app's own translation where the catalogue has one ("label_it"), else the English.
@@ -122,7 +105,6 @@ private fun parseSpec(o: JSONObject): SettingSpec = SettingSpec(
     group = o.getString("group"),
     control = parseControl(o.getJSONObject("control")),
     invert = o.optBoolean("invert"),
-    userFacing = o.optBoolean("user_facing"),
     confidence = o.optString("confidence", "low"),
     products = o.ids("products"),
     notProducts = o.ids("not_products").orEmpty(),
@@ -130,105 +112,63 @@ private fun parseSpec(o: JSONObject): SettingSpec = SettingSpec(
 
 private fun parseControl(c: JSONObject): Control = when (c.getString("type")) {
     "toggle" -> Control.Toggle
-    "choice" -> c.getJSONArray("options").let { a ->
-        Control.Choice((0 until a.length()).map { parseOption(a.getJSONObject(it)) })
-    }
+    "choice" -> Control.Choice(c.getJSONArray("options").objects().map(::parseOption))
     "range" -> Control.Range(c.getDouble("min"), c.getDouble("max"), c.optDouble("step", 1.0), c.optString("unit"))
-    "duration" -> Control.Duration(
-        unit = c.optString("unit", "ms"),
-        options = c.optJSONArray("options")?.let { a -> (0 until a.length()).map { a.getLong(it) } }.orEmpty(),
-        min = if (c.has("min")) c.getLong("min") else null,
-        max = if (c.has("max")) c.getLong("max") else null,
-    )
     "number" -> Control.Number(
         unit = c.optString("unit"),
         min = if (c.has("min")) c.getLong("min") else null,
         max = if (c.has("max")) c.getLong("max") else null,
     )
-    "timestamp" -> Control.Timestamp(c.optString("unit", "ms"))
     "text" -> Control.Text(c.optInt("max", 100), c.optString("what"))
     "locale" -> Control.Locale
     "app" -> Control.App(
         role = c.optString("role"),
-        extra = c.optJSONArray("extra")?.let { a ->
-            (0 until a.length()).map { parseOption(a.getJSONObject(it)) }
-        }.orEmpty(),
+        extra = c.optJSONArray("extra")?.objects()?.map(::parseOption).orEmpty(),
     )
     "phone_list" -> Control.PhoneList(c.optString("separator", ","))
     "bits" -> c.getJSONArray("fields").let { a ->
         Control.Bits(
-            (0 until a.length()).map { a.getJSONObject(it) }.map { f ->
+            a.objects().map { f ->
                 Control.BitField(
                     label = f.text("label")!!,
                     shift = f.getInt("shift"),
                     width = f.optInt("width", 1),
-                    options = f.optJSONArray("options")?.let { o ->
-                        (0 until o.length()).map { parseOption(o.getJSONObject(it)) }
-                    }.orEmpty(),
+                    options = f.optJSONArray("options")?.objects()?.map(::parseOption).orEmpty(),
                 )
             },
         )
     }
     "schedule" -> Control.Schedule
     "structured" -> Control.Structured(c.getString("format"), c.optJSONObject("schema") ?: JSONObject())
-    else -> Control.ReadOnly(c.optString("why"))
+    else -> Control.ReadOnly
 }
 
-/** The value as a person reads it: the option's name, a number with its unit, a duration, a date. */
-fun SettingSpec.display(value: String?): String {
-    if (value == null) return "Unknown"
+/** The phone's words for a switch's two states and for no value. */
+data class DisplayWords(val on: String, val off: String, val notSet: String)
+
+/** The value as a person reads it: the option's name, or a number with its unit. */
+fun SettingSpec.display(value: String, words: DisplayWords): String {
     val v = value.trim()
     return when (val c = control) {
-        Control.Toggle -> if (asBool(v) != invert) "On" else "Off"
+        Control.Toggle -> if (asBool(v) != invert) words.on else words.off
         // A short spec line ("3K at 30fps") says more than its title ("High resolution").
-        is Control.Choice -> c.options.firstOrNull { it.value == v }?.let { o -> o.detail?.takeIf { it.length <= 24 } ?: o.label } ?: v.ifEmpty { "Not set" }
+        is Control.Choice -> c.options.firstOrNull { it.value == v }?.let { o -> o.detail?.takeIf { it.length <= 24 } ?: o.label } ?: v.ifEmpty { words.notSet }
         is Control.Range -> v.toDoubleOrNull()?.let { number(it) + unitSuffix(c.unit) } ?: v
         is Control.Number -> v.toDoubleOrNull()?.let { number(it) + unitSuffix(c.unit) } ?: v
-        is Control.Duration -> v.toLongOrNull()?.let { duration(it, c.unit) } ?: v
-        is Control.Timestamp -> v.toLongOrNull()?.let { timestamp(it, c.unit) } ?: v
-        Control.Locale -> v.takeIf { it.isNotEmpty() }?.let { localeOf(it).displayName } ?: "Not set"
-        is Control.App -> c.extra.firstOrNull { it.value == v }?.label ?: v.ifEmpty { "Not set" }
-        is Control.PhoneList -> v.split(c.separator).map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ").ifEmpty { "None" }
-        else -> v.ifEmpty { "Not set" }
+        Control.Locale -> v.takeIf { it.isNotEmpty() }?.let { localeOf(it).displayName } ?: words.notSet
+        is Control.App -> c.extra.firstOrNull { it.value == v }?.label ?: v.ifEmpty { words.notSet }
+        is Control.PhoneList -> v.split(c.separator).map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ").ifEmpty { words.notSet }
+        else -> v.ifEmpty { words.notSet }
     }
 }
 
-fun number(x: Double): String = if (x == Math.floor(x) && Math.abs(x) < 1e15) x.toLong().toString() else "%.2f".format(x).trimEnd('0').trimEnd('.')
+fun number(x: Double): String = if (x == Math.floor(x) && Math.abs(x) < 1e15) x.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, x).trimEnd('0').trimEnd('.')
 
 fun unitSuffix(unit: String): String = when (unit) {
     "" -> ""
     "%" -> "%"
     "count" -> ""
     else -> " $unit"
-}
-
-/** [amount] in [unit] ("ms", "s", "min" or "h") as "1 h 30 min", "15 s", "250 ms". */
-fun duration(amount: Long, unit: String): String {
-    val ms = amount * when (unit) {
-        "s" -> 1_000L
-        "min" -> 60_000L
-        "h" -> 3_600_000L
-        else -> 1L
-    }
-    if (ms == 0L) return "0"
-    if (ms < 1_000) return "$ms ms"
-    val parts = listOf(86_400_000L to "d", 3_600_000L to "h", 60_000L to "min", 1_000L to "s")
-    var rest = ms
-    val words = buildList {
-        for ((size, name) in parts) {
-            if (rest >= size) {
-                add("${rest / size} $name")
-                rest %= size
-            }
-        }
-    }
-    return words.take(2).joinToString(" ")
-}
-
-fun timestamp(amount: Long, unit: String): String {
-    if (amount <= 0) return "Not set"
-    val ms = if (unit == "s") amount * 1_000 else amount
-    return java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(ms))
 }
 
 /** "en_GB" or "en-GB" as a Locale. */

@@ -63,8 +63,8 @@ class Screencast(private val connection: GlassesConnection, private val config: 
     val frames: SharedFlow<ScreencastFrame> = _frames.asSharedFlow()
 
     private var job: Job? = null
-    private var answer: CompletableDeferred<Pair<Boolean, Int>>? = null
-    private var stopping = CompletableDeferred<Unit>()
+    @Volatile private var answer: CompletableDeferred<Pair<Boolean, Int>>? = null
+    @Volatile private var stopping = CompletableDeferred<Unit>()
 
     // The frame being assembled: its time, flags and the chunks still owed.
     private var timestamp = 0L
@@ -79,8 +79,18 @@ class Screencast(private val connection: GlassesConnection, private val config: 
     /** Switch the glasses' screencast on and wait for their answer; the state says how it went. */
     @Synchronized
     fun start() {
-        if (job?.isActive == true) return
-        job = scope.launch { run() }
+        val phase = _state.value.phase
+        if (phase == ScreencastPhase.STARTING || phase == ScreencastPhase.LIVE) return
+        _state.value = ScreencastState(ScreencastPhase.STARTING)
+        // A stopped run may still be letting Wi-Fi go: this one starts after it.
+        val previous = job
+        val waited = previous?.isActive == true
+        job = scope.launch {
+            previous?.join()
+            // Bluetooth comes back a few seconds after the Wi-Fi teardown.
+            if (waited) withTimeoutOrNull(RELINK_MS) { connection.state.first { it.link == LinkState.READY } }
+            run()
+        }
     }
 
     /** Stop the screencast on the glasses and forget the state. */
@@ -98,8 +108,8 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         }
         _state.value = ScreencastState(ScreencastPhase.STARTING)
         if (connection.state.value.link != LinkState.READY) return fail(ScreencastFault.NOT_CONNECTED)
+        if (config.state.value.params.isEmpty() && !config.readNow()) return fail(ScreencastFault.NOT_READ)
         val cfg = config.state.value
-        if (cfg.params.isEmpty()) return fail(ScreencastFault.NOT_READ)
         if (SCREENCAST_FLAG !in cfg.params) return fail(ScreencastFault.NO_FLAG)
         if (cfg.values[SCREENCAST_FLAG] != true) {
             config.send(mapOf(SCREENCAST_FLAG to true))?.let { return fail(ScreencastFault.FLAG_NOT_SENT, it) }
@@ -111,7 +121,7 @@ class Screencast(private val connection: GlassesConnection, private val config: 
                 val listening = launch { live.wifiData.collect { onData(it) } }
                 try {
                     // The Meta app waits for the manager's answer to the open, then to the settings, then opens the frames.
-                    // An open left unanswered goes on to the settings, as Visor did before.
+                    // An open left unanswered goes on to the settings.
                     val opened = ask(OPEN_MS) { mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(0)) }
                     val got = if (opened == null || opened.first) {
                         ask { mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONFIGURE, configure()) }
@@ -119,9 +129,18 @@ class Screencast(private val connection: GlassesConnection, private val config: 
                     if (got?.first == true) {
                         mux.sendOnService(SVC_HN_SCREENCAST, MT_CONTROL, byteArrayOf(0))
                         _state.value = ScreencastState(ScreencastPhase.LIVE)
+                        // A Wi-Fi link that drops ends the mirror as a stop would.
+                        val lost = launch { live.wifiLost.first { it }; stopping.complete(Unit) }
                         stopping.await()
-                        mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(3))
-                        delay(STOP_MS)
+                        lost.cancel()
+                        when {
+                            !live.wifiLost.value -> {
+                                mux.sendOnService(SVC_HN_SCREENCAST_MANAGER, MT_CONTROL, byteArrayOf(3))
+                                delay(STOP_MS)
+                            }
+                            _state.value.phase == ScreencastPhase.LIVE -> fail(ScreencastFault.NO_ANSWER)
+                            else -> Unit
+                        }
                     } else refused(got)
                 } finally {
                     listening.cancel()
@@ -139,7 +158,7 @@ class Screencast(private val connection: GlassesConnection, private val config: 
     private suspend fun ask(waitMs: Long = ANSWER_MS, send: suspend () -> Unit): Pair<Boolean, Int>? = coroutineScope {
         val reply = CompletableDeferred<Pair<Boolean, Int>>().also { answer = it }
         val absent = launch(start = CoroutineStart.UNDISPATCHED) {
-            live.notes.first { it.contains("service $SVC_HN_SCREENCAST_MANAGER answered status 0xc001") }
+            live.wifiErrors.first { it.serviceId == SVC_HN_SCREENCAST_MANAGER && it.errorId == NOT_RUNNING_STATUS }
             reply.complete(Pair(false, NOT_RUNNING))
         }
         send()
@@ -199,6 +218,8 @@ class Screencast(private val connection: GlassesConnection, private val config: 
         const val ANSWER_MS = 15_000L
         const val STOP_MS = 300L
         const val OPEN_MS = 3_000L
+        const val RELINK_MS = 20_000L
         const val NOT_RUNNING = -1
+        const val NOT_RUNNING_STATUS = 0xC001
     }
 }

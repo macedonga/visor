@@ -1,6 +1,8 @@
 package com.macedonga.visor.core.assistant
 
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.SVC_STATUS
+import com.macedonga.visor.core.connection.SnApp
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -22,7 +24,15 @@ import kotlinx.coroutines.withTimeoutOrNull
 const val SVC_HEARING = 31337
 
 /** Where the hearing app is on the glasses. */
-enum class HearingRun { UNKNOWN, ON, PAUSED, PAUSED_BY_USER, OFF }
+enum class HearingRun(val number: Long) {
+    UNKNOWN(0), ON(1), PAUSED(2), PAUSED_BY_USER(4), OFF(3);
+
+    val paused: Boolean get() = this == PAUSED || this == PAUSED_BY_USER
+
+    companion object {
+        fun of(n: Long) = entries.firstOrNull { it.number == n } ?: UNKNOWN
+    }
+}
 
 /** What the hearing app runs: conversation focus, hearing correction, or the hearing test that sets it up. */
 enum class HearingMode(val number: Long) {
@@ -51,7 +61,14 @@ enum class HearingCause(val number: Long) {
 }
 
 /** Why the glasses refused to start it. */
-enum class HearingRefusal { UNKNOWN, NUX_REQUIRED, FREE_TRIAL_ENDED, SUBSCRIPTION_EXPIRED, GEOGATED, BT_REQUIRED, OUTSIDE_GRACE_PERIOD, INVALID_DEVICE, USER_SETTINGS_FAILED, NO_ACCESS, ENABLE_FAILED }
+enum class HearingRefusal(val number: Long) {
+    UNKNOWN(0), NUX_REQUIRED(1), FREE_TRIAL_ENDED(2), SUBSCRIPTION_EXPIRED(3), GEOGATED(4), BT_REQUIRED(5),
+    OUTSIDE_GRACE_PERIOD(6), INVALID_DEVICE(7), USER_SETTINGS_FAILED(8), NO_ACCESS(9), ENABLE_FAILED(10);
+
+    companion object {
+        fun of(n: Long) = entries.firstOrNull { it.number == n } ?: UNKNOWN
+    }
+}
 
 /** The two styles the glasses take: Standard brings voices closer, Boosted further. */
 enum class FocusStyle(val preset: Int) { STANDARD(1), BOOSTED(2) }
@@ -73,7 +90,7 @@ data class HearingState(
 
 /**
  * Conversation focus and hearing correction run from the phone, as the Meta app runs them. Starting and stopping go to
- * the companion service (svc28: StartApp 2000 and StopApp 2002 for app 22, HEARING, with the mode and a session id as
+ * the app manager on svc28 (StartApp 2000 and StopApp 2002 for app 22, HEARING, with the mode and a session id as
  * intent data); focus's style and volume are a UserSetting (type 15) on the hearing service, correction's sound a
  * Personalization (type 4). The service reports its AppState (type 1) and why a start was refused (type 7). The hearing
  * test plays the tones the phone asks for (PlayTone 2, answered 17) and fits from the thresholds (HearingInputs 5,
@@ -86,9 +103,9 @@ class Hearing(private val connection: GlassesConnection) : Responder {
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
 
-    // The hearing channel the glasses opened, answered on its mirror; until then Visor opens its own.
+    // The hearing channel the glasses opened and its link, answered on its mirror; until then Visor opens its own.
     @Volatile
-    private var channel: Int? = null
+    private var channel: Pair<DataXConnection, Int>? = null
 
     // The one tone or fit the phone is waiting on: the Meta app asks for one at a time.
     @Volatile
@@ -98,7 +115,7 @@ class Hearing(private val connection: GlassesConnection) : Responder {
     private var fitAnswer: CompletableDeferred<Boolean>? = null
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
-        channel = message.info.channelId
+        channel = connection to message.info.channelId
         val f = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
         when (message.info.messageType) {
             MT_APP_STATE -> {
@@ -107,13 +124,7 @@ class Hearing(private val connection: GlassesConnection) : Responder {
                 val profile = if (f.has(8)) Wire.parse(f.bytes(8)) else null
                 _state.update {
                     it.copy(
-                        run = when (f.varint(1)) {
-                            1L -> HearingRun.ON
-                            2L -> HearingRun.PAUSED
-                            3L -> HearingRun.OFF
-                            4L -> HearingRun.PAUSED_BY_USER
-                            else -> HearingRun.UNKNOWN
-                        },
+                        run = HearingRun.of(f.varint(1)),
                         cause = HearingCause.of(f.varint(2)),
                         style = setting?.takeIf { s -> s.has(13) }?.let { s -> FocusStyle.entries.firstOrNull { st -> st.preset.toLong() == s.varint(13) } } ?: it.style,
                         volume = setting?.takeIf { s -> s.has(2) }?.varint(2)?.toInt() ?: it.volume,
@@ -133,7 +144,7 @@ class Hearing(private val connection: GlassesConnection) : Responder {
                 )
             }
             MT_ACTIVATION_FAILURE -> {
-                val why = HearingRefusal.entries.getOrElse(f.varint(1).toInt()) { HearingRefusal.UNKNOWN }
+                val why = HearingRefusal.of(f.varint(1))
                 _state.update { it.copy(refusal = why, run = HearingRun.OFF, at = System.currentTimeMillis()) }
                 note("Start refused: ${why.name.lowercase()}")
             }
@@ -151,8 +162,12 @@ class Hearing(private val connection: GlassesConnection) : Responder {
             MT_PERSONALIZATION_FAILURE -> note("Hearing correction did not take the sound")
             // EstimatedNoiseLevel {1 float, 2 timestamp}, four a second while the hearing app runs.
             MT_NOISE_LEVEL -> Unit
-            else -> note("Hearing: message type ${message.info.messageType}")
+            else -> note("message type ${message.info.messageType} not handled")
         }
+    }
+
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        if (channel?.let { it.first === connection && it.second == channelId } == true) channel = null
     }
 
     /** Start conversation focus now, in [style] when given. */
@@ -162,16 +177,18 @@ class Hearing(private val connection: GlassesConnection) : Responder {
     fun startCorrection(test: Boolean = false) = startApp(if (test) HearingMode.CORRECTION_SETUP else HearingMode.CORRECTION, null)
 
     private fun startApp(mode: HearingMode, preset: Int?) {
-        val data = intent("requestedMode", mode.number.toInt()) + intent("hearingTrigger", TRIGGER_PHONE) +
-            intent("hearingSessionId", UUID.randomUUID().toString()) +
-            (preset?.let { intent("enhancementPreset", it) } ?: ByteArray(0))
+        val data = listOfNotNull(
+            SnApp.data("requestedMode", mode.number.toInt()), SnApp.data("hearingTrigger", TRIGGER_PHONE),
+            SnApp.data("hearingSessionId", UUID.randomUUID().toString()),
+            preset?.let { SnApp.data("enhancementPreset", it) },
+        )
         _state.update { it.copy(refusal = null) }
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_START_APP, Wire.fieldVarint(1, APP_HEARING) + data) }
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_START_APP, SnApp.app(APP_HEARING, data)) }
         note("Starting ${mode.name.lowercase()}")
     }
 
     fun stop() {
-        connection.submit { it.sendOnService(SVC_COMPANION, MT_STOP_APP, Wire.fieldVarint(1, APP_HEARING)) }
+        connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_STOP_APP, SnApp.app(APP_HEARING)) }
         note("Stopping the hearing app")
     }
 
@@ -204,8 +221,8 @@ class Hearing(private val connection: GlassesConnection) : Responder {
         fitAnswer = answer
         fun side(t: Thresholds) = listOf(t.at1k, t.at2k, t.at4k).withIndex()
             .fold(ByteArray(0)) { out, (i, v) -> out + Wire.fieldVarint(i + 1, v.coerceIn(MIN_DBHL, MAX_DBHL).toLong()) }
-        sendHearing(MT_HEARING_INPUTS, Wire.fieldBytes(1, side(left)) + Wire.fieldBytes(2, side(right)) + Wire.fieldBytes(3, UUID.randomUUID().toString().encodeToByteArray()))
-        note("Hearing test sent: left $left, right $right")
+        sendHearing(MT_HEARING_INPUTS, Wire.fieldBytes(1, side(left)) + Wire.fieldBytes(2, side(right)) + Wire.fieldString(3, UUID.randomUUID().toString()))
+        note("Hearing test sent")
         return withTimeoutOrNull(FIT_MS) { answer.await() } ?: false
     }
 
@@ -225,33 +242,26 @@ class Hearing(private val connection: GlassesConnection) : Responder {
     }
 
     /** Carry on after a pause. */
-    fun resume() = sendHearing(MT_RESUME, Wire.fieldBytes(1, UUID.randomUUID().toString().encodeToByteArray()))
+    fun resume() = sendHearing(MT_RESUME, Wire.fieldString(1, UUID.randomUUID().toString()))
 
     /** The style and how much louder the voice is (-2 to 2): applied at once while it runs, kept for next time otherwise. */
     fun tune(style: FocusStyle, volume: Int) {
         val v = volume.coerceIn(MIN_VOLUME, MAX_VOLUME)
         sendHearing(
             MT_USER_SETTING,
-            Wire.fieldVarintUnsigned(2, v.toLong()) + Wire.fieldBytes(10, "1".encodeToByteArray()) +
-                Wire.fieldBytes(11, UUID.randomUUID().toString().encodeToByteArray()) + Wire.fieldVarint(13, style.preset.toLong()),
+            Wire.fieldVarintUnsigned(2, v.toLong()) + Wire.fieldString(10, "1") +
+                Wire.fieldString(11, UUID.randomUUID().toString()) + Wire.fieldVarint(13, style.preset.toLong()),
         )
         _state.update { it.copy(style = style, volume = v) }
     }
 
     private fun sendHearing(type: Int, payload: ByteArray) {
-        val open = channel
         connection.submit { mux ->
+            val open = channel?.takeIf { it.first === mux }?.second
             if (open != null) mux.send(DataXConnection.mirror(open), payload, messageType = type)
             else mux.sendOnService(SVC_HEARING, type, payload)
         }
     }
-
-    /** One SNIntentData: the key, and the value in the field its type takes (3 an int, 5 bytes). */
-    private fun intent(key: String, value: Int): ByteArray =
-        Wire.fieldBytes(3, Wire.fieldBytes(1, key.encodeToByteArray()) + Wire.fieldVarint(3, value.toLong()))
-
-    private fun intent(key: String, value: String): ByteArray =
-        Wire.fieldBytes(3, Wire.fieldBytes(1, key.encodeToByteArray()) + Wire.fieldBytes(5, value.encodeToByteArray()))
 
     private fun note(text: String) {
         _notes.tryEmit(text)
@@ -269,9 +279,6 @@ class Hearing(private val connection: GlassesConnection) : Responder {
         private const val FIT_MS = 15_000L
         private const val ENVIRONMENT_REGULAR = 1L
         private const val ENVIRONMENT_NOISY = 2L
-        private const val SVC_COMPANION = 28
-        private const val MT_START_APP = 2000
-        private const val MT_STOP_APP = 2002
         private const val APP_HEARING = 22L
         private const val TRIGGER_PHONE = 9
         private const val MT_APP_STATE = 1

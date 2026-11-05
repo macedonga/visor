@@ -16,6 +16,8 @@ import com.macedonga.visor.home.PhoneShot
 import com.macedonga.visor.home.levelPercent
 import com.macedonga.visor.home.moments
 import com.macedonga.visor.home.recentShots
+import com.macedonga.visor.home.restingMood
+import com.macedonga.visor.home.shownBattery
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.moodOf
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -46,10 +48,7 @@ data class Glimpse(
     val moment: List<PhoneShot>,
 )
 
-/**
- * Follows the glasses for the widget and the tile while no screen is open, and pushes each change to both. The
- * words and numbers follow the home's: a pair out of reach shows no old percentage, one asleep or docked shows the last.
- */
+/** Follows the glasses for the widget and the tile while no screen is open, in the home's words and numbers, and pushes each change to both. */
 @Singleton
 class Outside @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -65,6 +64,7 @@ class Outside @Inject constructor(
     private val paired = MutableStateFlow<Boolean?>(null)
     private val moment = MutableStateFlow<List<PhoneShot>>(emptyList())
     // Once a try has gone unanswered the reconnect ladder flips between trying and failing; like the home, keep one word.
+    @Volatile
     private var unanswered = false
 
     val glimpse: StateFlow<Glimpse> = combine(
@@ -96,6 +96,11 @@ class Outside @Inject constructor(
         moment.value = newestMoment()
     }
 
+    /** A tap asked for a fresh try: the next attempt shows as searching again. */
+    fun retrying() {
+        unanswered = false
+    }
+
     private suspend fun readPaired() = withContext(Dispatchers.IO) { runCatching { store.all().isNotEmpty() }.getOrNull() }
 
     private suspend fun newestMoment() = moments(recentShots(context, albums), max = 1).firstOrNull().orEmpty()
@@ -122,22 +127,16 @@ class Outside @Inject constructor(
             liveOn && !ready -> Mood.RECORDING
             ready -> moodOf(state, liveOn)
             trying -> Mood.SEARCHING
-            posture.inCase -> Mood.IN_CASE
-            posture.folded || nearby -> Mood.ASLEEP
-            else -> Mood.FAR
+            else -> restingMood(posture, nearby)
         }
-        val away = mood == Mood.FAR || mood == Mood.ABSENT || mood == Mood.SEARCHING || mood == Mood.ASLEEP || mood == Mood.IN_CASE
-        val now = state.device?.battery?.takeIf { ready }
-        val here = now != null && !away
-        val resting = mood == Mood.ASLEEP || mood == Mood.IN_CASE
-        val remembered = resting || !away
+        val shown = shownBattery(mood, state.device?.battery?.takeIf { ready }, state.device?.case?.levelPercent(), battery)
         return Glimpse(
             mood = mood,
-            here = here,
-            glasses = if (here) now?.percent?.toInt() else battery?.glasses?.takeIf { remembered },
+            here = shown.here,
+            glasses = shown.glasses,
             // Docked, they charge as far as anyone can tell from the last thing they said.
-            charging = if (here) now?.charging == true else mood == Mood.IN_CASE,
-            case = if (here) state.device?.case?.levelPercent() ?: battery?.case else battery?.case?.takeIf { remembered },
+            charging = if (shown.here) state.device?.battery?.charging == true else mood == Mood.IN_CASE,
+            case = shown.case,
             moment = moment,
         )
     }

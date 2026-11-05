@@ -1,13 +1,13 @@
 package com.macedonga.visor.core.identity.bloks
 
-/**
- * The screen's tree and its navigation: children added, moved and removed, attributes set, screens and sheets
- * opened and closed. Tree edits are kept per screen as overlays (by parent node), which the renderer reads before
- * the payload's own children.
- */
+import java.text.DateFormat
+import java.util.Date
+import kotlinx.serialization.json.Json
+
+/** Tree edits, kept per screen as overlays by parent node, and opening and closing screens and sheets. */
 internal fun Registry.tree() {
     // ---- Lookups ----
-    on("bk.action.bloks.Find", "bk.action.bloks.FindContainer") { screen?.let { s -> s.payload.tree?.let { session.find(s, it, at(0).toString()) } } }
+    on("bk.action.bloks.Find", "bk.action.bloks.FindContainer") { container(at(0)) }
     on("bk.action.bloks.ChildAtIndex") {
         val n = node(0) ?: return@on null
         val list = screen?.childrenOf(n) ?: (n[BloksSession.primaryChildren(n.type)] as? List<*>).orEmpty()
@@ -15,17 +15,15 @@ internal fun Registry.tree() {
     }
     on("bk.action.bloks.IndexOfChild") {
         val n = node(0) ?: return@on -1
-        (screen?.childrenOf(n) ?: emptyList()).indexOfFirst { (it as? Node)?.get(BloksSession.ID)?.toString() == at(1).toString() }
+        (screen?.childrenOf(n) ?: emptyList()).indexOfChild(at(1).toString())
     }
     on("bk.action.bloks.OneTimeBind") { at(0) }
     on("bk.action.bloks.Inflate") {
-        val n = runCatching { Payload.convert(kotlinx.serialization.json.Json.parseToJsonElement(BloksJson.encode(at(0), boolsAsInts = false))) as? Node }.getOrNull()
+        val n = inflate(at(0))
         if (n != null) call(at(1), n) else call(at(2))
         null
     }
-    on("bk.action.bloks.InflateSync") {
-        runCatching { Payload.convert(kotlinx.serialization.json.Json.parseToJsonElement(BloksJson.encode(at(0), boolsAsInts = false))) as? Node }.getOrNull()
-    }
+    on("bk.action.bloks.InflateSync") { inflate(at(0)) }
 
     // ---- Children: by container id, or in the parent of a child id ----
     on("bk.action.bloks.AppendChildren", "bk.action.bloks.AppendEmbeddedChildren") { edit(container(at(0))) { it + list(1) } }
@@ -87,13 +85,15 @@ internal fun Registry.tree() {
         val appId = node(0)!![35] as String
         val params = at(2) as? Map<*, *> ?: emptyMap<Any, Any>()
         val dismiss = (node(1)?.get(40) as? Lambda)?.takeIf { name.endsWith("OpenScreen") || name.endsWith("OpenCdsBottomSheet") }
+        val isSheet = name.endsWith("BottomSheet")
         session.request("screen $appId", { session.client.screen(appId, flat(params)) }, { payload ->
-            session.push(appId, payload, params)
-            session.screens.last().onClose = dismiss
+            session.push(appId, payload, params) {
+                onClose = dismiss
+                sheet = isSheet
+            }
         })
         null
     }
-    // The legacy stack sends only the "params" entry of its map.
     on("bk.action.bloks.OpenScreen") {
         val appId = at(0) as String
         val params = at(1) as? Map<*, *> ?: emptyMap<Any, Any>()
@@ -114,9 +114,15 @@ internal fun Registry.tree() {
         }
         null
     }
-    on("bk.action.cds.CloseScreen", "bk.action.cds.DismissCdsBottomSheet") {
+    on("bk.action.cds.CloseScreen") {
         val after = node(0)?.get(35)
         while (session.screens.isNotEmpty()) session.pop()
+        call(after)
+        null
+    }
+    on("bk.action.cds.DismissCdsBottomSheet") {
+        val after = node(0)?.get(35)
+        while (session.screens.lastOrNull()?.sheet == true) session.pop()
         call(after)
         null
     }
@@ -127,7 +133,7 @@ internal fun Registry.tree() {
     on("bk.action.cds.internal.RemoveCdsBottomSheet") {
         val id = at(0)?.toString()
         session.screens.lastOrNull { it.params["__infra__screen_id"]?.toString() == id || it.params["INTERNAL_INFRA_screen_id"]?.toString() == id }
-            ?.let { gone -> if (gone === session.screens.lastOrNull()) session.pop() else session.screens.remove(gone) }
+            ?.let { gone -> if (gone === session.screens.lastOrNull()) session.pop() else session.remove(gone) }
         null
     }
     on("bk.action.cds.UpdateBackButtonOverride") {
@@ -149,8 +155,8 @@ internal fun Registry.tree() {
         val instance = at(0) as? BloksSession.Instance ?: return@on null
         val root = instance.payload.tree ?: return@on null
         val content = root[35] as? Node ?: throw BloksException("Null content for BottomSheet")
-        session.push(name, instance.payload.withTree(content), emptyMap<Any, Any>())
-        session.screens.last().apply {
+        session.push(name, instance.payload.withTree(content), emptyMap<Any, Any>()) {
+            sheet = true
             title = root[36] as? String
             onClose = root[38] as? Lambda
         }
@@ -181,14 +187,14 @@ internal fun Registry.tree() {
     }
 
     // ---- Texts ----
-    on("bk.action.text.GetText") { node(0)?.takeIf { it.type == 13335 }?.let { it[41]?.toString() } }
+    on("bk.action.text.GetText") { node(0)?.takeIf { it.type == UiBuilder.PLAIN_TEXT }?.let { it[41]?.toString() } }
     on("bk.action.text.IsTruncated") { false }
     on("bk.action.text.GetMeasuredLayout") { if ((at(0) as? List<*>).isNullOrEmpty()) null else linkedMapOf("lineCount" to 1, "overflowed" to false) }
     on("bk.action.textspan.GetCenterX", "bk.action.textspan.GetCenterY", "bk.action.textspan.GetHeight", "bk.action.textspan.GetWidth") { 0 }
     on("bk.action.string.FromProvider") {
         val provider = node(0) ?: return@on ""
         when (provider.type) {
-            13319 -> java.text.DateFormat.getDateInstance().format(java.util.Date(((provider[36] as? Number)?.toLong() ?: 0L) * 1000))
+            13319 -> DateFormat.getDateInstance().format(Date(((provider[36] as? Number)?.toLong() ?: 0L) * 1000))
             13950 -> provider[36]?.toString()?.ifBlank { "0" } ?: "0"
             else -> ""
         }
@@ -239,6 +245,9 @@ private fun ActionCall.list(i: Int): List<Any?> = (at(i) as? List<*>).orEmpty()
 
 private fun ActionCall.container(id: Any?): Node? = screen?.let { s -> s.payload.tree?.let { session.find(s, it, id.toString()) } }
 
+/** A component tree written as Lispy maps, read back as nodes. */
+private fun inflate(x: Any?): Node? = runCatching { Payload.convert(Json.parseToJsonElement(BloksJson.encode(x, boolsAsInts = false))) as? Node }.getOrNull()
+
 private fun ActionCall.parent(childId: String): Node? = screen?.let { s -> s.payload.tree?.let { session.parentOf(s, it, childId) } }
 
 /** Applies a change to a node's children, kept as the screen's overlay. A missing node changes nothing. */
@@ -254,12 +263,11 @@ private fun ActionCall.edit(node: Node?, change: (List<Any?>) -> List<Any?>): An
 
 private fun List<Any?>.indexOfChild(id: String): Int = indexOfFirst { (it as? Node)?.get(BloksSession.ID)?.toString() == id }
 
-/** A screen of the Meta app's own stack: loaded with the root query, sent only the "params" entry. */
+/** A legacy-stack screen: loaded with the root query, sent only its "params" entry. */
 private fun ActionCall.legacy(appId: String, params: Map<*, *>, name: String?): Any? {
     val sent = BloksJson.encode(params["params"]?.let { mapOf("params" to it.toString()) } ?: emptyMap<String, String>(), boolsAsInts = false)
     session.request("screen $appId", { session.client.screen(appId, sent) }, { payload ->
-        session.push(appId, payload, params)
-        session.screens.last().name = name
+        session.push(appId, payload, params) { this.name = name }
     })
     return null
 }

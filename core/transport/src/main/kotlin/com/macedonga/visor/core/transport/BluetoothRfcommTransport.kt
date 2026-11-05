@@ -1,13 +1,13 @@
 package com.macedonga.visor.core.transport
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -17,16 +17,11 @@ import java.util.concurrent.atomic.AtomicInteger
 /** The service class UUID the glasses publish in SDP, SDP attribute 0x0001. SDP maps it to RFCOMM channel 7. */
 val META_RFCOMM_SERVICE_UUID: UUID = UUID.fromString("8b0d2687-42a4-44cb-9436-fba3b9b96de2")
 
-/** SDP attribute 0x0100 on that record. */
-const val META_RFCOMM_SERVICE_NAME: String = "Meta"
-
 /** The byte pipe under AirShield, over Bluetooth Classic RFCOMM. */
 class BluetoothRfcommTransport(
     private val context: Context,
     private val address: String,
-    private val serviceUuid: UUID = META_RFCOMM_SERVICE_UUID,
     private val wireLog: WireLog? = null,
-    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : Transport {
 
     @Volatile
@@ -38,19 +33,16 @@ class BluetoothRfcommTransport(
     /** Counts closes, so a connect that was in flight when one happened does not undo it. */
     private val closes = AtomicInteger(0)
 
-    // Lint asks for either a permission check or explicit handling of the SecurityException, and
-    // this file does the second everywhere it touches the radio: the discovery cancel is inside
-    // runCatching and every other call has a catch that turns it into
-    // ConnectFailure.PERMISSION_REFUSED.
-    @android.annotation.SuppressLint("MissingPermission")
+    // Every radio call below catches SecurityException.
+    @SuppressLint("MissingPermission")
     override suspend fun connect() {
         val before = closes.get()
-        withContext(io) {
+        withContext(Dispatchers.IO) {
             // Never leave the last socket open.
             shutSocket()
             val device = resolve()
             val opening = try {
-                device.createRfcommSocketToServiceRecord(serviceUuid)
+                device.createRfcommSocketToServiceRecord(META_RFCOMM_SERVICE_UUID)
             } catch (error: SecurityException) {
                 throw permissionRefused(error)
             }
@@ -79,10 +71,10 @@ class BluetoothRfcommTransport(
     }
 
     override suspend fun send(frame: ByteArray) {
-        withContext(io) { open().send(frame) }
+        withContext(Dispatchers.IO) { open().send(frame) }
     }
 
-    override suspend fun receive(): ByteArray = withContext(io) { open().receive() }
+    override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
     override fun close() {
         closes.incrementAndGet()
@@ -104,11 +96,8 @@ class BluetoothRfcommTransport(
                 "this phone has no Bluetooth",
             )
 
-    /**
-     * Everything that can be known before the radio is used, in the order that makes each answer
-     * true.
-     */
-    @android.annotation.SuppressLint("MissingPermission")
+    /** Address, permission, radio and bond, checked before any radio call. */
+    @SuppressLint("MissingPermission")
     private fun resolve(): BluetoothDevice {
         if (!BluetoothAdapter.checkBluetoothAddress(address)) {
             throw TransportConnectException(

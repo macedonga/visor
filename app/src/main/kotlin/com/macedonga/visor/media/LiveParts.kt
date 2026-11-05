@@ -1,8 +1,6 @@
 package com.macedonga.visor.media
 
 import android.graphics.Bitmap
-import android.net.Uri
-import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
@@ -25,14 +23,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -42,15 +41,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,7 +51,6 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -90,8 +82,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
@@ -113,12 +109,19 @@ import com.macedonga.visor.core.media.LiveStatus
 import com.macedonga.visor.core.media.STOP_BATTERY_LOW
 import com.macedonga.visor.core.media.STOP_TEMPLES_CLOSED
 import com.macedonga.visor.core.media.STOP_THERMAL
-import com.macedonga.visor.gallery.Pill
-import com.macedonga.visor.gallery.RoundIcon
-import com.macedonga.visor.stage.AnimateLight
-import com.macedonga.visor.stage.GlassesStage
-import com.macedonga.visor.stage.LightPool
-import com.macedonga.visor.stage.LocalStage
+import com.macedonga.visor.gallery.duration
+import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.Card
+import com.macedonga.visor.settings.ChoiceMark
+import com.macedonga.visor.settings.NavRow
+import com.macedonga.visor.settings.RoundIcon
+import com.macedonga.visor.settings.RowFrame
+import com.macedonga.visor.settings.Rows
+import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetField
+import com.macedonga.visor.settings.SheetTitle
+import com.macedonga.visor.settings.Spinner
+import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.StageLight
 import com.macedonga.visor.stage.lookOf
@@ -127,6 +130,8 @@ import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.animationsOff
 import com.macedonga.visor.ui.asHeading
 import com.macedonga.visor.ui.rememberHaptics
+import com.macedonga.visor.ui.switchRow
+import java.net.URI
 import kotlin.math.exp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -135,11 +140,7 @@ private val TABULAR_LABEL @Composable get() = Visor.type.label.copy(fontFeatureS
 
 // ---- The picture ----
 
-/**
- * The video, laid out once at [cover] and moved to [placed] by a layer transform: resizing the view itself would
- * reallocate its buffer on every frame of the step back. Clipped to [visible] with rounded corners, and while it
- * blooms, to a circle round the camera's glass.
- */
+/** The video laid out once at [cover], moved to [placed] by a layer transform and clipped to [visible]. */
 @Composable
 internal fun LiveFrame(video: LiveVideo, cover: Rect, placed: Rect, visible: Rect, radius: Float, bloomCenter: Offset, bloomRadius: Float) {
     Box(
@@ -178,11 +179,7 @@ private class FrameShape(val rect: Rect, val radius: Float, val center: Offset, 
     }
 }
 
-/**
- * The window's light: the picture's own colours, shrunk to a few pixels and drawn large and soft around the
- * window. Every pixel drifts towards the latest sample instead of cross-fading from one to the next, so the light
- * changes like a room's, never in steps or flashes.
- */
+/** The picture's colours, blurred large round the window, drifting towards each sample. */
 @Composable
 internal fun LiveGlow(sample: ImageBitmap?, window: Rect, step: Float) {
     val target = remember { FloatArray(GLOW_PIXELS * 3) }
@@ -193,9 +190,8 @@ internal fun LiveGlow(sample: ImageBitmap?, window: Rect, step: Float) {
     var frame by remember { mutableLongStateOf(0L) }
     LaunchedEffect(sample) {
         val source = sample?.asAndroidBitmap() ?: return@LaunchedEffect
-        val scaled = if (source.width == GLOW_W && source.height == GLOW_H) source else Bitmap.createScaledBitmap(source, GLOW_W, GLOW_H, true)
         val pixels = IntArray(GLOW_PIXELS)
-        scaled.getPixels(pixels, 0, GLOW_W, 0, 0, GLOW_W, GLOW_H)
+        source.getPixels(pixels, 0, GLOW_W, 0, 0, GLOW_W, GLOW_H)
         for (i in pixels.indices) {
             target[i * 3] = ((pixels[i] shr 16) and 0xFF) / 255f
             target[i * 3 + 1] = ((pixels[i] shr 8) and 0xFF) / 255f
@@ -238,7 +234,7 @@ internal fun LiveGlow(sample: ImageBitmap?, window: Rect, step: Float) {
             .graphicsLayer {
                 compositingStrategy = CompositingStrategy.Offscreen
                 alpha = step * 0.85f
-                if (Build.VERSION.SDK_INT >= 31) renderEffect = BlurEffect(size.minDimension * 0.14f, size.minDimension * 0.14f, TileMode.Clamp)
+                renderEffect = BlurEffect(size.minDimension * 0.14f, size.minDimension * 0.14f, TileMode.Clamp)
             },
     ) {
         frame
@@ -260,32 +256,27 @@ internal fun LiveGlow(sample: ImageBitmap?, window: Rect, step: Float) {
     }
 }
 
-private const val GLOW_W = 6
-private const val GLOW_H = 10
+internal const val GLOW_W = 6
+internal const val GLOW_H = 10
 private const val GLOW_PIXELS = GLOW_W * GLOW_H
 private const val GLOW_DRIFT_SECONDS = 0.7f
 
 // ---- Coming up out of the glasses ----
 
-/**
- * What stands round the glasses while the stream comes up: one line of where it has got to, and the light. The pair
- * is the one stage's; the Live screen has it grow towards the camera and fade as the first frame blooms.
- */
+/** Round the glasses while the stream comes up: where it has got to, or why it failed. */
 @Composable
 internal fun Arrival(
     status: LiveStatus,
     allowed: Boolean,
-    stageTop: Float,
     stageHeight: Float,
-    lens: Offset,
     bloom: Float,
     leaving: Boolean,
     onAllow: () -> Unit,
+    onWifi: () -> Unit,
     onRetry: () -> Unit,
     onClose: () -> Unit,
 ) {
     val colors = Visor.colors
-    val stage = LocalStage.current
     val haptics = rememberHaptics()
     val failed = status.phase == LivePhase.FAILED || !allowed
     StageLight(lookOf(if (leaving) Mood.CONNECTED else if (failed) Mood.FAR else Mood.GOING_LIVE, colors))
@@ -295,31 +286,33 @@ internal fun Arrival(
         Box(
             Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(0, stageTop.roundToInt()) }
                 .height(with(density) { stageHeight.toDp() })
                 .turnsThePair { haptics.tick(0.35f) },
         )
         Column(
             Modifier
                 .fillMaxWidth()
-                .offset { IntOffset(0, (stageTop + stageHeight).roundToInt()) }
+                .offset { IntOffset(0, stageHeight.roundToInt()) }
                 .padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (leaving) {
-                // Nothing to say on the way out.
-            } else if (failed) {
-                Text(stringResource(R.string.live_failed), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
-                val problem = if (!allowed) LiveProblem.WIFI_DIRECT_DENIED else status.problem
-                Text(
-                    stringResource(problemWords(problem)),
-                    style = Visor.type.label, color = colors.textSecondary, textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
-                )
-                if (problem == LiveProblem.WIFI_DIRECT_DENIED) Pill(stringResource(R.string.live_allow), onAllow)
-                else Pill(stringResource(R.string.live_retry), onRetry)
-            } else {
-                Steps(status.phase)
+            if (!leaving) {
+                if (failed) {
+                    Text(stringResource(R.string.live_failed), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
+                    val problem = if (!allowed) LiveProblem.WIFI_DIRECT_DENIED else status.problem
+                    Text(
+                        stringResource(problemWords(problem)),
+                        style = Visor.type.label, color = colors.textSecondary, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
+                    )
+                    when (problem) {
+                        LiveProblem.WIFI_DIRECT_DENIED -> ActionPill(stringResource(R.string.allow), onAllow)
+                        LiveProblem.WIFI_OFF -> ActionPill(stringResource(R.string.live_wifi_on), onWifi)
+                        else -> ActionPill(stringResource(R.string.try_again), onRetry)
+                    }
+                } else {
+                    Steps(status.phase)
+                }
             }
         }
         if (!leaving) {
@@ -330,7 +323,7 @@ internal fun Arrival(
     }
 }
 
-/** "Wi-Fi Direct · Glasses · Camera": done ones quiet, the current one breathing, the rest dim. */
+/** "Wi-Fi · Glasses · Camera": done ones quiet, the current one breathing, the rest dim. */
 @Composable
 private fun Steps(phase: LivePhase) {
     val colors = Visor.colors
@@ -373,14 +366,12 @@ private fun problemWords(problem: LiveProblem?): Int = when (problem) {
     LiveProblem.NO_VIDEO -> R.string.live_problem_no_video
     LiveProblem.GAVE_UP -> R.string.live_problem_gave_up
     LiveProblem.VPN -> R.string.live_problem_vpn
+    LiveProblem.WIFI_BUSY -> R.string.live_problem_wifi_busy
 }
 
 // ---- Over the picture ----
 
-/**
- * What sits on the full-screen picture: the status in the corner, and whichever of the readouts, heat, grid and
- * horizon are on. They fade as the picture steps back, except the grid, which stays on the picture.
- */
+/** On the full-screen picture: the status, and whichever of readouts, heat and grid are on. */
 @Composable
 internal fun LiveOverlays(model: LiveViewModel, visible: Rect, step: Float, bloom: Float) {
     val settings by model.settings.settings.collectAsStateWithLifecycle()
@@ -392,8 +383,11 @@ internal fun LiveOverlays(model: LiveViewModel, visible: Rect, step: Float, bloo
             .fillMaxSize()
             .graphicsLayer { alpha = shown * (1f - step * 2.2f).coerceIn(0f, 1f) },
     ) {
-        // A dark breath at the top and bottom, only as much as the words need.
+        // A dark breath behind the words at the top and, with the heat on, the bottom.
         Box(Modifier.fillMaxWidth().height(140.dp).background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.42f), Color.Transparent))))
+        if (LiveOverlay.HEAT in settings.overlays) {
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(140.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.42f)))))
+        }
         Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp)) {
             StatusChip(model)
             if (status.phase == LivePhase.RESTARTING) Reconnecting(Modifier.padding(top = 8.dp))
@@ -410,10 +404,7 @@ internal fun LiveOverlays(model: LiveViewModel, visible: Rect, step: Float, bloo
     }
 }
 
-/**
- * "Hey Meta" during the Live, as subtitles at the foot of the picture: what was asked, small, and the answer under
- * it while the glasses speak it. A turn stays a few seconds after its answer, then fades.
- */
+/** "Hey Meta" turns as subtitles at the foot of the picture. */
 @Composable
 internal fun Captions(model: LiveViewModel, visible: Rect, alpha: Float) {
     val colors = Visor.colors
@@ -492,8 +483,9 @@ internal fun StatusChip(model: LiveViewModel, modifier: Modifier = Modifier) {
             delay(250)
         }
     }
+    val rec = recording
     val (word, from) = when {
-        recording != null -> stringResource(R.string.live_rec) to recording!!.since
+        rec != null -> stringResource(R.string.live_rec) to rec.since
         broadcast.phase == BroadcastPhase.LIVE -> stringResource(R.string.live_on_air) to broadcast.since
         else -> stringResource(R.string.live_badge) to since
     }
@@ -508,7 +500,7 @@ internal fun StatusChip(model: LiveViewModel, modifier: Modifier = Modifier) {
         Text(word, style = Visor.type.label, color = colors.textPrimary)
         if (from > 0) {
             Spacer(Modifier.width(8.dp))
-            Text(clockWords(now - from), style = TABULAR_LABEL, color = colors.textPrimary)
+            Text(duration(now - from), style = TABULAR_LABEL, color = colors.textPrimary)
         }
     }
 }
@@ -530,8 +522,7 @@ internal fun Readouts(model: LiveViewModel, stacked: Boolean) {
     val decoded by model.live.decodedSize.collectAsStateWithLifecycle()
     val auto by model.live.auto.collectAsStateWithLifecycle()
     val rung by model.live.rung.collectAsStateWithLifecycle()
-    val height = decoded?.substringAfter('x')?.toIntOrNull() ?: rung?.quality?.height
-    val size = height?.let { "${minOf(it, decoded?.substringBefore('x')?.toIntOrNull() ?: it)}p" } ?: "—"
+    val size = decoded?.let { "${minOf(it.width, it.height)}p" } ?: rung?.quality?.let { "${minOf(it.width, it.height)}p" } ?: "–"
     val mbit = "%.1f Mbit/s".format(stats.bytesPerSecond * 8 / 1_000_000f)
     val parts = listOf(size, "${stats.fps} fps", mbit, stringResource(if (auto) R.string.live_auto else R.string.live_manual))
     if (stacked) {
@@ -552,26 +543,39 @@ internal fun Heat(model: LiveViewModel, modifier: Modifier = Modifier) {
     val health = device?.thermal?.health ?: stream.thermal
     val percent = device?.battery?.percent ?: stream.battery?.toLong()
     val hot = health == "SEVERE" || health == "CRITICAL" || health == "SHUTDOWN"
+    val words = thermalWords(health)
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(VisorIcons.Heat, stringResource(R.string.fact_temperature), Modifier.size(16.dp), tint = if (hot) colors.signal else colors.textPrimary)
-        Text(stringResource(heatWords(health)), style = Visor.type.label, color = if (hot) colors.signal else colors.textPrimary)
+        if (words != null) {
+            Icon(VisorIcons.Heat, stringResource(R.string.fact_temperature), Modifier.size(16.dp), tint = if (hot) colors.signal else colors.textPrimary)
+            Text(stringResource(words), style = Visor.type.label, color = if (hot) colors.signal else colors.textPrimary)
+        }
         if (percent != null) {
-            Spacer(Modifier.width(6.dp))
+            if (words != null) Spacer(Modifier.width(6.dp))
             Icon(VisorIcons.Battery, stringResource(R.string.live_battery), Modifier.size(16.dp), tint = if (percent <= 10) colors.signal else colors.textPrimary)
             Text("$percent%", style = TABULAR_LABEL, color = colors.textPrimary)
         }
     }
 }
 
-private fun heatWords(health: String?): Int = when (health) {
+/** A THERMAL_HEALTH value in words; null when the glasses do not say. */
+internal fun thermalWords(health: String?): Int? = when (health?.uppercase()) {
+    "NORMAL" -> R.string.live_heat_normal
     "LIGHT" -> R.string.live_heat_light
     "MODERATE" -> R.string.live_heat_moderate
     "SEVERE" -> R.string.live_heat_severe
     "CRITICAL", "SHUTDOWN" -> R.string.live_heat_critical
-    else -> R.string.live_heat_normal
+    else -> null
 }
 
-/** The heat, the broadcast and the glasses' own photos, said once as they happen. */
+/** "2 min", "47 s": how long a span of the Live is. */
+@Composable
+fun spanWords(seconds: Long): String = when {
+    seconds >= 60 && seconds % 60 == 0L -> stringResource(R.string.span_minutes, seconds / 60)
+    seconds >= 60 -> duration(seconds * 1000)
+    else -> stringResource(R.string.span_seconds, seconds)
+}
+
+/** Stops, heat and broadcast changes, said once as they happen. */
 @Composable
 internal fun LiveWatchers(model: LiveViewModel) {
     val device by model.live.device.collectAsStateWithLifecycle()
@@ -582,26 +586,35 @@ internal fun LiveWatchers(model: LiveViewModel) {
     LaunchedEffect(model) {
         model.live.stopped.collect { reason ->
             when (reason) {
-                STOP_THERMAL -> model.say(R.string.live_stopped_heat, warning = true)
-                STOP_BATTERY_LOW -> model.say(R.string.live_stopped_battery, warning = true)
-                STOP_TEMPLES_CLOSED -> model.say(R.string.live_stopped_folded, warning = true)
+                STOP_THERMAL -> model.say(R.string.live_stopped_heat, warning = true, icon = VisorIcons.Heat)
+                STOP_BATTERY_LOW -> model.say(R.string.live_stopped_battery, warning = true, icon = VisorIcons.Battery)
+                STOP_TEMPLES_CLOSED -> model.say(R.string.live_stopped_folded, warning = true, icon = VisorIcons.Glasses)
             }
         }
     }
     // Only heat that may stop the camera is worth a word, and only once the picture is up.
     val status by model.live.status.collectAsStateWithLifecycle()
     val severe = health == "SEVERE" || health == "CRITICAL"
+    // Kept across a trip to the settings, so coming back does not say it again.
+    var warned by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(severe, status.phase == LivePhase.RUNNING) {
-        if (severe && status.phase == LivePhase.RUNNING) {
-            model.say(R.string.live_heat_severe_warning, warning = true)
+        if (!severe) {
+            warned = false
+        } else if (status.phase == LivePhase.RUNNING && !warned) {
+            warned = true
+            model.say(R.string.live_heat_severe_warning, warning = true, icon = VisorIcons.Heat)
             haptics.error()
         }
     }
+    var heard by rememberSaveable { mutableStateOf(broadcast.phase) }
     LaunchedEffect(broadcast.phase) {
+        if (broadcast.phase == heard) return@LaunchedEffect
+        heard = broadcast.phase
         when (broadcast.phase) {
-            BroadcastPhase.RECONNECTING -> model.say(R.string.live_broadcast_retrying, warning = true)
+            BroadcastPhase.RECONNECTING -> model.say(R.string.live_broadcast_retrying, warning = true, icon = VisorIcons.Live)
             BroadcastPhase.FAILED -> {
-                model.say(R.string.live_broadcast_failed, broadcast.problem, warning = true)
+                model.live.note("Broadcast stopped: ${broadcast.problem}")
+                model.say(R.string.live_broadcast_failed, warning = true, icon = VisorIcons.Live)
                 haptics.error()
             }
             BroadcastPhase.LIVE -> haptics.done()
@@ -616,9 +629,9 @@ internal fun BoxScope.PipBadge(recording: Boolean) {
     Box(Modifier.align(Alignment.TopStart).padding(8.dp).size(10.dp).clip(CircleShape).background(if (recording) Visor.colors.signal else Color.White))
 }
 
-/** One line at the top for a few seconds: what was saved, with a way to open it, or a warning. */
+/** One line at the top for a few seconds: what was saved, with a way to the gallery, or a warning. */
 @Composable
-internal fun BoxScope.NoticeIsland(model: LiveViewModel, onOpen: (Uri) -> Unit) {
+internal fun BoxScope.NoticeIsland(model: LiveViewModel, onOpen: () -> Unit) {
     val colors = Visor.colors
     val notice by model.notice.collectAsStateWithLifecycle()
     var last by remember { mutableStateOf(notice) }
@@ -634,22 +647,22 @@ internal fun BoxScope.NoticeIsland(model: LiveViewModel, onOpen: (Uri) -> Unit) 
             Modifier.clip(RoundedCornerShape(22.dp)).background(colors.raised.copy(alpha = 0.94f)).padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (n.warning) {
-                Icon(VisorIcons.Heat, null, Modifier.size(18.dp), tint = colors.textPrimary)
+            n.icon?.let {
+                Icon(it, null, Modifier.size(18.dp), tint = colors.textPrimary)
                 Spacer(Modifier.width(10.dp))
             }
             Text(
                 if (n.arg != null) stringResource(n.text, n.arg) else stringResource(n.text),
                 style = Visor.type.label, color = colors.textPrimary,
-                modifier = Modifier.padding(vertical = 6.dp).weight(1f, fill = false),
+                modifier = Modifier.padding(vertical = 6.dp).weight(1f, fill = false).semantics { liveRegion = LiveRegionMode.Polite },
             )
-            n.uri?.let { uri ->
+            if (n.uri != null) {
                 Spacer(Modifier.width(10.dp))
-                Pill(stringResource(R.string.live_open), { onOpen(uri) }, small = true)
+                ActionPill(stringResource(R.string.gallery_title), onOpen)
             }
             if (n.glassesHost) {
                 Spacer(Modifier.width(10.dp))
-                Pill(stringResource(R.string.live_use_glasses_host), { model.useGlassesHost() }, small = true)
+                ActionPill(stringResource(R.string.live_use_glasses_host), { model.useGlassesHost() })
             }
             if (n.uri == null && !n.glassesHost) Spacer(Modifier.width(8.dp))
         }
@@ -658,11 +671,8 @@ internal fun BoxScope.NoticeIsland(model: LiveViewModel, onOpen: (Uri) -> Unit) 
 
 // ---- Stepped back ----
 
-/**
- * Around the lit window: close and the sheet above, the readouts under it, and at the bottom the toggles and the
- * three that save: what just happened, recording, a photo.
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** Round the lit window: close and settings above, readouts below, toggles and save buttons at the bottom. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SteppedChrome(
     model: LiveViewModel,
@@ -702,24 +712,23 @@ internal fun SteppedChrome(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Readouts(model, stacked = false)
-            Heat(model)
+            if (LiveOverlay.READOUTS in settings.overlays) Readouts(model, stacked = false)
+            if (LiveOverlay.HEAT in settings.overlays) Heat(model)
         }
         Column(
             Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility).padding(bottom = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val airing = broadcast.phase != BroadcastPhase.OFF && broadcast.phase != BroadcastPhase.FAILED
-                Toggle(VisorIcons.Live, stringResource(R.string.live_broadcast), airing) { haptics.toggle(); onBroadcast() }
-                Toggle(if (settings.listen) VisorIcons.Speaker else VisorIcons.SpeakerOff, stringResource(R.string.live_listen), settings.listen) {
+                Toggle(VisorIcons.Live, stringResource(R.string.live_broadcast), broadcast.airing, Modifier.semantics { selected = broadcast.airing }) { haptics.toggle(); onBroadcast() }
+                Toggle(if (settings.listen) VisorIcons.Speaker else VisorIcons.SpeakerOff, stringResource(R.string.live_listen), settings.listen, Modifier.switchRow(settings.listen)) {
                     haptics.toggle()
                     model.update { it.copy(listen = !it.listen) }
                 }
             }
             Spacer(Modifier.height(22.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(34.dp)) {
-                Captioned(spanWords(held)) {
+                Captioned(duration(held * 1000)) {
                     RoundIcon(VisorIcons.Replay, stringResource(R.string.live_replay), { haptics.done(); model.saveReplay() }, size = 56.dp, background = colors.raised.copy(alpha = 0.85f))
                 }
                 RecordButton(recording != null) {
@@ -763,29 +772,28 @@ private fun Captioned(caption: String, content: @Composable () -> Unit) {
     }
 }
 
-/** A white ring; inside it a white disc, or while recording a small square in the signal colour. */
+/** A white ring; inside it a white disc, or while recording a small square. */
 @Composable
 private fun RecordButton(recording: Boolean, onClick: () -> Unit) {
-    val colors = Visor.colors
     val inner by animateDpAsState(if (recording) 26.dp else 58.dp, spring(dampingRatio = 0.7f, stiffness = 500f), label = "rec")
     val corner by animateDpAsState(if (recording) 7.dp else 29.dp, spring(dampingRatio = 0.7f, stiffness = 500f), label = "corner")
-    val fill by animateColorAsState(if (recording) colors.signal else Color.White, tween(180), label = "fill")
     val label = stringResource(if (recording) R.string.live_stop_recording else R.string.live_record)
     Box(
         Modifier.size(76.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).clickable(onClick = onClick).semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(inner).clip(RoundedCornerShape(corner)).background(fill))
+        Box(Modifier.size(inner).clip(RoundedCornerShape(corner)).background(Color.White))
     }
 }
 
 @Composable
-private fun Toggle(icon: ImageVector, text: String, on: Boolean, onClick: () -> Unit) {
+private fun Toggle(icon: ImageVector, text: String, on: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val colors = Visor.colors
     val back by animateColorAsState(if (on) Color.White else colors.raised.copy(alpha = 0.85f), tween(180), label = "back")
     val front by animateColorAsState(if (on) Color.Black else colors.textPrimary, tween(180), label = "front")
     Row(
-        Modifier.clip(RoundedCornerShape(50)).background(back).clickable(onClick = onClick).padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(50)).background(back)
+            .clickable(interactionSource = null, indication = ripple(color = if (on) Color.Black else colors.textPrimary), onClick = onClick).then(modifier).padding(start = 12.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(18.dp), tint = front)
@@ -797,58 +805,24 @@ private fun Toggle(icon: ImageVector, text: String, on: Boolean, onClick: () -> 
 // ---- Sheets ----
 
 /** What sits on the picture, each on or off, and the way to the rest of the settings. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LiveSheet(model: LiveViewModel, onSettings: () -> Unit, onDismiss: () -> Unit) {
-    val colors = Visor.colors
     val settings by model.settings.settings.collectAsStateWithLifecycle()
     val auto by model.live.auto.collectAsStateWithLifecycle()
     val rung by model.live.rung.collectAsStateWithLifecycle()
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = colors.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
-            Text(stringResource(R.string.live_more), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading().padding(bottom = 14.dp))
-            Group {
-                val rows = listOf(
-                    LiveOverlay.READOUTS to R.string.live_overlay_readouts,
-                    LiveOverlay.HEAT to R.string.live_overlay_heat,
-                    LiveOverlay.GRID to R.string.live_overlay_grid,
-                )
-                rows.forEachIndexed { i, (overlay, name) ->
-                    if (i > 0) Hairline()
-                    SwitchRow(stringResource(name), overlay in settings.overlays) { model.setOverlay(overlay, it) }
-                }
-                Hairline()
-                SwitchRow(stringResource(R.string.live_listen_long), settings.listen) { on -> model.update { it.copy(listen = on) } }
-            }
-            Spacer(Modifier.height(12.dp))
-            Group {
-                val detail = (if (auto) stringResource(R.string.live_auto) else stringResource(R.string.live_manual)) +
-                    (rung?.let { " · ${it.quality.label}" } ?: "")
-                Row(
-                    Modifier.fillMaxWidth().clickable(onClick = onSettings).padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.live_more_settings), style = Visor.type.body, color = colors.textPrimary)
-                        Text(detail, style = Visor.type.label, color = colors.textSecondary)
-                    }
-                    Icon(VisorIcons.Chevron, null, Modifier.size(18.dp), tint = colors.textSecondary)
-                }
-            }
+    VisorSheet(onDismiss, full = true) {
+        SheetTitle(stringResource(R.string.live_settings_on_picture))
+        LiveOverlayRows(model, settings.overlays)
+        Spacer(Modifier.height(12.dp))
+        Card {
+            val detail = (if (auto) stringResource(R.string.live_auto) else stringResource(R.string.live_manual)) +
+                (rung?.let { " · ${it.quality.label}" } ?: "")
+            NavRow(null, stringResource(R.string.settings_title), detail, onClick = onSettings, onCard = true)
         }
     }
 }
 
-/**
- * Where the Live goes out to, and the button that sends it. While it is on air, how it is going and the way to
- * end it.
- */
-@OptIn(ExperimentalMaterial3Api::class)
+/** Where the Live goes out to; while on air, its rate and End. */
 @Composable
 internal fun BroadcastSheet(model: LiveViewModel, onDismiss: () -> Unit) {
     val colors = Visor.colors
@@ -857,118 +831,43 @@ internal fun BroadcastSheet(model: LiveViewModel, onDismiss: () -> Unit) {
     var url by rememberSaveable { mutableStateOf(settings.rtmpUrl) }
     var key by rememberSaveable { mutableStateOf(settings.rtmpKey) }
     var codec by rememberSaveable { mutableStateOf(settings.rtmpCodec) }
-    val airing = state.phase != BroadcastPhase.OFF && state.phase != BroadcastPhase.FAILED
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = colors.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 20.dp)) {
-            Text(stringResource(R.string.live_broadcast), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
-            if (airing) {
-                val host = runCatching { java.net.URI(settings.rtmpUrl).host }.getOrNull() ?: settings.rtmpUrl
-                Text(stringResource(R.string.live_broadcast_to, host), style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(top = 4.dp))
+    VisorSheet(onDismiss, full = true) {
+        if (state.airing) {
+            val host = runCatching { URI(settings.rtmpUrl).host }.getOrNull() ?: settings.rtmpUrl
+            SheetTitle(stringResource(R.string.live_broadcast), stringResource(R.string.live_broadcast_to, host))
+            if (state.phase == BroadcastPhase.LIVE) {
                 Text(
                     "%.1f Mbit/s".format(state.kbps / 1000f),
-                    style = Visor.type.readoutSmall, color = colors.textPrimary, modifier = Modifier.padding(top = 18.dp, bottom = 22.dp),
+                    style = Visor.type.readoutSmall, color = colors.textPrimary, modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 22.dp),
                 )
-                Pill(stringResource(R.string.live_broadcast_end), {
-                    model.stopBroadcast()
-                    onDismiss()
-                })
-                return@Column
+            } else {
+                Spinner(Modifier.padding(horizontal = SIDE).padding(top = 18.dp, bottom = 22.dp))
             }
-            Spacer(Modifier.height(14.dp))
-            Field(url, { url = it }, stringResource(R.string.live_broadcast_server), stringResource(R.string.live_broadcast_server_hint), secret = false)
+            ActionPill(stringResource(R.string.live_broadcast_end), {
+                model.stopBroadcast()
+                onDismiss()
+            }, modifier = Modifier.padding(horizontal = SIDE))
+        } else {
+            SheetTitle(stringResource(R.string.live_broadcast))
+            SheetField(url, { url = it }, hint = stringResource(R.string.live_broadcast_server), keyboard = KeyboardType.Uri)
             Spacer(Modifier.height(10.dp))
-            Field(key, { key = it }, stringResource(R.string.live_broadcast_key), "", secret = true)
+            SheetField(key, { key = it }, hint = stringResource(R.string.live_broadcast_key), secret = true)
             Spacer(Modifier.height(12.dp))
-            Group {
-                ChoiceRow(stringResource(R.string.live_broadcast_h264), codec == BroadcastCodec.H264) { codec = BroadcastCodec.H264 }
-                Hairline()
-                ChoiceRow(stringResource(R.string.live_broadcast_hevc), codec == BroadcastCodec.HEVC) { codec = BroadcastCodec.HEVC }
-            }
-            Spacer(Modifier.height(18.dp))
-            val ready = (url.startsWith("rtmp://") || url.startsWith("rtmps://")) && key.isNotBlank()
-            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Box(Modifier.graphicsLayer { alpha = if (ready) 1f else 0.4f }) {
-                    Pill(stringResource(R.string.live_broadcast_go), {
-                        if (ready) {
-                            model.update { it.copy(rtmpUrl = url.trim(), rtmpKey = key.trim(), rtmpCodec = codec) }
-                            model.startBroadcast()
-                            onDismiss()
-                        }
-                    })
+            Rows(listOf(BroadcastCodec.H264 to R.string.live_broadcast_h264, BroadcastCodec.HEVC to R.string.live_broadcast_hevc)) { (choice, name) ->
+                RowFrame(stringResource(name), onClick = { codec = choice }, modifier = Modifier.semantics { selected = codec == choice }) {
+                    ChoiceMark(codec == choice, Modifier.padding(start = 12.dp))
                 }
             }
+            Spacer(Modifier.height(18.dp))
+            // A server with a host and an application, like rtmp://host/live2.
+            val address = runCatching { URI(url.trim()) }.getOrNull()
+            val ready = address != null && address.scheme?.lowercase().let { it == "rtmp" || it == "rtmps" } &&
+                address.host != null && address.path?.trim('/')?.isNotEmpty() == true && key.isNotBlank()
+            ActionPill(stringResource(R.string.live_broadcast_go), {
+                model.update { it.copy(rtmpUrl = url.trim(), rtmpKey = key.trim(), rtmpCodec = codec) }
+                model.startBroadcast()
+                onDismiss()
+            }, modifier = Modifier.padding(horizontal = SIDE), enabled = ready)
         }
-    }
-}
-
-@Composable
-private fun Field(value: String, onChange: (String) -> Unit, label: String, hint: String, secret: Boolean) {
-    val colors = Visor.colors
-    OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        label = { Text(label) },
-        placeholder = { if (hint.isNotEmpty()) Text(hint, color = colors.textTertiary) },
-        singleLine = true,
-        visualTransformation = if (secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        shape = RoundedCornerShape(14.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = Color.White, unfocusedBorderColor = colors.control,
-            focusedLabelColor = colors.textPrimary, unfocusedLabelColor = colors.textSecondary,
-            cursorColor = Color.White,
-        ),
-        modifier = Modifier.fillMaxWidth(),
-    )
-}
-
-@Composable
-private fun Group(content: @Composable () -> Unit) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Visor.colors.raised)) { content() }
-}
-
-@Composable
-private fun Hairline() {
-    Box(Modifier.padding(start = 16.dp).fillMaxWidth().height(1.dp).background(Visor.colors.hairline))
-}
-
-@Composable
-internal fun SwitchRow(text: String, on: Boolean, onChange: (Boolean) -> Unit) {
-    val colors = Visor.colors
-    val haptics = rememberHaptics()
-    val change by rememberUpdatedState(onChange)
-    Row(
-        Modifier.fillMaxWidth().clickable { haptics.toggle(); change(!on) }.padding(start = 16.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, style = Visor.type.body, color = colors.textPrimary, modifier = Modifier.weight(1f))
-        Switch(
-            checked = on,
-            onCheckedChange = { haptics.toggle(); change(it) },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.Black, checkedTrackColor = Color.White,
-                uncheckedThumbColor = colors.textSecondary, uncheckedTrackColor = colors.control, uncheckedBorderColor = Color.Transparent,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun ChoiceRow(text: String, on: Boolean, onClick: () -> Unit) {
-    val colors = Visor.colors
-    val fill by animateColorAsState(if (on) Color.White else Color.Transparent, tween(180), label = "choice")
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(20.dp).clip(CircleShape).border(1.5.dp, if (on) Color.White else colors.textTertiary, CircleShape), contentAlignment = Alignment.Center) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(fill))
-        }
-        Spacer(Modifier.width(16.dp))
-        Text(text, style = Visor.type.body, color = colors.textPrimary)
     }
 }

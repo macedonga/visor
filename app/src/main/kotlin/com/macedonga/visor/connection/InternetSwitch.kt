@@ -28,9 +28,12 @@ import javax.inject.Singleton
 class InternetSwitch @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: Provider<GlassesConnection>,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder {
     private val watching = AtomicBoolean(false)
+
+    // The last state written and on which link, so an unchanged network is not sent again.
+    @Volatile private var sent: Pair<DataXConnection, ByteArray>? = null
 
     /** False keeps the Display off the phone's internet: it is told the phone is offline. */
     @Volatile var sharing = true
@@ -42,9 +45,11 @@ class InternetSwitch @Inject constructor(
     override suspend fun respond(message: DataXMessage, mux: DataXConnection) {
         if (message.info.messageType != MT_LISTEN) return
         val state = phoneInternet()
-        log.get().add("Internet: the Display asked; the phone is ${if (state.connected) "online" else "offline"}" + if (state.metered) ", metered" else "")
-        mux.send(DataXConnection.mirror(message.info.channelId), encode(state), messageType = MT_COMPANION_STATE)
-        mux.sendOnService(SVC, MT_COMPANION_STATE, encode(state))
+        log.add("Internet: the Display asked; the phone is ${if (state.connected) "online" else "offline"}" + if (state.metered) ", metered" else "")
+        val bytes = encode(state)
+        mux.send(DataXConnection.mirror(message.info.channelId), bytes, messageType = MT_COMPANION_STATE)
+        mux.sendOnService(SVC, MT_COMPANION_STATE, bytes)
+        sent = mux to bytes
         watchNetwork()
     }
 
@@ -70,7 +75,12 @@ class InternetSwitch @Inject constructor(
         val glasses = connection.get()
         if (glasses.state.value.link != LinkState.READY) return
         val state = encode(phoneInternet())
-        glasses.submit { it.sendOnService(SVC, MT_COMPANION_STATE, state) }
+        glasses.submit { mux ->
+            val last = sent
+            if (last != null && last.first === mux && last.second.contentEquals(state)) return@submit
+            mux.sendOnService(SVC, MT_COMPANION_STATE, state)
+            sent = mux to state
+        }
     }
 
     private data class PhoneInternet(val connected: Boolean, val metered: Boolean, val dns: List<String>)
@@ -87,7 +97,7 @@ class InternetSwitch @Inject constructor(
 
     private fun encode(s: PhoneInternet): ByteArray =
         Wire.fieldVarint(1, if (s.connected) 1 else 0) + Wire.fieldVarint(2, if (s.metered) 1 else 0) +
-            Wire.fieldBytes(3, s.dns.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldBytes(1, a.encodeToByteArray()) })
+            Wire.fieldBytes(3, s.dns.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldString(1, a) })
 
     companion object {
         const val SVC = 41108

@@ -5,53 +5,18 @@ sealed interface Ui {
     val style: Style
 }
 
-class Edges(val top: Float = 0f, val bottom: Float = 0f, val start: Float = 0f, val end: Float = 0f) {
-    val isZero get() = top == 0f && bottom == 0f && start == 0f && end == 0f
-}
-
-/** What a node asks of its parent and of its own box. Sizes stay strings: `"100%"`, `"48dp"`, `"auto"` or null. */
-class Style(
-    val width: String? = null,
-    val height: String? = null,
-    val grow: Float = 0f,
-    val alignSelf: String? = null,
-    val margin: Edges = Edges(),
-    val padding: Edges = Edges(),
-    val background: Long? = null,
-    val radius: Float = 0f,
-    val borderWidth: Float = 0f,
-    val borderColor: Long? = null,
-    val alpha: Float = 1f,
-    val invisible: Boolean = false,
-)
+/** What [Flat] reads of a node's look: its fill, its alpha, and whether it is hidden. */
+class Style(val background: Long?, val alpha: Float, val invisible: Boolean)
 
 class Event(val handler: Lambda, val args: List<Any?>)
 
-/** A size in dp, or null for "auto", percentages and nothing. */
-fun bloksDp(value: String?): Float? = if (value == null || value.endsWith("%") || value == "auto") null else UiBuilder.dim(value)
+class Box(override val style: Style, val children: List<Ui>, val onClick: Event?, val enabled: Boolean) : Ui
 
-class Box(
-    override val style: Style,
-    val column: Boolean,
-    val justify: String?,
-    val align: String?,
-    val children: List<Ui>,
-    val onClick: Event?,
-    val enabled: Boolean,
-    val scroll: Boolean,
-) : Ui
+class Span(val text: String, val sizeSp: Float?, val color: Long?, val onClick: Event?)
 
-class Span(
-    val text: String,
-    val sizeSp: Float?,
-    val weight: String?,
-    val color: Long?,
-    val underline: Boolean,
-    val strike: Boolean,
-    val onClick: Event?,
-)
-
-class Text(override val style: Style, val spans: List<Span>, val maxLines: Int, val align: String?, val onClick: Event?) : Ui
+class Text(override val style: Style, val spans: List<Span>, val onClick: Event?) : Ui {
+    val text get() = spans.joinToString("") { it.text }
+}
 
 class Input(
     override val style: Style,
@@ -63,32 +28,15 @@ class Input(
     val keyboard: String?,
     val secret: Boolean,
     val maxLength: Int,
-    val ime: String?,
     val enabled: Boolean,
-    val sizeSp: Float?,
-    val color: Long?,
     val onChange: Event?,
     val onSubmit: Event?,
     val onFocus: Event?,
     val onBlur: Event?,
 ) : Ui
 
-class Image(override val style: Style, val url: String?) : Ui
-
-class Spinner(override val style: Style, val sizeDp: Float?, val color: Long?) : Ui
-
-/**
- * Walks a screen's component tree into [Ui]. Only what a login needs: boxes, rich text, inputs, images, spinners.
- * Component and attribute ids are those of the Meta AI 294 runtime (`X/IIV`).
- */
-internal class UiBuilder(
-    private val interpreter: Interpreter,
-    private val screen: BloksSession.Screen,
-    private val dark: Boolean,
-    private val text: (Node) -> String,
-    private val started: MutableSet<Any>,
-    private val log: (String) -> Unit,
-) {
+/** Walks a screen's component tree (Meta AI 294 ids) into [Ui]: boxes, text and inputs. */
+internal class UiBuilder(private val session: BloksSession, private val screen: BloksSession.Screen) {
     /** True when a lifecycle script ran during the walk: state may have changed, so walk again. */
     var ranLifecycle = false
         private set
@@ -99,59 +47,39 @@ internal class UiBuilder(
         if (a[49] == "gone") return null
         val style = style(node, a)
         return when (node.type) {
-            SCREEN -> Box(style, column = true, justify = null, align = null, children = listOfNotNull(child(a[40], ctx), child(a[36], ctx)), onClick = null, enabled = true, scroll = true)
+            SCREEN -> Box(style, listOfNotNull(child(a[40], ctx), child(a[36], ctx)), onClick = null, enabled = true)
             SCREEN_QUERY -> child(a[36], ctx)
-            FLEXBOX -> Box(
-                style,
-                column = (a[41] as? String)?.startsWith("column") == true,
-                justify = a[44] as? String,
-                align = a[36] as? String,
-                children = children(node, a[32], ctx),
-                onClick = event(a[45], ctx, node),
-                enabled = a[40] != false,
-                scroll = false,
-            )
-            COLLECTION -> Box(style, column = a[42] != "row", justify = null, align = null, children = children(node, a[32], ctx), onClick = null, enabled = true, scroll = true)
-            RICH_TEXT -> Text(style, spans(node, a, ctx), maxLines(a[40]), a[42] as? String, event(a[41], ctx, node))
+            FLEXBOX -> Box(style, children(node, a[32], ctx), onClick = event(a[45], ctx, node), enabled = a[40] != false)
+            COLLECTION -> Box(style, children(node, a[32], ctx), onClick = null, enabled = true)
+            RICH_TEXT -> Text(style, spans(node, a, ctx), event(a[41], ctx, node))
             PLAIN_TEXT -> Text(
                 style,
-                listOf(Span(a[41]?.toString().orEmpty(), dim(a[45]), a[46] as? String, (a[48] as? Node)?.let(::color) ?: hex(a[43]), false, false, null)),
-                maxLines(a[38]),
-                a[42] as? String,
+                listOf(Span(a[41]?.toString().orEmpty(), dim(a[45]), (a[48] as? Node)?.let(::color) ?: hex(a[43]), null)),
                 event(a[40], ctx, node),
             )
             INPUT -> Input(
                 style,
                 node,
-                text(node),
+                session.text(screen, node),
                 a[36]?.toString().orEmpty(),
                 label(a, ctx),
                 a[56] as? String,
-                secret = a[99] == true || a[56] == "password" || a[56] == "passcode",
+                secret = a[BloksSession.INPUT_SENSITIVE] == true || a[56] == "password" || a[56] == "passcode",
                 maxLength = (a[40] as? Number)?.toInt() ?: -1,
-                ime = a[70] as? String,
                 enabled = a[74] != false,
-                sizeSp = dim(a[53]),
-                color = (a[55] as? Node)?.let(::color),
                 onChange = event(a[48], ctx, node),
                 onSubmit = event(a[46], ctx, node),
                 onFocus = event(a[42], ctx, node),
                 onBlur = event(a[45], ctx, node),
             )
-            IMAGE -> Image(style, (if (dark) a[36] ?: a[41] else a[41]) as? String)
-            SPINNER -> {
-                val o = a[35] as? Node
-                Spinner(style, dim(o?.get(40)), (o?.get(38) as? Node)?.let(::color))
-            }
-            SPINNER_V1 -> Spinner(style, dim((a[35] as? Node)?.get(36)), ((a[35] as? Node)?.get(35) as? Node)?.let(::color))
-            GLIMMER -> Box(style, column = true, justify = null, align = null, children = emptyList(), onClick = null, enabled = true, scroll = false)
+            IMAGE, SPINNER, SPINNER_V1, GLIMMER -> null
             else -> {
                 val kids = children(node, a[32], ctx)
                 if (kids.isEmpty()) {
                     unknown(node.type)
                     null
                 } else {
-                    Box(style, column = true, justify = null, align = null, children = kids, onClick = null, enabled = true, scroll = false)
+                    Box(style, kids, onClick = null, enabled = true)
                 }
             }
         }
@@ -165,8 +93,7 @@ internal class UiBuilder(
     }
 
     private fun children(node: Node, value: Any?, ctx: Ctx): List<Ui> {
-        val list = screen.children[node] ?: node[BloksSession.ID]?.toString()?.let { screen.replaced[it] } ?: (value as? List<*>) ?: listOfNotNull(value)
-        return list.flatMap { if (it is Node && it.type == FRAGMENT) (it[32] as? List<*>).orEmpty() else listOf(it) }.mapNotNull { child(it, ctx) }
+        return screen.childrenOf(node, value).flatMap { if (it is Node && it.type == FRAGMENT) (it[32] as? List<*>).orEmpty() else listOf(it) }.mapNotNull { child(it, ctx) }
     }
 
     /** The node's attributes with its bindings (attribute 135: `[key, script, ...]`) evaluated in its context. */
@@ -180,9 +107,9 @@ internal class UiBuilder(
             val script = bindings[i + 1] as? Script
             if (key != null && key.length == 1 && script != null) {
                 try {
-                    out[key[0].code] = interpreter.run(script.expr, ctx)
+                    out[key[0].code] = session.interpreter.run(script.expr, ctx)
                 } catch (error: Exception) {
-                    log("binding ${key[0].code} of ${node.type} failed: ${error.message}")
+                    trace("binding ${key[0].code} of ${node.type} failed: ${error.message}")
                 }
             }
             i += 2
@@ -200,14 +127,14 @@ internal class UiBuilder(
                 RENDER_LIFECYCLE -> listOf(ext[35])
                 else -> continue
             }
-            if (!started.add(Pair(ext, ctx))) continue
+            if (!screen.started.add(Pair(ext, ctx))) continue
             for (s in scripts) {
                 val e = event(s, ctx, node) ?: continue
                 try {
-                    interpreter.call(e.handler, e.args)
+                    session.interpreter.call(e.handler, e.args)
                     ranLifecycle = true
                 } catch (error: Exception) {
-                    log("lifecycle of ${node.type} failed: ${error.message}")
+                    trace("lifecycle of ${node.type} failed: ${error.message}")
                 }
             }
         }
@@ -236,18 +163,14 @@ internal class UiBuilder(
                 SPAN_GROUP -> (na[36] as? List<*>).orEmpty().forEach { add(it, inherited + (na[38] as? List<*>).orEmpty().filterIsInstance<Node>()) }
                 SPAN -> {
                     val styles = inherited + (na[36] as? List<*>).orEmpty().filterIsInstance<Node>().map { Node(it.type, resolve(it, ctx)) }
-                    val font = styles.lastOrNull { it.type == FONT }
                     out += Span(
                         text = na[38]?.toString().orEmpty(),
-                        sizeSp = dim(font?.get(41)),
-                        weight = (font?.get(42) as? String) ?: (font?.get(35) as? String)?.let { if ("Bold" in it) "bold" else if ("Medium" in it) "medium" else null },
+                        sizeSp = dim(styles.lastOrNull { it.type == FONT }?.get(41)),
                         color = (styles.lastOrNull { it.type == COLOR }?.get(35) as? Node)?.let(::color),
-                        underline = styles.lastOrNull { it.type == UNDERLINE }?.get(35) == true,
-                        strike = styles.lastOrNull { it.type == STRIKE }?.get(35) == true,
                         onClick = styles.lastOrNull { it.type == LINK }?.let { event(it[36], ctx, node) },
                     )
                 }
-                LEGACY_SPAN -> out += Span(na[38]?.toString().orEmpty(), dim(na[42]), na[43] as? String, (na[44] as? Node)?.let(::color), na[52] == true, na[45] == true, event(na[36], ctx, node))
+                LEGACY_SPAN -> out += Span(na[38]?.toString().orEmpty(), dim(na[42]), (na[44] as? Node)?.let(::color), event(na[36], ctx, node))
             }
         }
         val list = if (a[68] == true) a[69] else a[32]
@@ -256,35 +179,18 @@ internal class UiBuilder(
     }
 
     private fun style(node: Node, a: Map<Int, Any?>): Style {
-        val c = (a[132] as? Node)?.let { Node(it.type, it.attrs) }
-        val deco = a[38] as? Node
-        val decorated = node.type == FLEXBOX && deco?.type == DECORATION
-        val bg = if (decorated) (deco!![35] as? Node)?.let { drawable -> (drawable[35] as? Node)?.let(::color) ?: hex(drawable[35]) } else null
+        val deco = (a[38] as? Node)?.takeIf { node.type == FLEXBOX && it.type == DECORATION }
         val alpha = (a[141] as? Number)?.toFloat()
             ?: (a[133] as? List<*>)?.filterIsInstance<Node>()?.firstOrNull { it.type == TRANSFORMS }?.get(141)?.let { (it as? Number)?.toFloat() }
             ?: 1f
         return Style(
-            width = c?.get(68)?.toString(),
-            height = c?.get(42)?.toString(),
-            grow = (c?.get(41) as? Number)?.toFloat() ?: 0f,
-            alignSelf = c?.get(35) as? String,
-            margin = Edges(dim(c?.get(50)) ?: 0f, dim(c?.get(44)) ?: 0f, dim(c?.get(49) ?: c?.get(46)) ?: 0f, dim(c?.get(45) ?: c?.get(48)) ?: 0f),
-            padding = Edges(
-                dim(c?.get(61) ?: a[59]) ?: 0f,
-                dim(c?.get(55) ?: a[54]) ?: 0f,
-                dim(c?.get(59) ?: c?.get(57) ?: a[58] ?: a[56]) ?: 0f,
-                dim(c?.get(56) ?: c?.get(58) ?: a[55] ?: a[57]) ?: 0f,
-            ),
-            background = bg,
-            radius = if (decorated) dim(deco!![46]) ?: 0f else 0f,
-            borderWidth = if (decorated) dim(deco!![40]) ?: 0f else 0f,
-            borderColor = if (decorated) (deco!![38] as? Node)?.let(::color) ?: hex(deco[36]) else null,
+            background = (deco?.get(35) as? Node)?.let { d -> (d[35] as? Node)?.let(::color) ?: hex(d[35]) },
             alpha = alpha,
             invisible = a[49] == "invisible",
         )
     }
 
-    private fun color(node: Node): Long? = hex(if (dark) node[35] ?: node[36] else node[36] ?: node[35])
+    private fun color(node: Node): Long? = hex(if (session.darkMode) node[35] ?: node[36] else node[36] ?: node[35])
 
     private fun hex(value: Any?): Long? {
         val s = (value as? String)?.removePrefix("#") ?: return null
@@ -296,13 +202,11 @@ internal class UiBuilder(
         }
     }
 
-    private fun maxLines(value: Any?): Int = (value as? Number)?.toLong()?.let { if (it <= 0 || it > 1000) Int.MAX_VALUE else it.toInt() } ?: Int.MAX_VALUE
-
-    private val reported = HashSet<Int>()
-
     private fun unknown(type: Int) {
-        if (reported.add(type)) log("component $type not drawn")
+        if (session.undrawn.add(type)) trace("component $type not drawn")
     }
+
+    private fun trace(line: String) = session.trace("render: $line")
 
     companion object {
         const val SCREEN = 14093
@@ -323,8 +227,6 @@ internal class UiBuilder(
         const val FONT = 16870
         const val COLOR = 16875
         const val LINK = 16873
-        const val STRIKE = 16874
-        const val UNDERLINE = 16876
         const val LIFECYCLE = 13914
         const val RENDER_LIFECYCLE = 16529
         const val TRANSFORMS = 13688
@@ -340,7 +242,7 @@ internal class UiBuilder(
             is String -> when {
                 value.endsWith("dp") -> value.removeSuffix("dp").toFloatOrNull()
                 value.endsWith("sp") -> value.removeSuffix("sp").toFloatOrNull()
-                value.endsWith("px") -> value.removeSuffix("px").toFloatOrNull()?.div(3f)
+                value.endsWith("px") -> value.removeSuffix("px").toFloatOrNull()?.div(BloksClient.PIXEL_RATIO)
                 else -> value.toFloatOrNull()
             }
             else -> null

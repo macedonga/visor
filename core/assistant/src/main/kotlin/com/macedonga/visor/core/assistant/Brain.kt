@@ -8,6 +8,7 @@ import com.macedonga.visor.core.assistant.mcp.PHOTO_DATA_URL
 import com.macedonga.visor.core.assistant.mcp.ToolAction
 import com.macedonga.visor.core.assistant.mcp.ToolResult
 import com.macedonga.visor.core.assistant.mcp.Toolbox
+import com.macedonga.visor.core.connection.objects
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.Normalizer
@@ -19,7 +20,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -28,12 +28,23 @@ import org.json.JSONObject
 /** Where an answer comes from. */
 enum class Provider { CLAUDE, OPENAI_COMPATIBLE }
 
+/** The Claude model asked when none is set. */
+const val DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+
 /** One question, its answer and what the tools did for it: the conversation behind the next question. */
 data class Exchange(val question: String, val answer: String, val actions: List<ToolAction> = emptyList())
 
 /** The answer as the model reads it later: with Visor's note of what the tools did, so words alone never pass for an action. */
 private fun Exchange.told(): String = if (actions.isEmpty()) answer else
-    answer + " [Visor: " + actions.joinToString("; ") { "${it.server} · ${it.what}, " + if (it.ok) "done" else "failed" } + "]"
+    answer + " [Visor: " + actions.joinToString("; ") { "${it.server.ifEmpty { "Phone" }} · ${it.what}, " + if (it.ok) "done" else "failed" } + "]"
+
+/** [past] as the conversation so far: each question and its answer. */
+private fun JSONArray.putPast(past: List<Exchange>): JSONArray = apply {
+    for (e in past) {
+        put(JSONObject().put("role", "user").put("content", e.question))
+        put(JSONObject().put("role", "assistant").put("content", e.told()))
+    }
+}
 
 /**
  * An answer, what the model chose to remember while giving it, and what it did with the person's tools. [ends]: the
@@ -58,24 +69,11 @@ private class Turn(
     var cameraRequested = false
 }
 
-/** What the assistant keeps about the wearer across conversations; the model adds and drops entries with its tools. */
-interface MemoryBook {
-    val memories: StateFlow<List<Memory>>
-    fun remember(text: String): Memory
-    fun forget(id: String): Memory?
-}
-
 /**
  * What an OpenAI-compatible server and model take: reasoning_effort none, max_completion_tokens for max_tokens. [thinks]:
  * the model thinks anyway, and its answer needs room for that.
  */
 data class Fields(val reasoningOff: Boolean, val completionTokens: Boolean, val thinks: Boolean = false)
-
-/** Where [Fields] are kept, by address and model, until either changes. */
-interface FieldBook {
-    fun fields(key: String): Fields?
-    fun keep(key: String, fields: Fields)
-}
 
 /** Who the answer is for: spoken by the glasses, or read on the phone. */
 enum class Audience { GLASSES, PHONE }
@@ -111,14 +109,10 @@ enum class CameraAction(val tool: String, val title: String, val help: String, v
 }
 
 /** The model behind the assistant. The conversation comes with each question, from the diary; tools from [hub] and [phone]. */
-class Brain(
-    private val config: () -> AssistantConfig,
-    private val book: MemoryBook? = null,
-    private val hub: McpHub? = null,
-    private val fields: FieldBook? = null,
-    phone: Phone? = null,
-) {
-    private val phoneTools = phone?.let(::PhoneTools)
+class Brain(private val store: AssistantConfigStore, private val diary: Diary, private val hub: McpHub, phone: Phone) {
+    private val phoneTools = PhoneTools(phone)
+
+    private fun config() = store.config.value
 
     /**
      * The answer to [question] after [past], with [image] (a JPEG) when the glasses sent one; [canEnd] offers the
@@ -138,7 +132,7 @@ class Brain(
     ): Reply = withContext(Dispatchers.IO) {
         // With the camera off only a stop goes without the model; the model answers the rest, its camera tools withheld.
         val keyword = if (cameraAction != null && audience == Audience.GLASSES) {
-            cameraKeyword(question, locale)?.takeIf { it == CameraAction.STOP_RECORDING || config().vision }
+            cameraKeyword(question, locale)?.takeIf { it in cameraTools(config()) }
         } else null
         if (keyword != null) {
             val turn = Turn(Toolbox(emptyList(), ""), cameraAction = cameraAction)
@@ -152,15 +146,21 @@ class Brain(
             }
             return@withContext Reply(text, actions = turn.actions)
         }
-        val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        val c = ready()
         // The tools never stand in the way of an answer: without them the model still answers.
-        val turn = Turn(hub?.let { runCatching { it.toolbox() }.getOrNull() } ?: Toolbox(emptyList(), ""), image, glasses, canEnd, capturePhoto, cameraAction)
+        val box = try {
+            hub.toolbox()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Toolbox(emptyList(), "")
+        }
+        val turn = Turn(box, image, glasses, canEnd, capturePhoto, cameraAction)
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
             memoryPrompt() +
-            phoneTools?.prompt.orEmpty() +
+            phoneTools.prompt +
             (if (canEnd) END_PROMPT else "") +
             turn.box.prompt +
             (if ((image != null || capturePhoto != null) && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
@@ -178,8 +178,7 @@ class Brain(
 
     /** One sentence for the wearer, in [locale]'s language, written from [what]; outside the conversation. */
     suspend fun phrase(what: String, locale: Locale): String = withContext(Dispatchers.IO) {
-        val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        val c = ready()
         val system = "You write one short sentence that smart glasses speak to their wearer, in " +
             "${locale.getDisplayLanguage(Locale.ENGLISH)}. Answer with that sentence only."
         write(c, c.model, system, what, 200)
@@ -187,8 +186,7 @@ class Brain(
 
     /** A day's lines for the diary, in [locale]'s language, from [exchanges] in order; with the lines' own model if one is set. */
     suspend fun dayLines(exchanges: String, locale: Locale): String = withContext(Dispatchers.IO) {
-        val c = config()
-        check(c.apiKey.isNotBlank() || c.provider == Provider.OPENAI_COMPATIBLE) { "no API key is set" }
+        val c = ready()
         val system = "You keep the diary of a person who wears smart glasses with a voice assistant. From the day's " +
             "exchanges with the assistant, write the day's entry: one to three short sentences in " +
             "${locale.getDisplayLanguage(Locale.ENGLISH)}, in the second person (\"You asked about...\"), dry and precise, " +
@@ -197,15 +195,17 @@ class Brain(
         write(c, c.linesModel.ifBlank { c.model }, system, exchanges, 300)
     }
 
+    private fun ready(): AssistantConfig =
+        config().also { check(it.hasModel) { "no API key is set" } }
+
     private suspend fun write(c: AssistantConfig, model: String, system: String, text: String, tokens: Int): String = when (c.provider) {
         Provider.CLAUDE -> claude(c, model.ifBlank { DEFAULT_CLAUDE_MODEL }, system, emptyList(), text, null, tokens, false, null)
         Provider.OPENAI_COMPATIBLE -> openAi(c, model, system, emptyList(), text, null, tokens, null)
     }.trim().also { check(it.isNotEmpty()) { "the model gave an empty answer" } }
 
-    /** What the model knows of the wearer, and how to keep it. Empty when there is nowhere to keep it. */
+    /** What the model knows of the wearer, and how to keep it. */
     private fun memoryPrompt(): String {
-        val book = book ?: return ""
-        val known = book.memories.value
+        val known = diary.memories.value
         return " You can keep lasting facts about the wearer with the remember tool, and drop wrong or outdated ones with " +
             "forget. When the wearer mentions something that would help in later conversations (people and their names, " +
             "where they live or work, preferences, plans, what they own), end your answer by asking whether to remember " +
@@ -239,32 +239,31 @@ class Brain(
                     ToolResult(error.message ?: "the glasses could not complete the camera request", true)
                 }
             }
-            if (cameraAction != null) turn.actions += ToolAction("Glasses", if (result.isError) "${cameraAction.title}: ${result.text.substringBefore(';')}" else cameraAction.title, !result.isError)
+            if (cameraAction != null) turn.actions += ToolAction("Glasses", cameraAction.title, !result.isError, kind = cameraAction.tool)
             return result
         }
         if (turn.canEnd && name == END_TOOL) {
             turn.ends = true
             return ToolResult("the glasses stop listening after your answer", false)
         }
-        val book = book
-        if (book != null && name == "remember") {
+        if (name == "remember") {
             val fact = input.optString("fact").trim()
             if (fact.isEmpty()) return ToolResult("nothing to remember", true)
-            book.remember(fact)
+            diary.remember(fact)
             turn.remembered += fact
             return ToolResult("kept", false)
         }
-        if (book != null && name == "forget") {
-            return if (book.forget(input.optString("id")) != null) ToolResult("forgotten", false) else ToolResult("no such fact", true)
+        if (name == "forget") {
+            return if (diary.forget(input.optString("id")) != null) ToolResult("forgotten", false) else ToolResult("no such fact", true)
         }
-        phoneTools?.run(name, input)?.let { (result, action) ->
+        phoneTools.run(name, input)?.let { (result, action) ->
             action?.let(turn.actions::add)
             return result
         }
         val glasses = turn.glasses
         if (glasses != null) glasses.tools.find { it.short == name }?.let { return glasses.call(it.full, input) }
         val tool = turn.box.find(name) ?: return ToolResult("unknown tool", true)
-        val (result, action) = hub?.call(tool, input, turn.photo) ?: return ToolResult("unavailable", true)
+        val (result, action) = hub.call(tool, input, turn.photo)
         action?.let(turn.actions::add)
         return result
     }
@@ -273,41 +272,43 @@ class Brain(
     private fun ExposedTool.help(): String =
         ("[${server.name}] " + (if (tool.title.isNotEmpty()) "${tool.title}. " else "") + tool.description).take(MAX_TOOL_HELP)
 
+    /** The camera actions the model may take: with the camera off, only a stop. */
+    private fun cameraTools(c: AssistantConfig) = CameraAction.entries.filter { c.vision || it == CameraAction.STOP_RECORDING }
+
+    /** Every tool [turn] offers the model, as name, help and input schema, in the order it sees them. */
+    private fun specs(c: AssistantConfig, turn: Turn): List<Triple<String, String, JSONObject>> = buildList {
+        add(Triple("remember", REMEMBER_HELP, schema("fact", FACT_HELP)))
+        add(Triple("forget", FORGET_HELP, schema("id", "The fact's id.")))
+        if (turn.canEnd) add(Triple(END_TOOL, END_HELP, NO_INPUT))
+        if (turn.capturePhoto != null) add(Triple(PHOTO_TOOL, PHOTO_HELP, NO_INPUT))
+        if (turn.cameraAction != null) cameraTools(c).forEach { add(Triple(it.tool, it.help, NO_INPUT)) }
+        addAll(phoneTools.tools)
+        turn.box.tools.forEach { add(Triple(it.name, it.help(), it.tool.schema)) }
+        turn.glasses?.tools?.forEach { add(Triple(it.short, it.help, it.schema)) }
+    }
+
     private suspend fun claude(
         c: AssistantConfig, model: String, system: String, past: List<Exchange>, question: String, image: ByteArray?,
         tokens: Int, webSearch: Boolean, turn: Turn?,
     ): String {
-        val messages = JSONArray()
-        for (e in past) {
-            messages.put(JSONObject().put("role", "user").put("content", e.question))
-            messages.put(JSONObject().put("role", "assistant").put("content", e.told()))
-        }
+        val messages = JSONArray().putPast(past)
         val content = JSONArray()
         if (image != null) content.put(claudeImage(image))
         content.put(JSONObject().put("type", "text").put("text", question))
         messages.put(JSONObject().put("role", "user").put("content", content))
         val tools = JSONArray()
         if (webSearch) tools.put(JSONObject().put("type", "web_search_20250305").put("name", "web_search").put("max_uses", 2))
-        if (turn != null && book != null) {
-            tools.put(JSONObject().put("name", "remember").put("description", REMEMBER_HELP).put("input_schema", schema("fact", FACT_HELP)))
-            tools.put(JSONObject().put("name", "forget").put("description", FORGET_HELP).put("input_schema", schema("id", "The fact's id.")))
+        turn?.let { specs(c, it) }.orEmpty().forEach { (name, help, input) ->
+            tools.put(JSONObject().put("name", name).put("description", help).put("input_schema", input))
         }
-        if (turn?.canEnd == true) tools.put(JSONObject().put("name", END_TOOL).put("description", END_HELP).put("input_schema", NO_INPUT))
-        if (turn?.capturePhoto != null) tools.put(JSONObject().put("name", PHOTO_TOOL).put("description", PHOTO_HELP).put("input_schema", NO_INPUT))
-        if (turn?.cameraAction != null) CameraAction.entries.filter { c.vision || it == CameraAction.STOP_RECORDING }.forEach {
-            tools.put(JSONObject().put("name", it.tool).put("description", it.help).put("input_schema", NO_INPUT))
-        }
-        if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> tools.put(JSONObject().put("name", name).put("description", help).put("input_schema", input)) }
-        turn?.box?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.name).put("description", t.help()).put("input_schema", t.tool.schema)) }
-        turn?.glasses?.tools?.forEach { t -> tools.put(JSONObject().put("name", t.short).put("description", t.help).put("input_schema", t.schema)) }
         var said = ""
         repeat(MAX_TOOL_ROUNDS) {
             // Current models think before they answer, and the thinking counts toward max_tokens.
             val body = JSONObject().put("model", model).put("max_tokens", tokens + THINKING_TOKENS).put("system", system).put("messages", messages)
             if (tools.length() > 0) body.put("tools", tools)
-            val answer = post("https://api.anthropic.com/v1/messages", mapOf("x-api-key" to c.apiKey, "anthropic-version" to "2023-06-01"), body)
+            val answer = post("$ANTHROPIC_API/messages", anthropicHeaders(c.apiKey), body)
             val blocks = answer.getJSONArray("content")
-            val list = (0 until blocks.length()).map { blocks.getJSONObject(it) }
+            val list = blocks.objects()
             // With web search the answer is split into several text blocks around the citations.
             val text = list.filter { it.optString("type") == "text" }.joinToString("") { it.getString("text") }
             if (text.isNotBlank()) said = text
@@ -336,11 +337,7 @@ class Brain(
         c: AssistantConfig, model: String, system: String, past: List<Exchange>, question: String, image: ByteArray?,
         tokens: Int, turn: Turn?,
     ): String {
-        val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system))
-        for (e in past) {
-            messages.put(JSONObject().put("role", "user").put("content", e.question))
-            messages.put(JSONObject().put("role", "assistant").put("content", e.told()))
-        }
+        val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system)).putPast(past)
         val user: Any = if (image == null) question else JSONArray()
             .put(JSONObject().put("type", "text").put("text", question))
             .put(openAiImage(image))
@@ -348,19 +345,10 @@ class Brain(
         val headers = if (c.apiKey.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${c.apiKey}")
         val url = c.baseUrl.trimEnd('/') + "/chat/completions"
         var tools: JSONArray? = JSONArray().apply {
-            if (turn != null && book != null) {
-                put(function("remember", REMEMBER_HELP, schema("fact", FACT_HELP)))
-                put(function("forget", FORGET_HELP, schema("id", "The fact's id.")))
-            }
-            if (turn?.canEnd == true) put(function(END_TOOL, END_HELP, NO_INPUT))
-            if (turn?.capturePhoto != null) put(function(PHOTO_TOOL, PHOTO_HELP, NO_INPUT))
-            if (turn?.cameraAction != null) CameraAction.entries.filter { c.vision || it == CameraAction.STOP_RECORDING }.forEach {
-                put(function(it.tool, it.help, NO_INPUT))
-            }
-            if (turn != null) phoneTools?.tools?.forEach { (name, help, input) -> put(function(name, help, input)) }
             // Some servers behind this API refuse a schema that names its own dialect.
-            turn?.box?.tools?.forEach { t -> put(function(t.name, t.help(), JSONObject(t.tool.schema.toString()).apply { remove("\$schema") })) }
-            turn?.glasses?.tools?.forEach { t -> put(function(t.short, t.help, t.schema)) }
+            turn?.let { specs(c, it) }.orEmpty().forEach { (name, help, input) ->
+                put(function(name, help, JSONObject(input.toString()).apply { remove("\$schema") }))
+            }
         }.takeIf { it.length() > 0 }
         var said = ""
         repeat(MAX_TOOL_ROUNDS) {
@@ -389,8 +377,7 @@ class Brain(
             check(tools != null) { "the model requested a tool after tools were disabled" }
             messages.put(message)
             var photo: ByteArray? = null
-            for (i in 0 until calls.length()) {
-                val call = calls.getJSONObject(i)
+            for (call in calls.objects()) {
                 val fn = call.getJSONObject("function")
                 val input = runCatching { JSONObject(fn.optString("arguments")) }.getOrDefault(JSONObject())
                 val out = runTool(fn.getString("name"), input, turn)
@@ -414,7 +401,7 @@ class Brain(
      */
     private suspend fun send(url: String, headers: Map<String, String>, body: JSONObject): JSONObject {
         val key = url + " " + body.optString("model")
-        val known = fields?.fields(key)
+        val known = store.fields(key)
         // Every OpenAI model takes max_completion_tokens.
         var f = known ?: Fields(reasoningOff = true, completionTokens = "api.openai.com" in url)
         while (true) {
@@ -425,11 +412,11 @@ class Brain(
                     f = f.copy(thinks = true)
                     continue
                 }
-                return answer.also { if (f != known) fields?.keep(key, f) }
+                return answer.also { if (f != known) store.keep(key, f) }
             } catch (error: IllegalStateException) {
                 val why = error.message.orEmpty()
                 f = when {
-                    // Not every server names the field: Google's answer is "Request contains an invalid argument" (#46).
+                    // Not every server names the field: Google answers "Request contains an invalid argument".
                     known == null && f.reasoningOff && ("reasoning" in why || "answered 400:" in why) -> f.copy(reasoningOff = false)
                     known == null && !f.completionTokens && "max_completion_tokens" in why -> f.copy(completionTokens = true)
                     else -> throw error
@@ -519,7 +506,6 @@ class Brain(
         const val GLASSES_TOKENS = 400
         const val THINKING_TOKENS = 4_000
         const val PHONE_TOKENS = 900
-        const val DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
         const val SYSTEM_PROMPT =
             "You are the voice assistant in a pair of Meta smart glasses, run by the wearer's own app, Visor. " +
                 "Everything you write is spoken aloud through the glasses' speakers, so answer in one to three short, " +

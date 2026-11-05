@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- On Android 12 and later the system splash shows the mark unlit, where the app goes on to light it. -->
-    <style name="Theme.Visor" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@color/canvas</item>
-        <item name="android:windowSplashScreenBackground">@color/canvas</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
-    </style>
-</resources>

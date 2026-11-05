@@ -3,16 +3,12 @@ package com.macedonga.visor.core.protocol
 import java.nio.ByteBuffer
 import java.util.UUID
 
-/** AirShield link-setup handshake messages (notes/63). */
-
-private val EMPTY = ByteArray(0)
-
 /** First handshake message: the initiator proposes ECDH parameters. */
 class RequestEncryption(
     val publicKey: ByteArray,
     val challenge: ByteArray,
     val ellipticCurve: Int = 0,
-    val supportedParameters: Int = 31,
+    val supportedParameters: Int,
     val keyHint: List<ByteArray> = emptyList(),
     val quirks: Int = 0,
     val airshieldVersion: Int = 16,
@@ -25,40 +21,10 @@ class RequestEncryption(
         for (hint in keyHint) {
             parts += Wire.fieldBytes(5, hint)
         }
-        if (quirks != 0) {   // the official app omits field 6 when it is zero (pair_full.log)
-            parts += Wire.fieldVarint(6, quirks.toLong())
-        }
+        parts += Wire.fieldVarintNonZero(6, quirks.toLong())
         parts += Wire.fieldVarint(7, airshieldVersion.toLong())
         return parts
     }
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is RequestEncryption) return false
-        return publicKey.contentEquals(other.publicKey) &&
-            challenge.contentEquals(other.challenge) &&
-            ellipticCurve == other.ellipticCurve &&
-            supportedParameters == other.supportedParameters &&
-            keyHint.size == other.keyHint.size &&
-            keyHint.indices.all { keyHint[it].contentEquals(other.keyHint[it]) } &&
-            quirks == other.quirks &&
-            airshieldVersion == other.airshieldVersion
-    }
-
-    override fun hashCode(): Int {
-        var result = publicKey.contentHashCode()
-        result = 31 * result + challenge.contentHashCode()
-        result = 31 * result + ellipticCurve
-        result = 31 * result + supportedParameters
-        result = 31 * result + keyHint.sumOf { it.contentHashCode() }
-        result = 31 * result + quirks
-        result = 31 * result + airshieldVersion
-        return result
-    }
-
-    override fun toString(): String =
-        "RequestEncryption(curve=$ellipticCurve, params=$supportedParameters, " +
-            "hints=${keyHint.size}, quirks=$quirks, version=$airshieldVersion)"
 
     companion object {
         fun decode(data: ByteArray): RequestEncryption {
@@ -81,67 +47,27 @@ class EnableEncryption(
     val publicKey: ByteArray,
     val seed: ByteArray,
     val iv: ByteArray,
-    /**
-     * The sender's preamble sequence counter, an UNSIGNED 32 bit value: `handshake.py` draws it as
-     * `int.from_bytes(os.urandom(4), "little")`.
-     */
+    /** The sender's preamble seq, unsigned 32-bit. */
     val base: Long = 0,
-    /** 0x1F, the wire-confirmed value from pair_full.log. */
-    val parameters: Int = 31,
+    val parameters: Int,
     val quirks: Int = 0,
     val phasedLinkSetupSupported: Int = 0,
     val supportedLinkSetupServices: Long = 0,
     val linkSwitchVersionSupported: Int = 0,
 ) {
-    /**
-     * Matches the official app's exact field set (pair_full.log): 1 to 5 always, and 6, 7, 8 and 9
-     * only when non-zero.
-     */
+    /** Fields 1 to 5 always; 6 to 9 only when non-zero. */
     fun encode(): ByteArray {
         var parts = Wire.fieldBytes(1, publicKey)
         parts += Wire.fieldBytes(2, seed)
         parts += Wire.fieldBytes(3, iv)
         parts += Wire.fieldVarint(4, base)
         parts += Wire.fieldVarint(5, parameters.toLong())
-        if (quirks != 0) parts += Wire.fieldVarint(6, quirks.toLong())
-        if (phasedLinkSetupSupported != 0) parts += Wire.fieldVarint(7, phasedLinkSetupSupported.toLong())
-        // Field 8 is a u64 bitmask, so a Long with the high bit set means 2^63 or more.
-        if (supportedLinkSetupServices != 0L) parts += Wire.fieldVarintUnsigned(8, supportedLinkSetupServices)
-        if (linkSwitchVersionSupported != 0) parts += Wire.fieldVarint(9, linkSwitchVersionSupported.toLong())
+        parts += Wire.fieldVarintNonZero(6, quirks.toLong())
+        parts += Wire.fieldVarintNonZero(7, phasedLinkSetupSupported.toLong())
+        parts += Wire.fieldVarintNonZero(8, supportedLinkSetupServices)
+        parts += Wire.fieldVarintNonZero(9, linkSwitchVersionSupported.toLong())
         return parts
     }
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is EnableEncryption) return false
-        return publicKey.contentEquals(other.publicKey) &&
-            seed.contentEquals(other.seed) &&
-            iv.contentEquals(other.iv) &&
-            base == other.base &&
-            parameters == other.parameters &&
-            quirks == other.quirks &&
-            phasedLinkSetupSupported == other.phasedLinkSetupSupported &&
-            supportedLinkSetupServices == other.supportedLinkSetupServices &&
-            linkSwitchVersionSupported == other.linkSwitchVersionSupported
-    }
-
-    override fun hashCode(): Int {
-        var result = publicKey.contentHashCode()
-        result = 31 * result + seed.contentHashCode()
-        result = 31 * result + iv.contentHashCode()
-        result = 31 * result + base.hashCode()
-        result = 31 * result + parameters
-        result = 31 * result + quirks
-        result = 31 * result + phasedLinkSetupSupported
-        result = 31 * result + supportedLinkSetupServices.hashCode()
-        result = 31 * result + linkSwitchVersionSupported
-        return result
-    }
-
-    override fun toString(): String =
-        "EnableEncryption(base=$base, parameters=$parameters, quirks=$quirks, " +
-            "phased=$phasedLinkSetupSupported, services=$supportedLinkSetupServices, " +
-            "linkSwitch=$linkSwitchVersionSupported)"
 
     companion object {
         fun decode(data: ByteArray): EnableEncryption {
@@ -162,92 +88,12 @@ class EnableEncryption(
     }
 }
 
-/** Final handshake message: the encrypted stream is ready. */
-class EndLinkSetup(
-    /** Field 1, state or asMain. */
-    val state: Int? = 0,
-    val uuid: ByteArray = EMPTY,
-    val linkUuid: ByteArray = EMPTY,
-    val userData: Map<Int, ByteArray> = emptyMap(),
-) {
-    /** DIVERGENCE: `messages.py` does not check the uuid fields. */
-    fun encode(): ByteArray {
-        require(uuid.isEmpty() || LinkUuid.isValid(uuid)) {
-            "EndLinkSetup uuid must be an RFC 4122 v4 UUID: the firmware checks " +
-                "(bytes[6] & 0xf0) == 0x40 and (bytes[8] & 0xc0) == 0x80, and tears the " +
-                "channel down silently when they are wrong. Use LinkUuid.random()."
-        }
-        require(linkUuid.isEmpty() || LinkUuid.isValid(linkUuid)) {
-            "EndLinkSetup linkUuid must be an RFC 4122 v4 UUID: the firmware checks " +
-                "(bytes[6] & 0xf0) == 0x40 and (bytes[8] & 0xc0) == 0x80, and tears the " +
-                "channel down silently when they are wrong. Use LinkUuid.random()."
-        }
-        var parts = EMPTY
-        if (state != null) parts += Wire.fieldVarint(1, state.toLong())
-        if (uuid.isNotEmpty()) parts += Wire.fieldBytes(2, uuid)
-        if (linkUuid.isNotEmpty()) parts += Wire.fieldBytes(3, linkUuid)
-        // A map of int to bytes encodes as repeated field 4, each entry a sub-message with field 1
-        // the key varint and field 2 the value bytes.
-        for ((k, v) in userData) {
-            parts += Wire.fieldBytes(4, Wire.fieldVarint(1, k.toLong()) + Wire.fieldBytes(2, v))
-        }
-        return parts
-    }
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is EndLinkSetup) return false
-        if (state != other.state) return false
-        if (!uuid.contentEquals(other.uuid)) return false
-        if (!linkUuid.contentEquals(other.linkUuid)) return false
-        if (userData.keys != other.userData.keys) return false
-        return userData.all { (k, v) -> v.contentEquals(other.userData.getValue(k)) }
-    }
-
-    override fun hashCode(): Int {
-        var result = state ?: -1
-        result = 31 * result + uuid.contentHashCode()
-        result = 31 * result + linkUuid.contentHashCode()
-        result = 31 * result + userData.entries.sumOf { it.key * 31 + it.value.contentHashCode() }
-        return result
-    }
-
-    override fun toString(): String = "EndLinkSetup(state=$state, userData=${userData.keys})"
-
-    companion object {
-        fun decode(data: ByteArray): EndLinkSetup {
-            val f = Wire.parse(data)
-            val userData = LinkedHashMap<Int, ByteArray>()
-            for (entryBytes in f.repeatedBytes(4)) {
-                val entry = Wire.parse(entryBytes)
-                userData[entry.varint(1).toInt()] = entry.bytes(2)
-            }
-            return EndLinkSetup(
-                state = f.varint(1).toInt(),
-                uuid = f.bytes(2),
-                linkUuid = f.bytes(3),
-                userData = userData,
-            )
-        }
-    }
-}
-
-/** `com.oculus.atc.LinkSetupConfig`, the phased-link-setup service-activation message. */
-class LinkSetupConfig(val requiredLinkSetupServices: Long = 0) {
-
-    // Field 1 is a u64 bitmask, so a Long with the high bit set means 2^63 or more.
-    fun encode(): ByteArray = Wire.fieldVarintUnsigned(1, requiredLinkSetupServices)
-
-    override fun equals(other: Any?): Boolean =
-        other is LinkSetupConfig && requiredLinkSetupServices == other.requiredLinkSetupServices
-
-    override fun hashCode(): Int = requiredLinkSetupServices.hashCode()
-
-    override fun toString(): String = "LinkSetupConfig(services=$requiredLinkSetupServices)"
-
-    companion object {
-        fun decode(data: ByteArray): LinkSetupConfig =
-            LinkSetupConfig(Wire.parse(data).varint(1))
+/** Final handshake message: {1 asMain, 2 scope uuid, 3 lease uuid}. */
+object EndLinkSetup {
+    fun encode(asMain: Int, scopeUuid: ByteArray, leaseUuid: ByteArray): ByteArray {
+        // The glasses drop the channel silently on a non-v4 uuid.
+        require(LinkUuid.isValid(scopeUuid) && LinkUuid.isValid(leaseUuid)) { "EndLinkSetup uuids must be RFC 4122 v4" }
+        return Wire.fieldVarint(1, asMain.toLong()) + Wire.fieldBytes(2, scopeUuid) + Wire.fieldBytes(3, leaseUuid)
     }
 }
 
@@ -255,18 +101,20 @@ class LinkSetupConfig(val requiredLinkSetupServices: Long = 0) {
 object LinkUuid {
 
     /** 16 bytes from [UUID.randomUUID], which is version 4 and variant 10xx by construction. */
-    fun random(): ByteArray {
-        val uuid = UUID.randomUUID()
-        val bytes = ByteBuffer.allocate(16)
-            .putLong(uuid.mostSignificantBits)
-            .putLong(uuid.leastSignificantBits)
-            .array()
-        check(isValid(bytes)) { "UUID.randomUUID produced a UUID the firmware would reject" }
-        return bytes
-    }
+    fun random(): ByteArray = UUID.randomUUID().toBytes()
 
     fun isValid(bytes: ByteArray): Boolean =
         bytes.size == 16 &&
             (bytes[6].toInt() and 0xF0) == 0x40 &&
             (bytes[8].toInt() and 0xC0) == 0x80
+}
+
+/** The uuid's 16 bytes, most significant first. */
+fun UUID.toBytes(): ByteArray = ByteBuffer.allocate(16).putLong(mostSignificantBits).putLong(leastSignificantBits).array()
+
+/** 16 bytes as a dashed uuid; any other length as hex. */
+fun uuidText(raw: ByteArray): String {
+    if (raw.size != 16) return raw.toHexString()
+    val b = ByteBuffer.wrap(raw)
+    return UUID(b.long, b.long).toString()
 }

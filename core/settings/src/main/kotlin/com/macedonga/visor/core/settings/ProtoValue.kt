@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.settings
 
+import com.macedonga.visor.core.connection.objects
 import com.macedonga.visor.core.protocol.Wire
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
@@ -30,8 +31,8 @@ fun parseProto(data: ByteArray): List<ProtoField>? {
                 2 -> {
                     val len = Wire.decodeVarint(data, at)
                     at = len.offset
+                    if (len.value < 0 || len.value > data.size - at) return null
                     val end = at + len.value.toInt()
-                    if (len.value < 0 || end > data.size) return null
                     out += ProtoField(number, 2, bytes = data.copyOfRange(at, end))
                     at = end
                 }
@@ -80,13 +81,13 @@ fun parseSchema(o: JSONObject): ProtoSchema? {
         root = root,
         messages = messages.keys().asSequence().associateWith { name ->
             val a: JSONArray = messages.getJSONArray(name)
-            (0 until a.length()).map { a.getJSONObject(it) }.map {
+            a.objects().map {
                 ProtoFieldSpec(it.getInt("n"), it.getString("label"), it.getString("type"), it.optString("ref").ifEmpty { null }, it.optBoolean("repeated"))
             }
         },
         enums = enums.keys().asSequence().associateWith { name ->
             val a = enums.getJSONArray(name)
-            (0 until a.length()).map { a.getJSONObject(it) }.map { Control.Option(it.getString("v"), it.getString("label")) }
+            a.objects().map { Control.Option(it.getString("v"), it.getString("label")) }
         },
         readOnly = o.optBoolean("read_only"),
     )

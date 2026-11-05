@@ -6,22 +6,20 @@ import java.time.format.DateTimeFormatter
 import java.util.Base64
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /** What the app knows about one identity. */
-class IdentityBundle(
-    /** The owner key, PEM encoded, exactly as the desktop wrote it. */
+data class IdentityBundle(
+    /** The owner key, PEM encoded. */
     val privateKeyPem: ByteArray,
     val glassesAddress: String,
     val serial: String,
     val createdAt: String,
-    /** How this identity was obtained: `change-owner`, `extracted` or `imported`. */
+    /** How this pair was set up: `change-owner` or `band`. */
     val provenance: String,
     val state: String,
 ) {
-
-    fun withState(state: String): IdentityBundle =
-        IdentityBundle(privateKeyPem, glassesAddress, serial, createdAt, provenance, state)
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -52,15 +50,13 @@ class IdentityBundle(
 
 /** The recorded state of a bundle, explicit rather than inferred. */
 object BundleState {
-    const val UNPROVISIONED = "unprovisioned"
     const val UNVERIFIED = "unverified"
     const val VERIFIED = "verified"
     const val EVICTED = "evicted"
 }
 
-/** The timestamp format the store records, from `bundle.py`'s `now_iso`. */
-fun nowIso(instant: Instant = Instant.now()): String =
-    ISO_SECONDS_Z.format(instant.atOffset(ZoneOffset.UTC))
+/** UTC now, as yyyy-MM-ddTHH:mm:ssZ. */
+fun nowIso(): String = ISO_SECONDS_Z.format(Instant.now().atOffset(ZoneOffset.UTC))
 
 private val ISO_SECONDS_Z: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
@@ -76,12 +72,7 @@ internal class BundleJson(
     @SerialName("state") val state: String,
 )
 
-/** Lenient about what it reads and strict about what it writes. */
-internal val BundleFormat: Json = Json {
-    ignoreUnknownKeys = true
-    encodeDefaults = true
-    explicitNulls = false
-}
+internal val BundleFormat = Json { ignoreUnknownKeys = true }
 
 internal fun IdentityBundle.toJsonModel(): BundleJson = BundleJson(
     privateKeyPem = Base64.getEncoder().encodeToString(privateKeyPem),
@@ -101,22 +92,9 @@ internal fun BundleJson.toBundle(): IdentityBundle = IdentityBundle(
     state = state,
 )
 
-/** One bundle as the JSON text `bundle_to_json` plus `json.dumps` would produce. */
-fun bundleToJson(bundle: IdentityBundle): String =
-    BundleFormat.encodeToString(BundleJson.serializer(), bundle.toJsonModel())
+/** The store's contents: a JSON array of bundles. */
+internal fun bundlesToJson(bundles: List<IdentityBundle>): String =
+    BundleFormat.encodeToString(ListSerializer(BundleJson.serializer()), bundles.map { it.toJsonModel() })
 
-fun bundleFromJson(text: String): IdentityBundle =
-    BundleFormat.decodeFromString(BundleJson.serializer(), text).toBundle()
-
-/** A whole store or transfer payload: a JSON array of bundles. */
-fun bundlesToJson(bundles: List<IdentityBundle>): String =
-    BundleFormat.encodeToString(
-        kotlinx.serialization.builtins.ListSerializer(BundleJson.serializer()),
-        bundles.map { it.toJsonModel() },
-    )
-
-fun bundlesFromJson(text: String): List<IdentityBundle> =
-    BundleFormat.decodeFromString(
-        kotlinx.serialization.builtins.ListSerializer(BundleJson.serializer()),
-        text,
-    ).map { it.toBundle() }
+internal fun bundlesFromJson(text: String): List<IdentityBundle> =
+    BundleFormat.decodeFromString(ListSerializer(BundleJson.serializer()), text).map { it.toBundle() }

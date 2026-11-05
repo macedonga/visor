@@ -23,14 +23,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.macedonga.visor.core.design.Visor
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
-/**
- * The mark's opening, over every screen: the dark V the system splash leaves on the black, lit from the top down to
- * its tips, held, then let go up into the pair while the black lifts. While it holds, the stage's light stays down
- * and the pair waits folded. [armed] starts it held, for a launch, so no frame of the screen shows first.
- */
+/** The launch mark: the splash V lights, holds, then lifts into the pair as the black goes; [armed] holds from the first frame. */
 @Stable
 class MarkIntro(armed: Boolean) {
     private var armed by mutableStateOf(armed)
@@ -48,14 +46,25 @@ class MarkIntro(armed: Boolean) {
 
     /** The whole opening; [onLit] runs as the beams reach their tips. */
     suspend fun play(onLit: () -> Unit = {}) {
-        lit.snapTo(0f)
-        gone.snapTo(0f)
-        armed = false
-        delay(DARK_MS)
-        lit.animateTo(1f, tween(LIGHT_MS, easing = BEAM))
-        onLit()
-        delay(HOLD_MS)
-        gone.animateTo(1f, tween(LET_GO_MS, easing = SETTLE))
+        try {
+            lit.snapTo(0f)
+            gone.snapTo(0f)
+            armed = false
+            delay(DARK_MS)
+            lit.animateTo(1f, tween(LIGHT_MS, easing = BEAM))
+            onLit()
+            delay(HOLD_MS)
+            gone.animateTo(1f, tween(LET_GO_MS, easing = SETTLE_EASE))
+        } finally {
+            // Cut short, it lets go at once rather than leave the dark over the screen.
+            armed = false
+            if (gone.value < 1f) {
+                withContext(NonCancellable) {
+                    lit.snapTo(1f)
+                    gone.snapTo(1f)
+                }
+            }
+        }
     }
 
     /** Returns once the mark has let go of the dark; at once when it is not playing. */
@@ -78,7 +87,7 @@ fun MarkOverlay(stage: StageHolder) {
             .fillMaxSize()
             .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
     ) {
-        val going = SETTLE.transform(intro.gone.value)
+        val going = SETTLE_EASE.transform(intro.gone.value)
         drawRect(canvas, alpha = 1f - intro.gone.value)
         // Where the system splash draws it, then up to the middle of the pair as it lets go.
         val centre = Offset(size.width / 2, lerp(size.height / 2, stage.onWindow(0.5f, 0.5f, size.width).y, going))
@@ -111,7 +120,6 @@ private const val TIP = 214f
 /** The splash draws the 108 dp icon grid at 288 dp, so the mark's 60 dp middle is 160 dp on screen. */
 private val MARK_BOX = 160.dp
 private val BEAM = CubicBezierEasing(0.45f, 0f, 0.25f, 1f)
-private val SETTLE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 /** 1.75 s in all, most of it the beams lighting. */
 private const val DARK_MS = 100L
 private const val LIGHT_MS = 850

@@ -54,8 +54,8 @@ class Toolbox(val tools: List<ExposedTool>, val prompt: String) {
     fun find(name: String): ExposedTool? = tools.firstOrNull { it.name == name }
 }
 
-/** Something the assistant did through a tool, for the diary. */
-data class ToolAction(val server: String, val what: String, val ok: Boolean)
+/** Something the assistant did through a tool, for the diary. [kind] and [subject] name Visor's own tools for the app to word; empty for a server's. */
+data class ToolAction(val server: String, val what: String, val ok: Boolean, val kind: String = "", val subject: String = "")
 
 /** A sign-in in progress. */
 sealed interface SignIn {
@@ -76,10 +76,10 @@ sealed interface SignIn {
 
 /** What trying an address found, before it is saved. */
 sealed interface Probe {
-    data class Works(val info: ServerInfo?, val tools: Int) : Probe
-    data class SignIn(val at: String) : Probe
-    data class NeedsKey(val why: String) : Probe
-    data class Failed(val phase: McpStatus.Phase, val why: String) : Probe
+    data object Works : Probe
+    data object SignIn : Probe
+    data object NeedsKey : Probe
+    data class Failed(val phase: McpStatus.Phase) : Probe
 }
 
 /**
@@ -128,18 +128,18 @@ class McpHub(private val context: Context, val store: McpStore) {
             store.servers.collect { list ->
                 val now = list.associateBy { it.id }
                 for (id in before.keys - now.keys) {
-                    close(id)
+                    stop(id)
                     _status.update { it - id }
                 }
                 for (s in list) {
                     val old = before[s.id]
                     when {
                         !s.enabled -> {
-                            close(s.id)
+                            stop(s.id)
                             setStatus(s.id) { it.copy(phase = McpStatus.Phase.OFF, busy = false) }
                         }
                         old == null || !old.enabled || old.connectionKey != s.connectionKey -> {
-                            close(s.id)
+                            stop(s.id)
                             check(s.id)
                         }
                     }
@@ -171,8 +171,6 @@ class McpHub(private val context: Context, val store: McpStore) {
         if (checks[id]?.isActive == true) return
         checks[id] = scope.launch { list(id) }
     }
-
-    fun checkAll() = store.servers.value.filter { it.enabled }.forEach { check(it.id) }
 
     private suspend fun list(id: String) {
         val s = store.get(id)?.takeIf { it.enabled } ?: return
@@ -244,7 +242,7 @@ class McpHub(private val context: Context, val store: McpStore) {
         if (stale.isNotEmpty()) withTimeoutOrNull(WAIT_MS) { stale.forEach { checks[it.id]?.join() } }
         val exposed = ArrayList<ExposedTool>()
         val taken = HashSet<String>()
-        val notes = StringBuilder()
+        val instructions = StringBuilder()
         val names = ArrayList<String>()
         for (s in servers) {
             val st = _status.value[s.id]
@@ -256,14 +254,14 @@ class McpHub(private val context: Context, val store: McpStore) {
             if (tools.isEmpty()) continue
             names += s.name
             for (t in tools) exposed += ExposedTool(exposedName(s, t, taken), s, t)
-            st.info?.instructions?.takeIf { it.isNotBlank() }?.let { notes.append(" Notes from ${s.name}: ${it.trim().take(MAX_INSTRUCTIONS)}") }
+            st.info?.instructions?.takeIf { it.isNotBlank() }?.let { instructions.append(" Notes from ${s.name}: ${it.trim().take(MAX_INSTRUCTIONS)}") }
         }
         if (exposed.isEmpty()) return Toolbox(emptyList(), "")
         val prompt = " You can also use tools from ${names.joinToString()}. Use them whenever the wearer asks you to do, check " +
             "or find something they cover, without asking first unless the request is unclear; after acting, say in a few " +
             "words what was done. Never say something was done unless a tool confirmed it. Earlier answers end with Visor's note " +
             "in square brackets of what the tools did for them; one without a note did nothing. Never write such a note " +
-            "yourself, and call the tool each time an action is asked, even one done before." + notes
+            "yourself, and call the tool each time an action is asked, even one done before." + instructions
         return Toolbox(exposed, prompt)
     }
 
@@ -273,7 +271,10 @@ class McpHub(private val context: Context, val store: McpStore) {
      */
     suspend fun call(t: ExposedTool, arguments: JSONObject, photo: ByteArray? = null): Pair<ToolResult, ToolAction?> {
         val started = now()
-        val s = store.get(t.server.id) ?: t.server
+        val s = store.get(t.server.id)?.takeIf { it.enabled } ?: run {
+            note("${t.server.name}: ${t.tool.name} -> not run, the server is off")
+            return ToolResult("The tool did not run: its server is off.", true) to null
+        }
         val result = try {
             connection(s).call(t.tool.name, withPhoto(arguments, photo), CALL_MS)
         } catch (cancelled: CancellationException) {
@@ -282,29 +283,27 @@ class McpHub(private val context: Context, val store: McpStore) {
             if ((error as? McpException)?.kind != McpException.Kind.TIMEOUT) check(s.id)
             ToolResult("The tool did not run: ${error.message}", true)
         }
-        note("${s.name}: ${t.tool.name} ${argumentWords(arguments)} -> ${if (result.isError) "error: " + result.text.take(160) else "ok"}, ${now() - started} ms")
+        note("${s.name}: ${t.tool.name} (${arguments.keys().asSequence().joinToString()}) -> ${if (result.isError) "error: " + result.text.take(160) else "ok"}, ${now() - started} ms")
         val lookup = t.tool.readOnly || LOOKUP.containsMatchIn(t.tool.name)
         return result to if (lookup) null else ToolAction(s.name, describe(t.tool, arguments), !result.isError)
     }
 
     /** Tries an address before it is saved: whether it answers, and what it needs to. */
     suspend fun probe(url: String, auth: AuthKind, secret: String, header: String): Probe {
-        val u = url.trim().toHttpUrlOrNull() ?: return Probe.Failed(McpStatus.Phase.NOT_MCP, "not a web address")
+        val u = url.trim().toHttpUrlOrNull() ?: return Probe.Failed(McpStatus.Phase.NOT_MCP)
         val trial = McpServer(name = "", url = url, auth = auth, secret = secret, header = header)
         val c = McpConnection(u, Transport.AUTO, http, stream, fixedAuth(trial), scope, version) {}
         return try {
-            val count = c.tools().size
-            Probe.Works(c.info, count)
+            c.tools()
+            Probe.Works
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             val e = (error as? McpException) ?: McpException(McpException.Kind.PROTOCOL, error.message.orEmpty())
             when {
-                e.kind == McpException.Kind.UNAUTHORIZED && auth == AuthKind.NONE -> {
-                    val at = selfService(url, e.challenge)
-                    if (at != null) Probe.SignIn(at.issuer.toHttpUrlOrNull()?.host ?: at.issuer) else Probe.NeedsKey(e.message.orEmpty())
-                }
-                else -> Probe.Failed(phaseOf(trial, e), e.message.orEmpty())
+                e.kind == McpException.Kind.UNAUTHORIZED && auth == AuthKind.NONE ->
+                    if (selfService(url, e.challenge) != null) Probe.SignIn else Probe.NeedsKey
+                else -> Probe.Failed(phaseOf(trial, e))
             }
         } finally {
             c.close()
@@ -316,16 +315,13 @@ class McpHub(private val context: Context, val store: McpStore) {
         scope.launch { beginSignIn(id) }
     }
 
-    /**
-     * Starts signing [id] in: finds where, registers Visor there unless a client was typed in, and returns the page the
-     * browser opens. Null when it could not start; [signIn] says why.
-     */
-    suspend fun beginSignIn(id: String): String? {
-        val s = store.get(id) ?: return null
+    /** Finds where [id] signs in, registers Visor there unless a client was typed in, and puts the page to open in [signIn]. */
+    private suspend fun beginSignIn(id: String) {
+        val s = store.get(id) ?: return
         pending?.loopback?.cancel()
         pending = null
         _signIn.value = SignIn.Preparing(id)
-        return try {
+        try {
             val url = s.url.toHttpUrlOrNull() ?: throw McpException(McpException.Kind.NOT_MCP, "not a web address")
             val at = oauth.discover(url, challengeOf(url))
                 ?: throw McpException(McpException.Kind.PROTOCOL, "this server does not say where to sign in")
@@ -335,38 +331,36 @@ class McpHub(private val context: Context, val store: McpStore) {
                     issuer = at.issuer, authorizationEndpoint = at.authorizationEndpoint, tokenEndpoint = at.tokenEndpoint,
                     clientId = s.clientId.trim(), clientSecret = s.clientSecret.trim(),
                     tokenAuth = if (s.clientSecret.isBlank()) "none" else "client_secret_post",
-                    redirectUri = s.redirect.ifEmpty { OAuth.APP_REDIRECT },
+                    redirectUri = s.redirect.ifEmpty { OAuthRedirects.APP },
                     scope = at.scope, resource = at.resource, manualClient = true,
                 )
                 kept != null -> kept.copy(authorizationEndpoint = at.authorizationEndpoint, tokenEndpoint = at.tokenEndpoint, scope = at.scope, resource = at.resource)
                 at.registrationEndpoint.isBlank() -> {
                     _signIn.value = SignIn.Failed(id, "", needsClient = true)
-                    return null
+                    return
                 }
                 else -> try {
-                    oauth.register(at, OAuth.APP_REDIRECT)
+                    oauth.register(at, OAuthRedirects.APP)
                 } catch (refused: RedirectRefused) {
-                    oauth.register(at, OAuth.LOOPBACK_REDIRECT)
+                    oauth.register(at, OAuthRedirects.LOOPBACK)
                 }
             }
             // The registration is kept at once, so trying again does not register Visor a second time.
             if (!grant.manualClient) store.update(id) { it.copy(oauth = grant.copy(accessToken = it.oauth?.accessToken.orEmpty(), refreshToken = it.oauth?.refreshToken.orEmpty(), expiresAt = it.oauth?.expiresAt ?: 0)) }
             val state = OAuth.secret(32)
             val verifier = OAuth.secret(64)
-            val loopback = if (grant.redirectUri.startsWith("http://127.0.0.1")) {
-                scope.launch { withTimeoutOrNull(SIGN_IN_MS) { runCatching { awaitLoopback(OAuth.LOOPBACK_PORT) }.getOrNull() }?.let(::complete) }
+            val loopback = if (grant.redirectUri == OAuthRedirects.LOOPBACK) {
+                scope.launch { withTimeoutOrNull(SIGN_IN_MS) { runCatching { awaitLoopback(OAuthRedirects.LOOPBACK_PORT) }.getOrNull() }?.let(::complete) }
             } else null
             pending = Pending(id, state, verifier, grant, loopback)
             val page = oauth.authorizeUrl(grant, state, verifier)
             _signIn.value = SignIn.InBrowser(id, page)
             note("${s.name}: signing in at ${at.issuer}")
-            page
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             _signIn.value = SignIn.Failed(id, error.message ?: error.javaClass.simpleName)
             note("${s.name}: sign-in could not start: ${error.message}")
-            null
         }
     }
 
@@ -421,6 +415,12 @@ class McpHub(private val context: Context, val store: McpStore) {
         synchronized(connections) { connections.remove(id) }?.second?.close()
     }
 
+    /** Lets [id] go, with any check still running on its old settings. */
+    private fun stop(id: String) {
+        checks.remove(id)?.cancel()
+        close(id)
+    }
+
     /** Credentials read fresh from the store at each request, so a refreshed token is used at once. */
     private fun authorizer(id: String) = object : Authorizer {
         override suspend fun headers(): Map<String, String> {
@@ -463,7 +463,7 @@ class McpHub(private val context: Context, val store: McpStore) {
             fresh
         } catch (refused: McpException) {
             if (refused.kind == McpException.Kind.UNAUTHORIZED) {
-                store.update(id) { it.copy(oauth = it.oauth?.copy(accessToken = "", refreshToken = "", expiresAt = 0)) }
+                signOut(id)
                 note("${store.get(id)?.name}: the sign-in ran out: ${refused.message}")
                 null
             } else {
@@ -482,12 +482,7 @@ class McpHub(private val context: Context, val store: McpStore) {
 
     /** The 401 an unauthenticated initialize gets, with its WWW-Authenticate. */
     private suspend fun challengeOf(url: HttpUrl): String? = runCatching {
-        val hello = rpcMessage(
-            "initialize",
-            JSONObject().put("protocolVersion", McpConnection.LATEST).put("capabilities", JSONObject())
-                .put("clientInfo", JSONObject().put("name", "visor").put("version", version)),
-            0,
-        )
+        val hello = rpcMessage("initialize", McpConnection.initializeParams(version), 0)
         val request = Request.Builder().url(url).post(hello.toString().toRequestBody(JSON))
             .header("Accept", "application/json, text/event-stream").build()
         http.newCall(request).fetch { r -> if (r.code == 401) r.header("WWW-Authenticate") else null }
@@ -529,7 +524,7 @@ class McpHub(private val context: Context, val store: McpStore) {
         const val MAX_NAME = 64
 
         // Tools that look things up rather than act: not listed under the answer.
-        val LOOKUP = Regex("^(get|list|search|find|read|fetch|query|lookup|describe|show)", RegexOption.IGNORE_CASE)
+        val LOOKUP = Regex("^(?i:get|list|search|find|read|fetch|query|lookup|describe|show)(?=[_.\\-A-Z]|$)")
 
         fun now() = System.currentTimeMillis()
 

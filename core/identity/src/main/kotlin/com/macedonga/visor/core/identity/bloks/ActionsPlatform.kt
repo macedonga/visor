@@ -1,14 +1,26 @@
 package com.macedonga.visor.core.identity.bloks
 
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.Period
+import java.time.ZoneId
 import java.util.UUID
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-/**
- * The phone side of Bloks: device facts, timers, animations, links, and the services the Meta AI app has and Visor
- * does not (SMS retriever, passkeys, Google Pay, other Meta apps). For those, each handler answers the way the app
- * answers on a phone without them, so the flow takes its "not available" branch instead of waiting.
- */
+/** Logging, metrics and tracing calls: no-ops, counted in the trace rather than listed. */
+internal val LOGGING = setOf(
+    "bk.action.logging.LogEvent", "bk.action.qpl.MarkerStartV2", "bk.action.qpl.MarkerAnnotate", "bk.action.qpl.MarkerPoint",
+    "bk.action.qpl.MarkerEndV2", "bk.action.qpl.MarkerDrop", "bk.action.qpl.userflow.StartFlowV2", "bk.action.qpl.userflow.AnnotateV2",
+    "bk.action.qpl.userflow.MarkPointV2", "bk.action.qpl.userflow.MarkErrorV2", "bk.action.qpl.userflow.EndFlowSuccessV2",
+    "bk.action.qpl.userflow.EndFlowFailureV2", "bk.action.qpl.userflow.EndFlowCancelV2", "bk.action.trace.BeginSection",
+    "bk.action.trace.EndSection", "bk.action.ttrc.AddAnnotation", "bk.action.ttrc.AddPoint", "bk.action.ttrc.AddPointV2",
+    "bk.action.ttrc.AddQuery", "bk.action.ttrc.AddStep", "bk.action.ttrc.CachedContentDisplayed", "bk.action.ttrc.CompleteStep",
+    "bk.action.ttrc.InteractionFailed", "bk.action.ttrc.MarkerStart", "bk.action.ttrc.NetworkContentDisplayed",
+    "bk.action.ttrc.SurfaceLeft", "bk.action.accessibility.SetFocus", "bk.action.accessibility.Announcement",
+)
+
+/** Device facts, timers, animations, links, and the services Visor lacks, answered as on a phone without them. */
 internal fun Registry.platform() {
     // ---- Device facts ----
     on("bk.action.caa.login.GetUniqueDeviceId", "bk.fx.action.GetFamilyDeviceId") { session.deviceId }
@@ -23,11 +35,7 @@ internal fun Registry.platform() {
     on("bk.action.accessibility.IsHighContrastEnabled", "bk.action.accessibility.IsGreyscaleEnabled") { false }
     on("bk.action.caa.GetWaterfallId") { "" }
     on("bk.action.caa.reg.GetAgeFromBirthdayTimestamp") {
-        val born = Calendar.getInstance().apply { timeInMillis = (num(0).toLong()) * 1000 }
-        val now = Calendar.getInstance()
-        var years = now.get(Calendar.YEAR) - born.get(Calendar.YEAR)
-        if (now.get(Calendar.DAY_OF_YEAR) < born.get(Calendar.DAY_OF_YEAR)) years--
-        years
+        Period.between(Instant.ofEpochSecond(num(0).toLong()).atZone(ZoneId.systemDefault()).toLocalDate(), LocalDate.now()).years
     }
     on("bk.action.age.GetOsAgeRange") {
         session.post { call(at(1), screen, "API_NOT_AVAILABLE") }
@@ -36,10 +44,7 @@ internal fun Registry.platform() {
     on("bk.action.session_store.Get") { session.sessionStore }
 
     // ---- What the app keeps in its preferences ----
-    on("bk.action.frl.SetIDForAYMH") {
-        session.prefs["id_for_aymh"] = at(0)
-        null
-    }
+    on("bk.action.frl.SetIDForAYMH") { null }
     on("bk.action.frl.GetDBLData") { session.prefs["dbl_data"] as? String ?: "" }
     on("bk.action.frl.SetDBLData") {
         session.prefs["dbl_data"] = at(0)?.toString().orEmpty()
@@ -140,8 +145,7 @@ internal fun Registry.platform() {
     on("bk.action.animated.Stagger") { AnimationSet((at(1) as? List<*>).orEmpty().filterIsInstance<Animation>()) }
     on("bk.action.animated.Loop") { at(1) as? Animation }
     on("bk.action.animated.GetCurrentValue", "bk.action.animation.linear.GetCurrentValue") { (at(0) as? ValueAnimation)?.value }
-    on("bk.action.animated.GetCurrentDimensionValue") { (at(0) as? ValueAnimation)?.value?.toString() }
-    on("bk.action.animated.GetCurrentColorValue") { (at(0) as? ValueAnimation)?.value?.toString() }
+    on("bk.action.animated.GetCurrentDimensionValue", "bk.action.animated.GetCurrentColorValue") { (at(0) as? ValueAnimation)?.value?.toString() }
     on("bk.action.animated.ToAnimator") { at(0) as? Animation }
     on("bk.action.animated.IsInitialized") { session.animations.containsKey(at(0).toString()) }
     on("bk.action.animated.GetTotalDuration") { (session.animations[at(0).toString()] as? ValueAnimation)?.seconds }
@@ -417,22 +421,13 @@ internal fun Registry.platform() {
     ) { null }
 
     // ---- Logging, metrics, tracing: nothing to do ----
-    on(
-        "bk.action.logging.LogEvent", "bk.action.qpl.MarkerStartV2", "bk.action.qpl.MarkerAnnotate", "bk.action.qpl.MarkerPoint",
-        "bk.action.qpl.MarkerEndV2", "bk.action.qpl.MarkerDrop", "bk.action.qpl.userflow.StartFlowV2", "bk.action.qpl.userflow.AnnotateV2",
-        "bk.action.qpl.userflow.MarkPointV2", "bk.action.qpl.userflow.MarkErrorV2", "bk.action.qpl.userflow.EndFlowSuccessV2",
-        "bk.action.qpl.userflow.EndFlowFailureV2", "bk.action.qpl.userflow.EndFlowCancelV2", "bk.action.trace.BeginSection",
-        "bk.action.trace.EndSection", "bk.action.ttrc.AddAnnotation", "bk.action.ttrc.AddPoint", "bk.action.ttrc.AddPointV2",
-        "bk.action.ttrc.AddQuery", "bk.action.ttrc.AddStep", "bk.action.ttrc.CachedContentDisplayed", "bk.action.ttrc.CompleteStep",
-        "bk.action.ttrc.InteractionFailed", "bk.action.ttrc.MarkerStart", "bk.action.ttrc.NetworkContentDisplayed",
-        "bk.action.ttrc.SurfaceLeft", "bk.action.accessibility.SetFocus", "bk.action.accessibility.Announcement",
-    ) { null }
+    on(*LOGGING.toTypedArray()) { null }
 }
 
 private val MAIN_QUEUE = Any()
 private val BACKGROUND_QUEUE = Any()
 
-private fun ActionCall.toast(text: String?, millis: Long): Any? {
+internal fun ActionCall.toast(text: String?, millis: Long): Any? {
     if (!text.isNullOrBlank()) {
         session.toast = text
         session.toastMillis = millis
@@ -443,7 +438,7 @@ private fun ActionCall.toast(text: String?, millis: Long): Any? {
 
 /** A timer of a screen: ticks `cb(id, ctx)` every interval, or once. */
 internal class Timer(val id: String, val interval: Long, val repeat: Boolean, val callback: Any?, val screen: BloksSession.Screen?) {
-    var future: java.util.concurrent.ScheduledFuture<*>? = null
+    var future: ScheduledFuture<*>? = null
     var stopped = false
     var cancelled = false
 
@@ -460,11 +455,11 @@ private fun ActionCall.schedule(timer: Timer) {
             if (timer.cancelled || timer.stopped) return@post
             // A timer of a screen that has gone ticks no more.
             if (timer.screen != null && timer.screen !in s.screens) {
-                s.timers.remove(timer.id)
+                s.timers.remove(timer.id, timer)
                 return@post
             }
             call(timer.callback, timer.id, timer.screen)
-            if (timer.repeat && !timer.cancelled && !timer.stopped) schedule(timer) else if (!timer.repeat) s.timers.remove(timer.id)
+            if (timer.repeat && !timer.cancelled && !timer.stopped) schedule(timer) else if (!timer.repeat) s.timers.remove(timer.id, timer)
         }
     }, timer.interval, TimeUnit.MILLISECONDS)
 }
@@ -475,7 +470,7 @@ internal abstract class Animation {
     var done = false
 }
 
-internal class ValueAnimation(val onUpdate: Any?, onEnd: Any?, val from: Any?, var to: Any?, val seconds: Double, val linear: Boolean) : Animation() {
+internal class ValueAnimation(val onUpdate: Any?, onEnd: Any?, from: Any?, var to: Any?, val seconds: Double, val linear: Boolean) : Animation() {
     var value: Any? = from
 
     init {

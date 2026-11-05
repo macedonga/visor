@@ -4,7 +4,7 @@ import kotlin.math.abs
 
 /**
  * When each frame is due on screen. The glasses film at an even rate but send in bursts, four or five frames in a few
- * ms and then 110-160 ms of nothing (#31), and shown on arrival a burst collapses into one or two pictures. A frame is
+ * ms and then 110-160 ms of nothing, and shown on arrival a burst collapses into one or two pictures. A frame is
  * due at its own capture time on the phone's clock plus a delay that covers the worst lateness of the last 10 s.
  */
 class Playout {

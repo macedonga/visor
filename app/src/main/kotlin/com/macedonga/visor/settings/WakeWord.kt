@@ -1,30 +1,18 @@
 package com.macedonga.visor.settings
 
 import android.content.Context
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -33,11 +21,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -45,29 +35,29 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.Assistant
+import com.macedonga.visor.core.assistant.AssistantPhase
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.asBool
-import com.macedonga.visor.features.ChoicePill
-import com.macedonga.visor.features.StoryWords
+import com.macedonga.visor.language.VOICE_KEY
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.pairs.pairPrefs
-import com.macedonga.visor.setup.BigPill
 import com.macedonga.visor.stage.LightLook
 import com.macedonga.visor.stage.LocalStage
 import com.macedonga.visor.stage.Mood
-import com.macedonga.visor.stage.STAGE_ASPECT
 import com.macedonga.visor.stage.StageCue
-import com.macedonga.visor.stage.StoryStage
+import com.macedonga.visor.stage.StoryPage
 import com.macedonga.visor.stage.lookOf
 import com.macedonga.visor.stage.nod
 import com.macedonga.visor.stage.shake
+import com.macedonga.visor.ui.VisorIcons
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,10 +78,7 @@ sealed interface WakeStep {
     data class Failed(val why: String?, val fallback: Int) : WakeStep
 }
 
-/**
- * A custom wake word, enrolled on the glasses as the Meta app does it on the device: the phrase, three recordings on
- * the glasses' microphone, and the glasses' answer. The model outlives the screen, so each visit starts over.
- */
+/** A custom wake word enrolled on the glasses: the phrase, three takes on their microphone, their answer. Each visit starts over. */
 @HiltViewModel
 class WakeWordModel @Inject constructor(
     private val assistant: Assistant,
@@ -102,7 +89,7 @@ class WakeWordModel @Inject constructor(
     // Enrolled on the glasses: each pair has its own phrase.
     private val prefs = pairPrefs(context, "wake_word", connection.pair.value)
 
-    private val _enrolled = MutableStateFlow(prefs.getString(ENROLLED, null))
+    private val _enrolled = MutableStateFlow(prefs.getString(ENROLLED, null)?.ifBlank { null })
 
     /** The phrase last enrolled from here. */
     val enrolled: StateFlow<String?> = _enrolled.asStateFlow()
@@ -116,8 +103,11 @@ class WakeWordModel @Inject constructor(
     /** How loud the voice is in the take under way, 0 to 1. */
     val level: StateFlow<Float> = assistant.wakeWord.level
 
+    val phase: StateFlow<AssistantPhase> = assistant.phase
+
     private val clips = mutableListOf<ByteArray>()
     private var session: String? = null
+    private var starting: Job? = null
 
     init {
         // A success that comes after the wait gave up still counts, here and on the screen.
@@ -125,15 +115,21 @@ class WakeWordModel @Inject constructor(
             assistant.wakeWord.results.collect { r ->
                 if (!r.success) return@collect
                 val name = r.wakeword.ifEmpty { _phrase.value }
-                remember(name)
+                // The Meta AI row's own model has no phrase of its own.
+                if (name.isBlank()) return@collect
+                keep(name)
                 if (_step.value is WakeStep.Failed || _step.value is WakeStep.Enrolling) _step.value = WakeStep.Enrolled(name)
             }
         }
     }
 
-    private fun remember(name: String) {
+    private fun keep(name: String) {
         prefs.edit().putString(ENROLLED, name).apply()
         _enrolled.value = name
+    }
+
+    fun turnOff() {
+        settings.write(CWW_KEY, "false")
     }
 
     fun enter() {
@@ -172,10 +168,10 @@ class WakeWordModel @Inject constructor(
 
     fun begin() {
         val text = _phrase.value
-        if (text.length < MIN_LETTERS) return
+        if (text.length < MIN_LETTERS || starting?.isActive == true) return
         clips.clear()
         leave()
-        viewModelScope.launch {
+        starting = viewModelScope.launch {
             session = assistant.wakeWord.begin(text)?.also(::opened) ?: run {
                 _step.value = WakeStep.Failed(null, R.string.ww_no_link)
                 return@launch
@@ -206,7 +202,7 @@ class WakeWordModel @Inject constructor(
         leave()
         if (result?.success == true) {
             val name = result.wakeword.ifEmpty { text }
-            remember(name)
+            keep(name)
             _step.value = WakeStep.Enrolled(name)
         } else if (_step.value is WakeStep.Enrolling) {
             _step.value = WakeStep.Failed(result?.error?.ifEmpty { null }, R.string.ww_failed_body)
@@ -230,11 +226,7 @@ class WakeWordModel @Inject constructor(
     }
 }
 
-/**
- * The enrolment told as the setup tells its story: the pair waits under its light while the phrase is chosen; while a
- * take records, the voice is drawn going into the front of the frame and the stage light swells with it; a good take gets a nod, a missed one a shake; the pair sways while the glasses make the model, and
- * flashes and nods when it is theirs.
- */
+/** The enrolment on the stage: the phrase, three takes, the glasses' answer. */
 @Composable
 fun WakeWordScreen(model: WakeWordModel = hiltViewModel()) = SettingsHost(seeThrough = true) {
     val step by model.step.collectAsStateWithLifecycle()
@@ -296,27 +288,11 @@ fun WakeWordScreen(model: WakeWordModel = hiltViewModel()) = SettingsHost(seeThr
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-        val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val stagePx = with(density) { (maxWidth / STAGE_ASPECT).toPx() }
-        StoryStage(cue, look, with(density) { (top + BAR + STAGE_ZONE / 2).toPx() }, if (take != null) 1f else 0.85f, stagePx)
-        AnimatedContent(
-            targetState = step,
-            contentKey = { it::class to (it as? WakeStep.Take)?.index },
-            // A step dissolves into the next: nothing slides, and the size stays put.
-            transitionSpec = { (fadeIn(tween(380, delayMillis = 90)) togetherWith fadeOut(tween(260))) using null },
-            label = "step",
-        ) { shown ->
-            Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(top = top + BAR + STAGE_ZONE, bottom = bottom + 20.dp).padding(horizontal = 24.dp),
-            ) {
-                WakeStepContent(shown, phrase, model) { editing = true }
-            }
-        }
-        TopBar(stringResource(R.string.ww_title))
+    StoryPage(
+        stringResource(R.string.ww_title), cue, look, if (take != null) 1f else 0.85f, step,
+        key = { it::class to (it as? WakeStep.Take)?.index },
+    ) { shown ->
+        WakeStepContent(shown, phrase, model) { editing = true }
     }
     if (editing) {
         TextSheet(
@@ -333,43 +309,58 @@ private fun WakeStepContent(step: WakeStep, phrase: String, model: WakeWordModel
     val current by model.step.collectAsStateWithLifecycle()
     when (step) {
         WakeStep.Phrase -> {
-            StoryWords(stringResource(R.string.ww_phrase_title), stringResource(R.string.ww_phrase_body))
+            val phase by model.phase.collectAsStateWithLifecycle()
+            val state by model.settings.state.collectAsStateWithLifecycle()
+            val linked = phase == AssistantPhase.LISTENING || phase == AssistantPhase.THINKING || phase == AssistantPhase.SPEAKING
+            val on = (state.stored[CWW_KEY] ?: model.settings.value(CWW_KEY))?.let { asBool(it) } == true
+            StoryWords(stringResource(R.string.ww_phrase_title), null)
             Box(Modifier.padding(top = 20.dp)) {
-                ChoicePill(phrase.ifEmpty { stringResource(R.string.ww_phrase_short) }, edit)
+                ChoicePill(phrase.ifEmpty { stringResource(R.string.ww_phrase) }, edit)
             }
-            // The glasses' check (libassistantruntime): one locale, en_US, else the usual engine.
-            if (model.settings.value("assistant_voice_id")?.startsWith("en_US") != true) {
+            // The glasses use a custom phrase only in en_US.
+            if (model.settings.value(VOICE_KEY)?.startsWith("en_US") != true) {
                 Text(stringResource(R.string.ww_english), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 12.dp))
             }
-            Box(Modifier.padding(top = 28.dp)) {
-                BigPill(stringResource(R.string.ww_continue), model::begin, enabled = phrase.length >= WakeWordModel.MIN_LETTERS)
+            val host = LocalHost.current
+            Row(Modifier.padding(top = 28.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (on) {
+                    WidePill(stringResource(R.string.ww_turn_off), model::turnOff, quiet = true, enabled = host.ready && CWW_KEY !in state.pending)
+                    Spacer(Modifier.width(12.dp))
+                }
+                WidePill(stringResource(R.string.ww_continue), model::begin, Modifier.weight(1f), enabled = linked && phrase.length >= WakeWordModel.MIN_LETTERS)
             }
+            when (phase) {
+                AssistantPhase.OFF -> R.string.ww_no_link
+                AssistantPhase.WAITING -> R.string.settings_locked
+                else -> null
+            }?.let { Text(stringResource(it), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 12.dp)) }
         }
         is WakeStep.Take -> {
             val live = (current as? WakeStep.Take)?.takeIf { it.index == step.index } ?: step
-            TakeDots(live.index, Modifier.padding(bottom = 14.dp))
+            val count = stringResource(R.string.ww_take_count, live.index + 1, WakeWordModel.TAKES)
+            TakeDots(live.index, Modifier.padding(bottom = 14.dp).clearAndSetSemantics { contentDescription = count })
             StoryWords(
                 stringResource(R.string.ww_take_title, phrase),
                 when {
                     live.recording -> stringResource(R.string.ww_listening)
                     live.missed -> stringResource(R.string.ww_missed)
-                    else -> stringResource(R.string.ww_take, live.index + 1, WakeWordModel.TAKES)
+                    else -> null
                 },
             ) {
-                BigPill(stringResource(R.string.ww_record), model::record, enabled = !live.recording)
+                WidePill(stringResource(R.string.ww_record), model::record, Modifier.fillMaxWidth(), enabled = !live.recording)
             }
         }
         WakeStep.Enrolling -> StoryWords(stringResource(R.string.ww_enrolling), null)
         is WakeStep.Enrolled -> StoryWords(stringResource(R.string.ww_done_title), stringResource(R.string.ww_done_body, step.phrase)) {
-            BigPill(stringResource(R.string.features_restart_done), back)
+            WidePill(stringResource(R.string.done), back, Modifier.fillMaxWidth())
         }
         is WakeStep.Failed -> StoryWords(stringResource(R.string.ww_failed_title), step.why ?: stringResource(step.fallback)) {
-            BigPill(stringResource(R.string.hct_retry), model::retry)
+            WidePill(stringResource(R.string.try_again), model::retry, Modifier.fillMaxWidth())
         }
     }
 }
 
-/** Three takes: done ones white, the one to come outlined. */
+/** Three takes: done ones white, the rest grey. */
 @Composable
 private fun TakeDots(done: Int, modifier: Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -379,9 +370,6 @@ private fun TakeDots(done: Int, modifier: Modifier) {
         }
     }
 }
-
-/** How tall the stage zone is above a step's words. */
-private val STAGE_ZONE = 290.dp
 
 /** The pair faces the viewer square on while it listens: rest is -24 degrees. */
 private const val FRONT_YAW = 24f
@@ -400,22 +388,17 @@ fun WakeWordRow(onClick: () -> Unit, model: WakeWordModel = hiltViewModel()) {
         false -> stringResource(R.string.settings_not_set)
         null -> enrolled ?: stringResource(R.string.settings_not_set)
     }
-    ValueRow(stringResource(R.string.ww_title), value, onClick = onClick)
+    NavRow(VisorIcons.Mic, stringResource(R.string.ww_title), value, onClick = onClick, onCard = true)
 }
 
-/**
- * Firmware from 72387580112400100 (Gen 2) on wakes on a custom phrase only with Meta's Muse switch on; otherwise the
- * glasses answer "opt in to Muse in the Meta AI app" (#75). Older firmware stores the switch: there it only picks the
- * session path, which its passthrough flags in the configuration keep off. So with a phrase on the glasses, after
- * every read the switch goes on.
- */
+/** With a custom phrase on the glasses, turns hatch_enabled on after each read: newer firmware wakes on the phrase only with it. */
 fun keepMuseWithWakeWord(scope: CoroutineScope, settings: GlassesSettings, log: EventLog) {
     scope.launch {
         settings.state.map { it.readAt }.distinctUntilChanged().collect { readAt ->
             if (readAt == null || settings.value(CWW_KEY)?.let { asBool(it) } != true) return@collect
             val state = settings.state.value
             if (MUSE_KEY in state.pending || MUSE_KEY in state.kept || settings.value(MUSE_KEY)?.let { asBool(it) } == true) return@collect
-            if (settings.write(MUSE_KEY, "true")) log.add("Custom wake word: turning on the glasses' Muse switch, which newer firmware wants for it")
+            if (settings.writeQuietly(MUSE_KEY, "true")) log.add("Custom wake word: turning on the glasses' Muse switch, which newer firmware wants for it")
         }
     }
 }

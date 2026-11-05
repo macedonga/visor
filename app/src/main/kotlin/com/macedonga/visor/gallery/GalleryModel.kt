@@ -1,6 +1,5 @@
 package com.macedonga.visor.gallery
 
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.Immutable
@@ -9,22 +8,24 @@ import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.media.Capture
 import com.macedonga.visor.core.media.CaptureType
+import com.macedonga.visor.core.media.ImportProblem
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.MediaImport
-import com.macedonga.visor.core.media.Transfer
+import com.macedonga.visor.core.session.LinkState
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
+import kotlin.math.abs
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /** One photo, live photo or video in the timeline, wherever it is: on this phone, on the glasses, or both. */
 @Immutable
@@ -47,37 +48,40 @@ data class Day(val date: LocalDate, val items: List<GalleryItem>)
 
 @HiltViewModel
 class GalleryModel @Inject constructor(
-    @ApplicationContext private val context: Context,
     val media: MediaImport,
     val library: PhoneLibrary,
-    val connection: GlassesConnection,
+    connection: GlassesConnection,
 ) : ViewModel() {
 
     private val merged = combine(
-        library.items, library.leaving, media.index.entries, media.index.dismissed, media.captures,
+        library.listed.filterNotNull(), library.leaving, media.index.entries, media.index.dismissed, media.captures,
     ) { phone, leaving, kept, dismissed, captures -> merge(phone, leaving, kept, dismissed, captures) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, Merged(emptyList(), emptyList()))
+        .stateIn<Merged?>(viewModelScope, SharingStarted.Eagerly, null)
 
-    val items: StateFlow<List<GalleryItem>> = merged.map { it.items }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    /** Null until the phone's library is first read. */
+    val items: StateFlow<List<GalleryItem>?> = merged.map { it?.items }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     init {
-        // Old clips of live photos go, quietly.
-        viewModelScope.launch { merged.collect { if (it.superseded.isNotEmpty()) library.remove(it.superseded) } }
+        // Clip-only copies of live photos go.
+        viewModelScope.launch { merged.collect { m -> m?.superseded?.takeIf { it.isNotEmpty() }?.let(library::remove) } }
     }
 
     val previews: StateFlow<Map<String, File>> = media.previews
     val inFlight: StateFlow<Set<String>> = media.inFlight
-    val transfers: StateFlow<List<Transfer>> = media.transfers
-    val importing: StateFlow<Boolean> = media.importing
-    val problem: StateFlow<com.macedonga.visor.core.media.ImportProblem?> = media.problem
+    val progress: StateFlow<Map<String, Float?>> = media.progress
+    val problem: StateFlow<ImportProblem?> = media.problem
     val overBluetooth: StateFlow<Boolean> = media.overBluetooth
+    val ready: StateFlow<Boolean> = connection.state.map { it.link == LinkState.READY }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, connection.state.value.link == LinkState.READY)
 
     fun import(items: Collection<GalleryItem>) = media.import(items.filter { it.onGlassesOnly }.mapNotNull { it.capture })
 
     fun delete(items: Collection<GalleryItem>) {
-        val handles = items.filter { it.phone != null }.associate { it.phone!!.uri to it.capture?.handle }
+        val handles = items.mapNotNull { i -> i.phone?.let { it.uri to (i.kept?.handle ?: i.capture?.handle) } }.toMap()
         library.delete(handles.keys) { uri -> handles[uri]?.let(media.index::dismiss) }
     }
+
+    val undoable: StateFlow<Int> = library.undoable
 
     fun undoDelete() = library.undo()
 
@@ -102,15 +106,11 @@ class GalleryModel @Inject constructor(
         return Intent.createChooser(send, null)
     }
 
-    /** The timeline, and the copies to drop: old clips of live photos, whole or not. */
+    /** The timeline, and clip-only copies of live photos to drop. */
     class Merged(val items: List<GalleryItem>, val superseded: List<Uri>)
 
     companion object {
-        /**
-         * The phone's copies, each matched to its capture by the index or, for what earlier versions saved, by the
-         * capture's time to within a few seconds (a video's MediaStore time comes from its MP4, to the second);
-         * then what is only on the glasses. A deleted capture's copy on the glasses stays out.
-         */
+        /** Phone copies matched to captures by index, else by time within [MATCH_MS]; then what is only on the glasses, less what was deleted. */
         fun merge(
             phone: List<PhoneItem>,
             leaving: Set<Uri>,
@@ -121,6 +121,8 @@ class GalleryModel @Inject constructor(
             val media = captures.filter { it.isMedia }
             val byHandle = media.associateBy { it.handle }
             val timed = media.filter { it.takenAtMillis != null }.sortedBy { it.takenAtMillis }
+            val stills = timed.filter { it.type != CaptureType.VIDEO }
+            val clips = timed.filter { it.type != CaptureType.PHOTO }
             val keptByUri = kept.values.associateBy { it.uri }
             val shown = HashSet<String>()
             val keys = HashSet<String>()
@@ -128,10 +130,10 @@ class GalleryModel @Inject constructor(
             val superseded = ArrayList<Uri>()
             for (p in phone) {
                 val k = keptByUri[p.uri.toString()]
-                val capture = k?.let { byHandle[it.handle] } ?: nearest(timed, p.takenAt)
+                val capture = if (k != null) byHandle[k.handle] else nearest(if (p.video) clips else stills, p.takenAt)
                 val handle = k?.handle ?: capture?.handle
-                // A live photo an earlier version saved as its clip alone is no video: it goes.
-                if (k == null && p.video && capture?.type == CaptureType.LIVE) {
+                // A live photo's clip saved alone is not a video: it goes.
+                if (k == null && p.video && capture?.type == CaptureType.LIVE && p.durationMs in 1L..3_000L) {
                     superseded += p.uri
                     continue
                 }
@@ -157,8 +159,8 @@ class GalleryModel @Inject constructor(
             var i = timed.binarySearchBy(at) { it.takenAtMillis }
             if (i < 0) i = -i - 1
             return listOfNotNull(timed.getOrNull(i - 1), timed.getOrNull(i))
-                .minByOrNull { kotlin.math.abs(it.takenAtMillis!! - at) }
-                ?.takeIf { kotlin.math.abs(it.takenAtMillis!! - at) <= MATCH_MS }
+                .minByOrNull { abs(it.takenAtMillis!! - at) }
+                ?.takeIf { abs(it.takenAtMillis!! - at) <= MATCH_MS }
         }
 
         private const val MATCH_MS = 3_000L

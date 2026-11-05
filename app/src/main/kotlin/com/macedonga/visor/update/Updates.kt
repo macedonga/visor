@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
@@ -39,12 +38,12 @@ class Updates @Inject constructor(@ApplicationContext private val context: Conte
     private val _enabled = MutableStateFlow(prefs.getBoolean(KEY_ENABLED, true))
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
 
-    private val _newer = MutableStateFlow(if (_enabled.value) saved()?.takeIf { newerThan(it.version, BuildConfig.VERSION_NAME) } else null)
+    private val _newer = MutableStateFlow(if (BuildConfig.TAGGED && _enabled.value) saved()?.takeIf { newerThan(it.version, BuildConfig.VERSION_NAME) } else null)
     /** The latest release, when it is newer than this build. */
     val newer: StateFlow<Release?> = _newer.asStateFlow()
 
     fun start() {
-        if (loop != null) return
+        if (loop != null || !BuildConfig.TAGGED) return
         loop = scope.launch {
             while (true) {
                 if (_enabled.value && System.currentTimeMillis() - prefs.getLong(KEY_CHECKED, 0) > EVERY_MS) check()
@@ -60,6 +59,7 @@ class Updates @Inject constructor(@ApplicationContext private val context: Conte
     }
 
     private fun check() {
+        if (!BuildConfig.TAGGED) return
         // Offline or rate limited: the next tick tries again.
         val latest = runCatching { latest() }.getOrNull() ?: return
         prefs.edit().putLong(KEY_CHECKED, System.currentTimeMillis())
@@ -87,7 +87,7 @@ class Updates @Inject constructor(@ApplicationContext private val context: Conte
             if (http.responseCode != 200) return null
             val json = JSONObject(http.inputStream.use { it.readBytes().decodeToString() })
             val assets = json.optJSONArray("assets")
-            val apk = (0 until (assets?.length() ?: 0)).map { assets!!.getJSONObject(it) }.firstOrNull { it.optString("name").endsWith(".apk") }
+            val apk = assets?.let { a -> (0 until a.length()).map(a::getJSONObject).firstOrNull { it.optString("name").endsWith(".apk") } }
             return Release(json.getString("tag_name").removePrefix("v"), apk?.optString("browser_download_url") ?: json.getString("html_url"))
         } finally {
             http.disconnect()
@@ -123,8 +123,6 @@ class Updates @Inject constructor(@ApplicationContext private val context: Conte
         const val KEY_TOLD = "told"
     }
 }
-
-fun downloadIntent(release: Release): Intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
 /** 1.2.10 against 1.2.9 by number; a release is newer than its own pre-releases (1.2.0-beta.1). */
 internal fun newerThan(a: String, b: String): Boolean {

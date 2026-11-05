@@ -2,28 +2,20 @@ package com.macedonga.visor.settings
 
 import android.util.Base64
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,52 +23,59 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.settings.Control
 import com.macedonga.visor.core.settings.ProtoField
-import com.macedonga.visor.core.settings.ProtoFieldSpec
 import com.macedonga.visor.core.settings.ProtoSchema
 import com.macedonga.visor.core.settings.SettingSpec
 import com.macedonga.visor.core.settings.encodeProto
 import com.macedonga.visor.core.settings.parseProto
 import com.macedonga.visor.core.settings.parseSchema
-import com.macedonga.visor.ui.Line
-import com.macedonga.visor.ui.Section
+import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
+import com.macedonga.visor.ui.switchRow
 
-/** An encoded setting: a one-line summary, and an editor built from its schema behind "Open". */
+private const val VARINT = 0
+private const val LEN = 2
+
+/** An encoded setting, with an editor built from its schema behind Edit. */
 @Composable
 internal fun StructuredControl(
     spec: SettingSpec,
     c: Control.Structured,
     value: String?,
     enabled: Boolean,
-    labels: @Composable (Modifier, String?) -> Unit,
     write: (String) -> Unit,
 ) {
     val schema = remember(c) { parseSchema(c.schema) }
     val decoded = remember(value) { value?.let { decode(it) } }
     var open by remember { mutableStateOf(false) }
     val problem = when {
-        schema == null -> "Its layout is not mapped."
-        value != null && decoded == null -> "The glasses hold a value Visor cannot read."
+        schema == null -> stringResource(R.string.adv_not_mapped)
+        value != null && decoded == null -> stringResource(R.string.adv_unreadable)
         else -> null
     }
+    val editable = enabled && schema?.readOnly == false
     Row(verticalAlignment = Alignment.CenterVertically) {
-        labels(Modifier.weight(1f), problem)
-        OutlinedButton(enabled = schema != null && decoded != null || (schema != null && value == null), onClick = { open = true }) {
-            Text(if (schema?.readOnly == true || !enabled) "View" else "Edit")
-        }
+        if (problem != null) Text(problem, style = Visor.type.label, color = Visor.colors.signal, modifier = Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+        ActionPill(stringResource(if (editable) R.string.adv_edit else R.string.adv_view), { open = true }, quiet = true, enabled = problem == null)
     }
-    if (open && schema != null) {
-        StructuredDialog(spec.label, schema, decoded ?: emptyList(), editable = enabled && !schema.readOnly, onDismiss = { open = false }) {
-            open = false
-            write(encode(it))
-        }
+    if (!open || schema == null) return
+    val start = decoded ?: emptyList()
+    var fields by remember { mutableStateOf(start) }
+    FullDialog(spec.label, editable, canSave = fields !== start, onDismiss = { open = false }, onSave = {
+        open = false
+        write(encode(fields))
+    }) {
+        MessageEditor(schema, schema.root, fields, editable) { fields = it }
     }
 }
 
@@ -93,36 +92,6 @@ private fun decode(text: String): List<ProtoField>? {
 
 private fun encode(fields: List<ProtoField>): String = Base64.encodeToString(encodeProto(fields), Base64.NO_WRAP)
 
-@Composable
-private fun StructuredDialog(
-    title: String,
-    schema: ProtoSchema,
-    start: List<ProtoField>,
-    editable: Boolean,
-    onDismiss: () -> Unit,
-    onSave: (List<ProtoField>) -> Unit,
-) {
-    var fields by remember { mutableStateOf(start) }
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .background(Visor.colors.canvas)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(title, style = Visor.type.title, color = Visor.colors.textPrimary, modifier = Modifier.asHeading())
-            MessageEditor(schema, schema.root, fields, editable) { fields = it }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-                OutlinedButton(onClick = onDismiss) { Text(if (editable) "Cancel" else "Close") }
-                if (editable) Button(enabled = fields !== start, onClick = { onSave(fields) }) { Text("Save to the glasses") }
-            }
-        }
-    }
-}
-
 /** Every field the schema names for [type], with what the data holds; unknown fields ride along unchanged. */
 @Composable
 private fun MessageEditor(schema: ProtoSchema, type: String, fields: List<ProtoField>, editable: Boolean, onChange: (List<ProtoField>) -> Unit) {
@@ -131,60 +100,58 @@ private fun MessageEditor(schema: ProtoSchema, type: String, fields: List<ProtoF
         val present = fields.filter { it.number == f.number }
         when {
             f.type == "message" && f.repeated -> {
-                Section(f.label)
+                EditorLabel(f.label)
                 present.forEachIndexed { i, item ->
-                    EntryCard {
+                    EditorCard {
                         val child = parseProto(item.bytes)
                         if (child == null) {
-                            Line("This entry cannot be read; it is kept as it is.", secondary = true)
+                            EditorNote(stringResource(R.string.adv_entry_unreadable))
                         } else {
                             MessageEditor(schema, f.ref.orEmpty(), child, editable) { updated ->
-                                onChange(replaceNth(fields, f.number, i, ProtoField(f.number, 2, bytes = encodeProto(updated))))
+                                onChange(replaceNth(fields, f.number, i, ProtoField(f.number, LEN, bytes = encodeProto(updated))))
                             }
                         }
-                        if (editable) TextButton(onClick = { onChange(removeNth(fields, f.number, i)) }) { Text("Remove") }
+                        if (editable) ActionPill(stringResource(R.string.adv_remove), { onChange(removeNth(fields, f.number, i)) }, quiet = true)
                     }
                 }
-                if (present.isEmpty()) Line("None.", secondary = true)
-                if (editable) OutlinedButton(onClick = { onChange(fields + ProtoField(f.number, 2)) }) { Text("Add") }
+                if (present.isEmpty()) EditorNote(stringResource(R.string.adv_none))
+                if (editable) ActionPill(stringResource(R.string.adv_add), { onChange(fields + ProtoField(f.number, LEN)) }, quiet = true)
             }
 
             f.type == "message" -> {
-                Section(f.label)
-                EntryCard {
-                    val child = present.firstOrNull()?.let { parseProto(it.bytes) } ?: emptyList()
-                    MessageEditor(schema, f.ref.orEmpty(), child, editable) { updated ->
-                        onChange(setSingle(fields, f.number, if (updated.isEmpty()) null else ProtoField(f.number, 2, bytes = encodeProto(updated))))
+                EditorLabel(f.label)
+                EditorCard {
+                    val item = present.firstOrNull()
+                    val child = if (item == null) emptyList() else parseProto(item.bytes)
+                    if (child == null) {
+                        EditorNote(stringResource(R.string.adv_entry_unreadable))
+                    } else {
+                        MessageEditor(schema, f.ref.orEmpty(), child, editable) { updated ->
+                            onChange(setSingle(fields, f.number, if (updated.isEmpty()) null else ProtoField(f.number, LEN, bytes = encodeProto(updated))))
+                        }
                     }
                 }
             }
 
-            f.type == "bool" -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(f.label, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
-                Switch(
-                    checked = present.firstOrNull()?.varint?.let { it != 0L } ?: false,
-                    enabled = editable,
-                    onCheckedChange = { onChange(setSingle(fields, f.number, if (it) ProtoField(f.number, 0, varint = 1) else null)) },
-                )
+            f.type == "bool" -> SwitchLine(f.label, present.firstOrNull()?.varint?.let { it != 0L } ?: false, editable) {
+                onChange(setSingle(fields, f.number, if (it) ProtoField(f.number, VARINT, varint = 1) else null))
             }
 
             f.type == "enum" -> {
                 val options = schema.enums[f.ref].orEmpty()
                 val now = (present.firstOrNull()?.varint ?: 0L).toString()
-                Text(f.label, style = Visor.type.body, color = Visor.colors.textPrimary)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (o in options) {
-                        FilterChip(
-                            selected = now == o.value,
-                            enabled = editable,
-                            onClick = {
-                                val v = o.value.toLong()
-                                onChange(setSingle(fields, f.number, if (v == 0L) null else ProtoField(f.number, 0, varint = v)))
-                            },
-                            label = { Text(o.label) },
-                        )
+                val unnamed = if (options.none { it.value == now }) listOf(now to stringResource(R.string.adv_value_n, now)) else emptyList()
+                val choices = options.map { it.value to it.label } + unnamed
+                if (editable) {
+                    Text(f.label, style = Visor.type.body, color = Visor.colors.textPrimary)
+                    Pills(choices, now, on = Visor.colors.control) { v ->
+                        if (v != now) {
+                            val n = v.toLong()
+                            onChange(setSingle(fields, f.number, if (n == 0L) null else ProtoField(f.number, VARINT, varint = n)))
+                        }
                     }
-                    if (options.none { it.value == now }) FilterChip(selected = true, enabled = false, onClick = {}, label = { Text("Value $now") })
+                } else {
+                    ShownValue(f.label, choices.firstOrNull { it.first == now }?.second ?: now)
                 }
             }
 
@@ -192,59 +159,115 @@ private fun MessageEditor(schema: ProtoSchema, type: String, fields: List<ProtoF
                 val now = present.firstOrNull()?.varint ?: 0L
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(f.label, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
-                    NumberField(now, editable) { onChange(setSingle(fields, f.number, if (it == 0L) null else ProtoField(f.number, 0, varint = it))) }
+                    NumberField(now, editable) { onChange(setSingle(fields, f.number, if (it == 0L) null else ProtoField(f.number, VARINT, varint = it))) }
                 }
             }
 
             else -> {
                 val now = present.firstOrNull()?.bytes?.decodeToString().orEmpty()
                 var draft by remember(now) { mutableStateOf(now) }
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = {
+                Text(f.label, style = Visor.type.body, color = Visor.colors.textPrimary)
+                if (editable) {
+                    EditorField(draft, {
                         draft = it
-                        onChange(setSingle(fields, f.number, if (it.isEmpty()) null else ProtoField(f.number, 2, bytes = it.encodeToByteArray())))
-                    },
-                    label = { Text(f.label) },
-                    enabled = editable,
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                        onChange(setSingle(fields, f.number, if (it.isEmpty()) null else ProtoField(f.number, LEN, bytes = it.encodeToByteArray())))
+                    }, Modifier.fillMaxWidth())
+                } else {
+                    EditorNote(if (now.isEmpty()) stringResource(R.string.settings_not_set) else now)
+                }
             }
         }
     }
     val unknown = fields.count { field -> specs.none { it.number == field.number } }
-    if (unknown > 0) Line("$unknown more field${if (unknown == 1) "" else "s"} this mapping does not name, kept as they are.", secondary = true)
+    if (unknown > 0) EditorNote(pluralStringResource(R.plurals.adv_unknown_fields, unknown, unknown))
 }
 
+/** A grey heading inside an editor. */
 @Composable
-private fun EntryCard(content: @Composable () -> Unit) {
+internal fun EditorLabel(text: String) {
+    Text(text, style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.asHeading().padding(top = 14.dp))
+}
+
+/** A grey line inside an editor. */
+@Composable
+internal fun EditorNote(text: String, color: Color = Visor.colors.textSecondary) {
+    Text(text, style = Visor.type.label, color = color)
+}
+
+/** A name and what it holds, in an editor opened to view. */
+@Composable
+internal fun ShownValue(label: String, value: String) {
+    Row(Modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = Visor.type.body, color = Visor.colors.textPrimary, modifier = Modifier.weight(1f))
+        Text(value, style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+    }
+}
+
+/** One entry's card inside an editor. */
+@Composable
+internal fun EditorCard(content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .background(Visor.colors.surface, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(CARD_RADIUS))
+            .background(Visor.colors.surface)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) { content() }
 }
 
+/** A text well inside an editor; [modifier] sets its width. */
 @Composable
-private fun NumberField(value: Long, enabled: Boolean, onChange: (Long) -> Unit) {
+internal fun EditorField(value: String, onValue: (String) -> Unit, modifier: Modifier = Modifier, hint: String = "", keyboard: KeyboardType = KeyboardType.Text) {
+    Box(modifier.clip(RoundedCornerShape(16.dp)).background(Visor.colors.raised).padding(horizontal = 14.dp, vertical = 12.dp)) {
+        if (value.isEmpty()) Text(hint, style = Visor.type.body, color = Visor.colors.textTertiary)
+        BasicTextField(
+            value = value,
+            onValueChange = onValue,
+            singleLine = true,
+            textStyle = Visor.type.body.copy(color = Visor.colors.textPrimary),
+            cursorBrush = SolidColor(Color.White),
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** A name and a switch, the whole line taking the tap; On or Off in words when it only shows. [sub] is the firmware's key. */
+@Composable
+internal fun SwitchLine(label: String, on: Boolean, editable: Boolean, modifier: Modifier = Modifier, sub: String? = null, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .then(if (editable) Modifier.clickable { onChange(!on) }.switchRow(on) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = Visor.type.body, color = Visor.colors.textPrimary)
+            if (sub != null) KeyLine(sub)
+        }
+        if (editable) {
+            VisorSwitch(on)
+        } else {
+            Text(stringResource(if (on) R.string.sum_on else R.string.sum_off), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+        }
+    }
+}
+
+/** A whole number with a step either side; the text may stay unparsed (empty, a lone '-') while it is typed. */
+@Composable
+internal fun NumberField(value: Long, editable: Boolean, onChange: (Long) -> Unit) {
+    if (!editable) {
+        Text(value.toString(), style = Visor.type.body, color = Visor.colors.textSecondary)
+        return
+    }
     var draft by remember(value) { mutableStateOf(value.toString()) }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(enabled = enabled, onClick = { onChange(value - 1) }) { Text("−") }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { text ->
-                draft = text.filter { it.isDigit() || it == '-' }
-                draft.toLongOrNull()?.let(onChange)
-            },
-            enabled = enabled,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.width(120.dp),
-        )
-        TextButton(enabled = enabled, onClick = { onChange(value + 1) }) { Text("+") }
+        RoundIcon(VisorIcons.Minus, stringResource(R.string.adv_decrease), { onChange(value - 1) })
+        EditorField(draft, { text ->
+            draft = text.filter { it.isDigit() || it == '-' }
+            draft.toLongOrNull()?.let(onChange)
+        }, Modifier.width(96.dp), keyboard = KeyboardType.Number)
+        RoundIcon(VisorIcons.Plus, stringResource(R.string.adv_increase), { onChange(value + 1) })
     }
 }
 

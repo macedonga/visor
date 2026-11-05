@@ -3,9 +3,9 @@ package com.macedonga.visor.core.identity
 import java.math.BigInteger
 
 /** Just enough DER to walk the two structures this module meets, and no more. */
-internal class DerReader(private val data: ByteArray, private var position: Int = 0) {
+internal class DerReader(private val data: ByteArray) {
 
-    val exhausted: Boolean get() = position >= data.size
+    private var position = 0
 
     /** The contents of the next element, which must carry [expectedTag]. */
     fun read(expectedTag: Int): ByteArray {

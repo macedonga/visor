@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.assistant.mcp
 
 import android.util.Base64
+import com.macedonga.visor.core.connection.strings
 import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -60,7 +61,7 @@ internal class OAuth(private val http: OkHttpClient) {
         val meta = issuerDocuments(issuer).firstNotNullOfOrNull { url ->
             getJson(url)?.takeIf { it.str("authorization_endpoint").isNotEmpty() && it.str("token_endpoint").isNotEmpty() }
         } ?: return null
-        val scopes = resourceDoc?.optJSONArray("scopes_supported")?.let { a -> (0 until a.length()).joinToString(" ") { a.getString(it) } }
+        val scopes = resourceDoc?.optJSONArray("scopes_supported")?.strings()?.joinToString(" ")
         return AuthServer(
             issuer = meta.str("issuer").ifEmpty { issuer },
             authorizationEndpoint = meta.str("authorization_endpoint"),
@@ -150,11 +151,11 @@ internal class OAuth(private val http: OkHttpClient) {
         val (code, text) = http.newCall(request.post(form.build()).build()).fetch { it.code to it.body.string() }
         val o = runCatching { JSONObject(text) }.getOrNull()
         val access = o?.str("access_token").orEmpty()
-        if (code !in 200..299 || access.isEmpty()) {
+        if (code !in 200..299 || o == null || access.isEmpty()) {
             val why = o?.str("error_description")?.ifEmpty { null } ?: o?.str("error")?.ifEmpty { null } ?: "HTTP $code"
             throw McpException(McpException.Kind.UNAUTHORIZED, "sign-in refused: $why")
         }
-        val life = o!!.optLong("expires_in", 0)
+        val life = o.optLong("expires_in", 0)
         return g.copy(
             accessToken = access,
             // A server that does not rotate refresh tokens leaves the old one good.
@@ -171,10 +172,6 @@ internal class OAuth(private val http: OkHttpClient) {
     }.getOrNull()
 
     companion object {
-        const val APP_REDIRECT = OAuthRedirects.APP
-        const val LOOPBACK_PORT = OAuthRedirects.LOOPBACK_PORT
-        const val LOOPBACK_REDIRECT = OAuthRedirects.LOOPBACK
-
         private val random = SecureRandom()
         private const val UNRESERVED = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
@@ -236,25 +233,24 @@ internal suspend fun awaitLoopback(port: Int): String = coroutineScope {
     val watcher = launch { try { awaitCancellation() } finally { runCatching { server.close() } } }
     try {
         withContext(Dispatchers.IO) {
-            while (true) {
-                server.accept().use { socket ->
+            var target = ""
+            while (!target.startsWith("/callback")) {
+                target = server.accept().use { socket ->
                     val line = socket.getInputStream().bufferedReader().readLine().orEmpty()
-                    val target = line.split(' ').getOrNull(1).orEmpty()
                     val page = "<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;" +
                         "background:#000;color:#fff;display:grid;place-items:center;height:90vh'><div style='text-align:center'>" +
-                        "<p>Signed in.</p><p><a style='color:#fff' href='${OAuth.APP_REDIRECT}'>Back to Visor</a></p></div>" +
-                        "<script>location.href='${OAuth.APP_REDIRECT}'</script>"
+                        "<a href='${OAuthRedirects.APP}' style='background:#fff;color:#000;padding:12px 24px;border-radius:999px;text-decoration:none'>Visor</a></div>" +
+                        "<script>location.href='${OAuthRedirects.APP}'</script>"
                     val bytes = page.toByteArray()
                     socket.getOutputStream().apply {
                         write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
                         write(bytes)
                         flush()
                     }
-                    if (target.startsWith("/callback")) return@withContext "http://127.0.0.1:$port$target"
+                    line.split(' ').getOrNull(1).orEmpty()
                 }
             }
-            @Suppress("UNREACHABLE_CODE")
-            ""
+            "http://127.0.0.1:$port$target"
         }
     } finally {
         watcher.cancel()

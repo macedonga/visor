@@ -3,17 +3,15 @@
     <string name="mirror_title">Mirror</string>
     <string name="mirror_start">Start</string>
     <string name="mirror_stop">Stop</string>
-    <string name="mirror_idle">Idle</string>
     <string name="mirror_starting">Starting…</string>
     <string name="mirror_live">Live</string>
-    <string name="mirror_not_connected">Connect to the glasses first.</string>
-    <string name="mirror_not_read">Read the glasses\' configuration first.</string>
-    <string name="mirror_no_flag">These glasses have no screencast switch.</string>
-    <string name="mirror_flag_not_sent">The glasses did not take the switch: %1$s</string>
+    <string name="mirror_not_read">The glasses did not send their configuration.</string>
+    <string name="mirror_no_flag">These glasses cannot mirror their screen.</string>
+    <string name="mirror_flag_not_sent">The glasses did not turn mirroring on.</string>
     <string name="mirror_no_answer">The glasses did not answer.</string>
     <string name="mirror_asleep">The glasses\' screen is asleep.</string>
     <string name="mirror_timeout">The glasses timed out.</string>
-    <string name="mirror_unknown">The glasses refused the screencast.</string>
+    <string name="mirror_unknown">The glasses refused to mirror.</string>
     <string name="mirror_needs_restart">Restart the glasses once to turn on mirroring.</string>
-    <string name="mirror_no_wifi">Wi-Fi to the glasses did not come up: %1$s</string>
+    <string name="mirror_no_wifi">Wi-Fi to the glasses did not come up.</string>
 </resources>

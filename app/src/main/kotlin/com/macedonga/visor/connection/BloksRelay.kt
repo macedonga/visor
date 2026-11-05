@@ -5,16 +5,13 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPOutputStream
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -29,9 +26,9 @@ import org.json.JSONObject
 class BloksRelay @Inject constructor(
     private val login: Provider<MetaLogin>,
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Bloks: failed: $e") })
+    private val scope = responderScope(log, "Bloks")
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val type = message.info.messageType
@@ -42,7 +39,7 @@ class BloksRelay @Inject constructor(
     }
 
     private suspend fun serve(r: Request, q: Query, reply: Int, mux: DataXConnection) {
-        val id = requests.start("bloks://${r.appId}", SOURCE_BLOKS, r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }.orEmpty())
+        val id = requests.start("bloks://${r.appId}", RequestSource.META, r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }.orEmpty())
         if (r.appId.isEmpty() || r.appId.startsWith("com.bloks.fox_edge.")) {
             mux.send(reply, ByteArray(0), messageType = q.answer)
             requests.finish(id, "empty, as the Meta app answers", failed = false)
@@ -108,6 +105,5 @@ class BloksRelay @Inject constructor(
             11 to Query("CompanionBloksAsyncActionQuery", "35737516989272377596036696859", 12),
         )
         private const val INTERNAL_ERROR = 0xC004
-        private const val SOURCE_BLOKS = -2
     }
 }

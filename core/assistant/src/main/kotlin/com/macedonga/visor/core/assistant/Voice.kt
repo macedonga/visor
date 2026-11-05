@@ -33,10 +33,6 @@ class Voice(private val context: Context) {
     private var tts: TextToSpeech? = null
     private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
-    /** The engine and its default voice, for the screen. */
-    var engine: String = ""
-        private set
-
     suspend fun checkLanguage(locale: Locale) = lock.withLock {
         selectLanguage(ready(), locale)
     }
@@ -44,8 +40,10 @@ class Voice(private val context: Context) {
     suspend fun speak(text: String, locale: Locale): List<OpusPacket> = lock.withLock {
         val wav = File(context.cacheDir, "assistant-tts.wav")
         synthesize(text, locale, wav)
-        val pcm = withContext(Dispatchers.Default) { readWav(wav) }
-        withContext(Dispatchers.Default) { encodeOpus(resample(pcm.samples, pcm.rate, 48_000)) }
+        withContext(Dispatchers.Default) {
+            val pcm = readWav(wav)
+            encodeOpus(resample(pcm.samples, pcm.rate, 48_000))
+        }
     }
 
     private suspend fun synthesize(text: String, locale: Locale, out: File) {
@@ -54,16 +52,19 @@ class Voice(private val context: Context) {
         val id = UUID.randomUUID().toString()
         val done = CompletableDeferred<Boolean>().also { pending[id] = it }
         out.delete()
-        check(engine.synthesizeToFile(text, Bundle(), out, id) == TextToSpeech.SUCCESS) { "the phone's text to speech refused the sentence" }
-        val ok = withTimeout(15_000) { done.await() }
-        pending.remove(id)
+        val ok = try {
+            check(engine.synthesizeToFile(text, Bundle(), out, id) == TextToSpeech.SUCCESS) { "the phone's text to speech refused the sentence" }
+            withTimeout(15_000) { done.await() }
+        } finally {
+            pending.remove(id)
+        }
         check(ok && out.length() > 44) { "the phone's text to speech failed" }
     }
 
     private fun selectLanguage(engine: TextToSpeech, locale: Locale) {
         val required = if (locale.language == "zh") TextToSpeech.LANG_COUNTRY_AVAILABLE else TextToSpeech.LANG_AVAILABLE
-        check(engine.isLanguageAvailable(locale) >= required && engine.setLanguage(locale) >= required) {
-            "the phone has no text-to-speech voice for ${locale.toLanguageTag()}; install it in Android text-to-speech settings"
+        if (engine.isLanguageAvailable(locale) < required || engine.setLanguage(locale) < required) {
+            throw PhoneSpeechException(PhoneSpeech.NO_VOICE, "the phone has no text-to-speech voice for ${locale.toLanguageTag()}")
         }
     }
 
@@ -96,7 +97,6 @@ class Voice(private val context: Context) {
                 }
             },
         )
-        this.engine = engine.defaultEngine.orEmpty()
         tts = engine
         return engine
     }

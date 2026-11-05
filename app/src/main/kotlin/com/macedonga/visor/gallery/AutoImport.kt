@@ -6,12 +6,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
+import android.net.Uri
 import android.util.Size
 import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiIsOn
@@ -20,6 +19,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,6 +30,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** When the glasses' new photos and videos come over on their own. */
 enum class AutoImport { CHARGING, ALWAYS, OFF }
+
+internal val AutoImport.title: Int
+    get() = when (this) {
+        AutoImport.CHARGING -> R.string.import_charging
+        AutoImport.ALWAYS -> R.string.import_always
+        AutoImport.OFF -> R.string.import_off
+    }
 
 /** The person's choice, kept on the phone. Charging is the default: the glasses are idle and on power then. */
 @Singleton
@@ -48,12 +55,8 @@ class ImportChoice @Inject constructor(@ApplicationContext context: Context) {
     }
 }
 
-/**
- * Imports what is new on the glasses by itself, as [ImportChoice] says: once they are connected (and charging, by
- * default), Wi-Fi is on and nothing else is coming over. When it is done a quiet notification says how much came.
- * A try that brought nothing waits [RETRY_MS] before the next.
- */
-fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesConnection, media: MediaImport, choice: ImportChoice, albums: Albums) {
+/** Imports what is new on the glasses as [ImportChoice] says, then posts how many came. */
+fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesConnection, media: MediaImport, choice: ImportChoice) {
     scope.launch {
         var lastTry = 0L
         var failed = false
@@ -74,6 +77,8 @@ fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesC
             if (!wanted || now - lastTry < if (failed) RETRY_MS else SPACING_MS) continue
             lastTry = now
             val before = media.saved.value
+            val last = MutableStateFlow<String?>(null)
+            val watch = launch(start = CoroutineStart.UNDISPATCHED) { media.imported.collect { last.value = it } }
             media.importAllNew()
             // Done once nothing is moving or waiting to be put together, or after a generous while.
             if (withTimeoutOrNull(START_TIMEOUT_MS) { media.importing.first { it } } != null) {
@@ -82,14 +87,15 @@ fun importOnItsOwn(context: Context, scope: CoroutineScope, connection: GlassesC
                     media.inFlight.first { it.isEmpty() }
                 }
             }
+            watch.cancel()
             val came = media.saved.value - before
             failed = came <= 0
-            if (came > 0) notifyImported(context, came, albums)
+            if (came > 0) notifyImported(context, came, last.value?.let { media.index.entries.value[it]?.uri })
         }
     }
 }
 
-private fun notifyImported(context: Context, count: Int, albums: Albums) {
+private fun notifyImported(context: Context, count: Int, uri: String?) {
     val manager = context.getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(
         NotificationChannel(CHANNEL, context.getString(R.string.import_channel), NotificationManager.IMPORTANCE_LOW),
@@ -102,27 +108,12 @@ private fun notifyImported(context: Context, count: Int, albums: Albums) {
     val notification = Notification.Builder(context, CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_visor)
         .setContentTitle(context.resources.getQuantityString(R.plurals.import_done, count, count))
-        .setContentText(context.getString(R.string.import_done_text))
-        .setLargeIcon(newest(context, albums.photosPattern()))
+        .setLargeIcon(uri?.let { runCatching { context.contentResolver.loadThumbnail(Uri.parse(it), Size(256, 256), null) }.getOrNull() })
         .setContentIntent(open)
         .setAutoCancel(true)
         .build()
     manager.notify(NOTIFICATION_ID, notification)
 }
-
-/** The newest photo in the photos album, small, for the notification. */
-private fun newest(context: Context, pattern: String): Bitmap? = runCatching {
-    val collection = android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
-    context.contentResolver.query(
-        collection, arrayOf(android.provider.MediaStore.MediaColumns._ID),
-        Albums.MATCH, arrayOf(pattern),
-        "${android.provider.MediaStore.MediaColumns.DATE_TAKEN} DESC",
-    )?.use { c ->
-        if (!c.moveToFirst()) return@use null
-        val uri = android.content.ContentUris.withAppendedId(collection, c.getLong(0))
-        context.contentResolver.loadThumbnail(uri, Size(256, 256), null)
-    }
-}.getOrNull()
 
 private const val CHANNEL = "imports"
 private const val NOTIFICATION_ID = 7

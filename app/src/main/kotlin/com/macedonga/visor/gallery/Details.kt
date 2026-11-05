@@ -3,7 +3,7 @@ package com.macedonga.visor.gallery
 import android.content.Intent
 import android.media.ExifInterface
 import android.net.Uri
-import android.text.format.Formatter
+import android.text.format.DateFormat
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -12,14 +12,15 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -49,18 +51,22 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.CaptureType
+import com.macedonga.visor.stage.SHEET_RADIUS
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.asHeading
+import com.macedonga.visor.ui.sizeWords
 import com.macedonga.visor.ui.temperatureWords
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -69,10 +75,7 @@ import kotlinx.coroutines.withContext
 /** The camera's own words about a photo, from the phone copy's Exif. */
 private class CameraWords(val exposure: String?, val iso: String?, val aperture: String?, val focal: String?, val model: String?)
 
-/**
- * Everything known about a moment, on a sheet under it: when and where, the file, the camera, and what the
- * glasses' sensors felt: the tilt at the shutter, how the head moved, and the raw numbers.
- */
+/** What is known about a capture: time, place, file, camera and sensors. */
 @Composable
 fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
     val colors = Visor.colors
@@ -81,6 +84,8 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
     val reading by produceState<SensorReading?>(null, item.key, originals) {
         value = originals?.let { dir -> withContext(Dispatchers.IO) { runCatching { SensorReading.read(dir, item.kept?.shutterNs ?: 0) }.getOrNull() } }
     }
+    val seconds = stringResource(R.string.unit_s)
+    val mm = stringResource(R.string.unit_mm)
     val camera by produceState<CameraWords?>(null, item.phone?.uri) {
         val uri = item.phone?.uri?.takeIf { item.phone.video.not() } ?: return@produceState
         value = withContext(Dispatchers.IO) {
@@ -88,10 +93,10 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
                 context.contentResolver.openInputStream(uri)!!.use { stream ->
                     val exif = ExifInterface(stream)
                     CameraWords(
-                        exposure = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, 0.0).takeIf { it > 0 }?.let { exposureWords((it * 1e9).toLong()) },
-                        iso = exif.getAttribute("ISOSpeedRatings")?.let { "ISO $it" },
+                        exposure = exif.getAttributeDouble(ExifInterface.TAG_EXPOSURE_TIME, 0.0).takeIf { it > 0 }?.let { exposureWords((it * 1e9).toLong(), seconds) },
+                        iso = exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)?.let { "ISO $it" },
                         aperture = exif.getAttributeDouble(ExifInterface.TAG_F_NUMBER, 0.0).takeIf { it > 0 }?.let { "ƒ/%.1f".format(it) },
-                        focal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0).takeIf { it > 0 }?.let { "%.1f mm".format(it) },
+                        focal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0).takeIf { it > 0 }?.let { "%.1f %s".format(it, mm) },
                         model = listOfNotNull(exif.getAttribute(ExifInterface.TAG_MAKE), exif.getAttribute(ExifInterface.TAG_MODEL)).joinToString(" ").ifBlank { null },
                     )
                 }
@@ -101,7 +106,7 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
 
     Column(
         modifier
-            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+            .clip(RoundedCornerShape(topStart = SHEET_RADIUS, topEnd = SHEET_RADIUS))
             .background(colors.surface)
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
@@ -111,7 +116,7 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             val at = Instant.ofEpochMilli(item.takenAt).atZone(ZoneId.systemDefault())
             Text(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL).withLocale(locale).format(at).replaceFirstChar { it.titlecase(locale) }, style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
-            Text(DateTimeFormatter.ofLocalizedTime(FormatStyle.MEDIUM).withLocale(locale).format(at) + " · " + kindWord(item.type), style = Visor.type.label, color = colors.textSecondary)
+            Text(DateTimeFormatter.ofPattern(if (DateFormat.is24HourFormat(context)) "HH:mm:ss" else "h:mm:ss a", locale).format(at) + " · " + kindWord(item.type), style = Visor.type.label, color = colors.textSecondary)
             val lat = item.kept?.lat
             val lon = item.kept?.lon
             if (lat != null && lon != null) {
@@ -124,7 +129,7 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
                     val name by produceState(PlaceNames.cached(lat, lon), lat, lon) { if (value == null) value = PlaceNames.of(context, lat, lon) }
                     Icon(VisorIcons.Pin, null, Modifier.size(16.dp), tint = colors.textSecondary)
                     Spacer(Modifier.width(6.dp))
-                    Text(listOfNotNull(name, "%.5f, %.5f".format(lat, lon)).joinToString(" · "), style = Visor.type.label, color = colors.textPrimary)
+                    Text(listOfNotNull(name, String.format(Locale.ROOT, "%.5f, %.5f", lat, lon)).joinToString(" · "), style = Visor.type.label, color = colors.textPrimary)
                 }
             }
         }
@@ -134,29 +139,30 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
             if (phone != null) {
                 if (phone.width > 0 && phone.height > 0) {
                     val mp = phone.width.toLong() * phone.height / 1e6
-                    Fact(stringResource(R.string.details_resolution), "${phone.width} × ${phone.height}" + if (phone.video) "" else " · %.1f MP".format(mp))
+                    Fact(stringResource(R.string.details_resolution), "${phone.width} × ${phone.height}" + if (phone.video) "" else " · %.1f %s".format(mp, stringResource(R.string.unit_mp)))
                 }
                 if (phone.video && phone.durationMs > 0) Fact(stringResource(R.string.details_length), duration(phone.durationMs))
-                Fact(stringResource(R.string.details_size), Formatter.formatShortFileSize(context, phone.size))
+                Fact(stringResource(R.string.details_size), sizeWords(context, phone.size))
                 Fact(stringResource(R.string.details_name), phone.name)
             } else {
-                item.capture?.main?.let { Fact(stringResource(R.string.details_size), Formatter.formatShortFileSize(context, it.size)) }
+                item.capture?.main?.let { Fact(stringResource(R.string.details_size), sizeWords(context, it.size)) }
                 Fact(stringResource(R.string.details_where), stringResource(R.string.gallery_on_glasses))
             }
         }
 
         val exposures = reading?.exposuresNs.orEmpty()
+        val seconds = stringResource(R.string.unit_s)
         val exposure = camera?.exposure ?: when {
             exposures.isEmpty() -> null
-            exposures.min() == exposures.max() -> exposureWords(exposures[0])
-            else -> exposureWords(exposures.max()) + " – " + exposureWords(exposures.min())
+            exposures.min() == exposures.max() -> exposureWords(exposures[0], seconds)
+            else -> exposureWords(exposures.max(), seconds) + " – " + exposureWords(exposures.min(), seconds)
         }
-        val cameraFacts = listOfNotNull(camera?.model, exposure, camera?.iso, camera?.aperture, camera?.focal)
-        if (cameraFacts.isNotEmpty()) {
+        val optics = listOfNotNull(camera?.iso, camera?.aperture, camera?.focal)
+        if (camera?.model != null || exposure != null || optics.isNotEmpty()) {
             Section(stringResource(R.string.details_camera)) {
                 camera?.model?.let { Fact(stringResource(R.string.details_model), it) }
                 exposure?.let { Fact(stringResource(R.string.details_exposure), it) }
-                listOfNotNull(camera?.iso, camera?.aperture, camera?.focal).takeIf { it.isNotEmpty() }?.let { Fact(stringResource(R.string.details_optics), it.joinToString(" · ")) }
+                if (optics.isNotEmpty()) Fact(stringResource(R.string.details_optics), optics.joinToString(" · "))
             }
         }
 
@@ -175,8 +181,8 @@ fun Details(item: GalleryItem, originals: File?, modifier: Modifier) {
                 Motion(r, item.type, Modifier.fillMaxWidth().height(96.dp))
             }
             Section(stringResource(R.string.details_raw)) {
-                Fact(stringResource(R.string.details_accel), "x %.2f · y %.2f · z %.2f m/s²".format(r.accel[0], r.accel[1], r.accel[2]))
-                Fact(stringResource(R.string.details_rotation), "x %.1f · y %.1f · z %.1f °/s".format(r.gyroDps[0], r.gyroDps[1], r.gyroDps[2]))
+                Fact(stringResource(R.string.details_accel), "x %.2f · y %.2f · z %.2f %s".format(r.accel[0], r.accel[1], r.accel[2], stringResource(R.string.unit_mps2)))
+                Fact(stringResource(R.string.details_rotation), "x %.1f · y %.1f · z %.1f %s".format(r.gyroDps[0], r.gyroDps[1], r.gyroDps[2], stringResource(R.string.unit_dps)))
                 Fact(stringResource(R.string.details_temperature), temperatureWords(r.dieC.toDouble(), decimals = 1))
                 Fact(stringResource(R.string.details_samples), stringResource(R.string.details_samples_value, r.samples, r.rateHz.roundToInt(), "%.2f".format(r.spanS)))
             }
@@ -219,10 +225,7 @@ private fun pitchWords(pitch: Float): String = when {
     else -> stringResource(R.string.details_pitch_up, abs(pitch).roundToInt())
 }
 
-/**
- * A level: the world's horizon inside a ring, turned the way the head was and moved up or down with where it
- * looked, against the ring's fixed marks.
- */
+/** The horizon at the shutter, turned by roll and raised by pitch. */
 @Composable
 private fun Level(roll: Float, pitch: Float, modifier: Modifier) {
     val colors = Visor.colors
@@ -242,20 +245,17 @@ private fun Level(roll: Float, pitch: Float, modifier: Modifier) {
     }
 }
 
-/**
- * The head's angular speed across the log, as one thin line on a faint area, with the shutter marked and a live
- * photo's clip shaded. A finger on it reads the speed under it.
- */
+/** Head speed across the sensor log; a finger reads the value under it. */
 @Composable
 private fun Motion(reading: SensorReading, type: CaptureType, modifier: Modifier) {
     val colors = Visor.colors
     var touch by remember { mutableStateOf<Float?>(null) }
     val top = ((reading.motion.maxOrNull() ?: 0f) * 1.15f).coerceAtLeast(30f)
+    fun speedAt(t: Float) = reading.motion[(t * (reading.motion.size - 1)).roundToInt().coerceIn(0, reading.motion.size - 1)]
     Box(modifier) {
         Canvas(
             Modifier
-                .fillMaxWidth()
-                .height(96.dp)
+                .fillMaxSize()
                 .pointerInput(reading) {
                     detectDragGestures(
                         onDragStart = { touch = (it.x / size.width).coerceIn(0f, 1f) },
@@ -272,7 +272,7 @@ private fun Motion(reading: SensorReading, type: CaptureType, modifier: Modifier
             fun x(i: Int) = i * w / (n - 1)
             fun y(v: Float) = h - (v / top) * h
             reading.clip?.let { span ->
-                if (type == CaptureType.LIVE) drawRect(Color.White.copy(alpha = 0.05f), Offset(span.start * w, 0f), androidx.compose.ui.geometry.Size((span.endInclusive - span.start) * w, h))
+                if (type == CaptureType.LIVE) drawRect(Color.White.copy(alpha = 0.05f), Offset(span.start * w, 0f), Size((span.endInclusive - span.start) * w, h))
             }
             drawLine(colors.control, Offset(0f, h), Offset(w, h), 1.dp.toPx())
             val line = Path()
@@ -291,14 +291,15 @@ private fun Motion(reading: SensorReading, type: CaptureType, modifier: Modifier
             }
             touch?.let { t ->
                 drawLine(Color.White.copy(alpha = 0.8f), Offset(t * w, 0f), Offset(t * w, h), 1.dp.toPx())
-                val v = reading.motion[(t * (n - 1)).roundToInt().coerceIn(0, n - 1)]
+                val v = speedAt(t)
                 drawCircle(colors.canvas, 5.dp.toPx(), Offset(t * w, y(v)))
                 drawCircle(Color.White, 3.5.dp.toPx(), Offset(t * w, y(v)))
             }
         }
+        val seconds = stringResource(R.string.unit_s)
+        val dps = stringResource(R.string.unit_dps)
         val shown = touch?.let { t ->
-            val v = reading.motion[(t * (reading.motion.size - 1)).roundToInt().coerceIn(0, reading.motion.size - 1)]
-            "%+.2f s · %d °/s".format(t * reading.spanS - (reading.shutterAt ?: 0f) * reading.spanS, v.roundToInt())
+            "%+.2f %s · %d %s".format(t * reading.spanS - (reading.shutterAt ?: 0f) * reading.spanS, seconds, speedAt(t).roundToInt(), dps)
         }
         BoxWithConstraints(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
             val shutter = reading.shutterAt
@@ -312,11 +313,11 @@ private fun Motion(reading: SensorReading, type: CaptureType, modifier: Modifier
                         style = Visor.type.label,
                         color = colors.textSecondary,
                         modifier = Modifier.offset(x = (maxWidth * shutter - 24.dp).coerceIn(0.dp, maxWidth - 48.dp)).width(48.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
-            if (shown == null) Text("%.1f s".format(reading.spanS), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.align(Alignment.CenterEnd))
+            if (shown == null) Text("%.1f %s".format(reading.spanS, seconds), style = Visor.type.label, color = colors.textTertiary, modifier = Modifier.align(Alignment.CenterEnd))
         }
     }
 }

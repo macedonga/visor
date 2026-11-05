@@ -2,19 +2,18 @@ package com.macedonga.visor.connection
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.provider.CallLog
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
+import com.macedonga.visor.notify.GlassesNotification
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,8 +34,9 @@ import org.json.JSONObject
 class PhoneCalls @Inject constructor(
     @ApplicationContext private val context: Context,
     private val requests: RequestLog,
+    log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
+    private val scope = responderScope(log, "Calls")
 
     private data class Call(val id: Long, val name: String?, val number: String?, val type: Int, val date: Long, val duration: Long, val video: Boolean)
 
@@ -45,59 +45,66 @@ class PhoneCalls @Inject constructor(
         val requestId = runCatching { Wire.parse(message.payload).bytes(1) }.getOrDefault(ByteArray(0))
         val reply = DataXConnection.mirror(message.info.channelId)
         scope.launch {
-            val id = requests.start("calls://sync", SOURCE_CALLS)
-            val calls = if (allowed()) recent(MAX_CALLS) else null
-            val json = JSONArray()
-            calls?.forEach { c ->
-                val entry = JSONObject()
-                    .put("id", c.id)
-                    .put("cachedName", c.name ?: JSONObject.NULL)
-                    .put("phoneNumber", c.number ?: JSONObject.NULL)
-                    .put("type", typeName(c.type))
-                    .put("dateEpochMilliseconds", c.date)
-                    .put("durationSeconds", c.duration)
-                json.put(JSONObject().put("cType", "CDEntryAdd").put("id", c.date.toString()).put("entry", entry))
+            val id = requests.start("calls://sync", RequestSource.CALLS)
+            try {
+                val calls = if (context.allows(Manifest.permission.READ_CALL_LOG)) recent(MAX_CALLS) else null
+                val json = JSONArray()
+                calls?.forEach { c ->
+                    val entry = JSONObject()
+                        .put("id", c.id)
+                        .put("cachedName", c.name ?: JSONObject.NULL)
+                        .put("phoneNumber", c.number ?: JSONObject.NULL)
+                        .put("type", typeName(c.type))
+                        .put("dateEpochMilliseconds", c.date)
+                        .put("durationSeconds", c.duration)
+                    json.put(JSONObject().put("cType", "CDEntryAdd").put("id", c.date.toString()).put("entry", entry))
+                }
+                val body = Wire.fieldBytes(1, requestId) +
+                    Wire.fieldString(2, if (calls != null) json.toString() else "") +
+                    Wire.fieldVarint(3, if (calls != null) SUCCESS else NO_PERMISSION) +
+                    Wire.fieldVarint(4, OS_ANDROID)
+                connection.send(reply, body, messageType = MT_SYNC_RESPONSE)
+                if (calls != null) requests.finish(id, "${calls.size} calls", failed = false, bytes = body.size.toLong())
+                else requests.finish(id, "call history not allowed", failed = true)
+            } catch (e: Exception) {
+                requests.finish(id, "failed: ${e.message}", failed = true)
             }
-            val body = Wire.fieldBytes(1, requestId) +
-                Wire.fieldBytes(2, (if (calls != null) json.toString() else "").encodeToByteArray()) +
-                Wire.fieldVarint(3, if (calls != null) SUCCESS else NO_PERMISSION) +
-                Wire.fieldVarint(4, OS_ANDROID)
-            connection.send(reply, body, messageType = MT_SYNC_RESPONSE)
-            if (calls != null) requests.finish(id, "${calls.size} calls", failed = false, bytes = body.size.toLong())
-            else requests.finish(id, "call history not allowed", failed = true)
         }
     }
 
     /** svc70 type 11, from [PhoneMessages]: [reply] is the request's mirror channel. */
     fun loadCallLog(request: Wire.Fields, reply: Int, mux: DataXConnection) {
         scope.launch {
-            val provider = request.varint(1)
-            val id = requests.start("calls://recent/$provider", SOURCE_CALLS)
-            val count = request.varint(3).toInt().takeIf { it > 0 }?.coerceAtMost(MAX_CALLS) ?: DEFAULT_RECENT
-            val calls = if (provider == NATIVE && allowed()) recent(count) else emptyList()
-            var body = Wire.fieldBytes(1, request.bytes(2))
-            for (c in calls) {
-                // CallLog: 1 name, 3 time, 5 type (1 incoming, 2 outgoing, 3 missed, 0 other), 7 number, 11 video.
-                if (c.type == CallLog.Calls.VOICEMAIL_TYPE) continue
-                body += Wire.fieldBytes(
-                    2,
-                    (if (!c.name.isNullOrEmpty()) Wire.fieldBytes(1, c.name.encodeToByteArray()) else ByteArray(0)) +
-                        Wire.fieldVarint(3, c.date) + Wire.fieldVarint(5, wireType(c.type)) +
-                        (if (!c.number.isNullOrEmpty()) Wire.fieldBytes(7, c.number.encodeToByteArray()) else ByteArray(0)) +
-                        (if (c.video) Wire.fieldVarint(11, 1) else ByteArray(0)),
-                )
+            val provider = request.varint(1).toInt()
+            val id = requests.start("calls://recent/$provider", RequestSource.CALLS)
+            try {
+                val count = request.varint(3).toInt().takeIf { it > 0 }?.coerceAtMost(MAX_CALLS) ?: DEFAULT_RECENT
+                val native = provider == GlassesNotification.PROVIDER_NATIVE
+                val allowed = context.allows(Manifest.permission.READ_CALL_LOG)
+                val calls = if (native && allowed) recent(count).filter { it.type != CallLog.Calls.VOICEMAIL_TYPE } else emptyList()
+                var body = Wire.fieldBytes(1, request.bytes(2))
+                for (c in calls) {
+                    // CallLog: 1 name, 3 time, 5 type (1 incoming, 2 outgoing, 3 missed, 0 other), 7 number, 11 video.
+                    body += Wire.fieldBytes(
+                        2,
+                        (if (!c.name.isNullOrEmpty()) Wire.fieldString(1, c.name) else ByteArray(0)) +
+                            Wire.fieldVarint(3, c.date) + Wire.fieldVarint(5, wireType(c.type)) +
+                            (if (!c.number.isNullOrEmpty()) Wire.fieldString(7, c.number) else ByteArray(0)) +
+                            (if (c.video) Wire.fieldVarint(11, 1) else ByteArray(0)),
+                    )
+                }
+                mux.send(reply, body, messageType = MT_LOAD_CALL_LOG_RESPONSE)
+                val outcome = when {
+                    !native -> "not the phone's, none"
+                    !allowed -> "call history not allowed"
+                    else -> "${calls.size} calls"
+                }
+                requests.finish(id, outcome, failed = native && !allowed, bytes = body.size.toLong())
+            } catch (e: Exception) {
+                requests.finish(id, "failed: ${e.message}", failed = true)
             }
-            mux.send(reply, body, messageType = MT_LOAD_CALL_LOG_RESPONSE)
-            val outcome = when {
-                provider != NATIVE -> "not the phone's, none"
-                !allowed() -> "call history not allowed"
-                else -> "${calls.size} calls"
-            }
-            requests.finish(id, outcome, failed = provider == NATIVE && !allowed(), bytes = body.size.toLong())
         }
     }
-
-    private fun allowed() = context.checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED
 
     private fun recent(count: Int): List<Call> {
         val calls = ArrayList<Call>()
@@ -144,9 +151,7 @@ class PhoneCalls @Inject constructor(
         private const val SUCCESS = 0L
         private const val NO_PERMISSION = 1L
         private const val OS_ANDROID = 1L
-        private const val NATIVE = 3L
         private const val MAX_CALLS = 100
         private const val DEFAULT_RECENT = 15
-        private const val SOURCE_CALLS = -5
     }
 }

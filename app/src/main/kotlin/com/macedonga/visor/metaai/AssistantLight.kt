@@ -46,10 +46,7 @@ fun assistantMood(
     else -> AssistantMood.REST
 }
 
-/**
- * The home's light, as the assistant's: dim at rest, breathing quickly while it listens, its drift racing while it
- * thinks, steady while it speaks (each word a beat on top), leaning towards [tint] when a photo is in the question.
- */
+/** The assistant light for [mood], leaning towards [tint] when the question had a photo. */
 fun lookOf(mood: AssistantMood, c: VisorColors, tint: Color?): LightLook {
     val core = tint?.let { lerp(c.lightNeutral, it, 0.5f) } ?: c.lightNeutral
     val rim = tint?.let { lerp(c.lightWarm, it, 0.75f) } ?: c.lightWarm
@@ -57,15 +54,13 @@ fun lookOf(mood: AssistantMood, c: VisorColors, tint: Color?): LightLook {
         AssistantMood.UNSET -> LightLook(c.lightCold, c.lightCold, level = 0.1f, spread = 0.8f, warp = 0.1f)
         AssistantMood.REST -> LightLook(core, rim, level = 0.34f, spread = 0.9f, breathSeconds = 9f, breathDepth = 0.08f, warp = 0.16f)
         AssistantMood.LISTENING -> LightLook(
-            lerp(core, HUE_LISTENING, 0.16f), lerp(rim, HUE_LISTENING, 0.3f),
+            lerp(core, c.lightCold, 0.16f), lerp(rim, c.lightCold, 0.3f),
             level = 0.62f, spread = 1f, breathSeconds = 1.8f, breathDepth = 0.35f, warp = 0.22f,
         )
         AssistantMood.THINKING -> LightLook(core, rim, level = 0.52f, spread = 0.95f, breathSeconds = 1.1f, breathDepth = 0.2f, warp = 0.5f, pace = 7f)
         AssistantMood.SPEAKING -> LightLook(core, rim, level = 0.68f, spread = 1.02f, warp = 0.24f, pace = 2f)
     }
 }
-
-private val HUE_LISTENING = Color(0xFF8FB0FF)
 
 /** How much of the newest answer shows: all of it, except while it is being spoken or written out. */
 @Stable
@@ -81,11 +76,7 @@ class Speech {
     fun shownOf(turn: TurnRecord): Int = if (turn.interactionId == id) shown else Int.MAX_VALUE
 }
 
-/**
- * Follows the newest answer word by word. The glasses do not say how far they are into their own voice, but they
- * do say when they start and stop responding (svc28 assistant attention); between the two the words go at the pace
- * the glasses spoke the last answers, measured each time. An answer for the phone is written out quickly instead.
- */
+/** Reveals the newest answer word by word while the glasses speak it (svc28 attention); phone answers type out fast. */
 @Composable
 fun rememberSpeech(turns: List<TurnRecord>, attention: () -> String?, light: LightFrame): Speech {
     val speech = remember { Speech() }
@@ -93,10 +84,14 @@ fun rememberSpeech(turns: List<TurnRecord>, attention: () -> String?, light: Lig
     val prefs = remember { context.getSharedPreferences("meta_ai", Context.MODE_PRIVATE) }
     val newest = turns.lastOrNull()
     val current by rememberUpdatedState(newest)
+    // Already answered when the page opened: shown whole unless the glasses are still saying it.
+    val answeredAtEntry = remember { newest?.takeIf { it.answer.isNotEmpty() }?.interactionId }
     LaunchedEffect(newest?.interactionId, newest?.answer?.isNotEmpty()) {
         val turn = current ?: return@LaunchedEffect
         val answer = turn.answer
-        if (answer.isEmpty() || turn.problem.isNotEmpty() || System.currentTimeMillis() - turn.at > FRESH_MS) {
+        if (answer.isEmpty() || turn.problem.isNotEmpty() || System.currentTimeMillis() - turn.at > FRESH_MS ||
+            (turn.interactionId == answeredAtEntry && attention() != "RESPONDING")
+        ) {
             speech.id = null
             return@LaunchedEffect
         }

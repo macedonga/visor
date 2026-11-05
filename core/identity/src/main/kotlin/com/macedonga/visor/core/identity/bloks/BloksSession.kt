@@ -1,8 +1,9 @@
 package com.macedonga.visor.core.identity.bloks
 
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.RejectedExecutionException
 
 /** What a login screen may ask of the phone itself, and what it may ask about it. */
 interface BloksHost {
@@ -31,11 +32,7 @@ interface BloksHost {
     val reduceMotion: Boolean get() = false
 }
 
-/**
- * Meta's native login, driven the way the Meta AI app drives it: the server sends Bloks screens and scripts, this
- * runs them, and the login ends in one of the app's completion actions. All script evaluation happens on one thread;
- * network calls run beside it and post their results back. Every action call goes to [trace]; [log] gets the story.
- */
+/** Meta's native login: runs the server's Bloks screens and scripts on one thread until a completion action ends it. */
 class BloksSession(
     internal val client: BloksClient,
     internal val deviceId: String,
@@ -46,17 +43,18 @@ class BloksSession(
 ) {
     sealed interface Outcome {
         /** The server handed an OIDC code for the app's redirect (`DeliverOidcAuthCode`). */
-        class Code(val code: String, val redirectUri: String, val appId: String) : Outcome
+        class Code(val code: String) : Outcome
 
         /** The server handed the Meta account token itself (`CompleteMetaLogin` and friends). */
-        class Token(val accessToken: String, val userId: String?) : Outcome
+        class Token(val accessToken: String) : Outcome
 
         class Failed(val reason: String) : Outcome
 
         data object Cancelled : Outcome
     }
 
-    class Dialog(val title: String?, val message: String?, val buttons: List<Pair<String, Lambda?>>)
+    /** [failed]: a request failed with no error handler of its own; the UI says so in its words. */
+    class Dialog(val title: String?, val message: String?, val buttons: List<Pair<String?, Lambda?>>, val failed: Boolean = false)
 
     /** What the UI shows: the top screen drawn, a dialog, whether a request is out. [version] changes on every change. */
     class State(
@@ -65,15 +63,12 @@ class BloksSession(
         val dialog: Dialog?,
         val busy: Boolean,
         val version: Long,
-        /** The input a script asked to focus (ShowKeyboard), and a count that moves on every such request. */
-        val focus: Node? = null,
-        val focusCount: Int = 0,
-        /** Moves on every DismissKeyboard. */
-        val dismissCount: Int = 0,
         /** A toast's text and how long it shows; [toastCount] moves on every new one. */
-        val toast: String? = null,
-        val toastMillis: Long = 0,
-        val toastCount: Int = 0,
+        val toast: String?,
+        val toastMillis: Long,
+        val toastCount: Int,
+        /** A bottom sheet's header title, which sits outside its tree. */
+        val title: String?,
     )
 
     internal val thread = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "bloks").apply { isDaemon = true } }
@@ -84,11 +79,10 @@ class BloksSession(
     internal var dialog: Dialog? = null
     private var pending = 0
     private var version = 0L
+
+    @Volatile
     private var done = false
 
-    internal var focus: Node? = null
-    internal var focusCount = 0
-    internal var dismissCount = 0
     internal var toast: String? = null
     internal var toastMillis = 0L
     internal var toastCount = 0
@@ -97,26 +91,22 @@ class BloksSession(
     internal val prefs = HashMap<String, Any?>()
     internal val timers = HashMap<String, Timer>()
     internal val animations = HashMap<String, Animation>()
+    private val quiet = HashMap<String, Int>()
 
     /** `session_store.Get`: one mutable map the scripts share for the whole login. */
     internal val sessionStore = HashMap<Any?, Any?>()
 
-    @Volatile
-    var state: State = State(null, 0, null, false, 0)
-        private set
+    /** Every text the user typed this login, kept out of the trace. */
+    private val typed = IdentityHashMap<Node, String>()
+
+    /** Component types already reported as not drawn. */
+    internal val undrawn = HashSet<Int>()
 
     var onState: (State) -> Unit = {}
     var onOutcome: (Outcome) -> Unit = {}
 
     /** Opens the login: the same first request the Meta AI app makes, with [next] the OIDC authorize URL. */
     fun start(next: String) = post {
-        val handled = Interpreter.BUILTINS + Actions.table.keys
-        val missing = Functions.names().filterNot { it in handled }
-        // Version markers and callback type names sit in the same table but are never called.
-        val names = missing.filter { it.startsWith("bk.versioning.") || it.startsWith("bk.callbacks.") || it.startsWith("ig.callbacks.") }
-        val callable = missing - names.toSet()
-        log("runtime handles ${Functions.count - missing.size} of ${Functions.count} Bloks functions; ${names.size} more are names never called; ${callable.size} callable not handled")
-        trace("not handled: ${callable.sorted().joinToString(" ").ifEmpty { "none" }}; never called: ${names.size}")
         val first = linkedMapOf<String, Any?>(
             "logging_session_id" to UUID.randomUUID().toString(),
             "logging_user_intent" to "meta_ai",
@@ -139,6 +129,7 @@ class BloksSession(
 
     fun setText(node: Node, text: String) = post {
         screens.lastOrNull()?.texts?.put(node, text)
+        typed[node] = text
     }
 
     fun dismissDialog() = post { dialog = null }
@@ -160,21 +151,30 @@ class BloksSession(
         }
     }
 
-    /** Takes the top screen off: its dismiss callback runs, its timers stop; with the last one the login is cancelled. */
+    /** Takes the top screen off; with the last one the login is cancelled. */
     internal fun pop() {
-        val top = screens.removeLastOrNull() ?: return
-        timers.values.filter { it.screen === top }.forEach { it.cancel() }
-        top.onClose?.let { interpreter.call(it, emptyList()) }
+        remove(screens.lastOrNull() ?: return)
         if (screens.isEmpty()) finish(Outcome.Cancelled)
+    }
+
+    /** Takes [screen] off the stack: its timers stop, its dismiss callback runs. */
+    internal fun remove(screen: Screen) {
+        screens.remove(screen)
+        timers.values.removeAll { t -> (t.screen === screen).also { if (it) t.cancel() } }
+        screen.onClose?.let { interpreter.call(it, emptyList()) }
     }
 
     /** The page waited and the top screen still has nothing to draw, with nothing on its way: name it in the log. */
     fun stuck() {
         if (done) return
-        thread.execute {
-            val top = screens.lastOrNull()?.appId
-            log("$top shows nothing to draw")
-            trace("STUCK $top: nothing to draw, nothing pending")
+        try {
+            thread.execute {
+                val top = screens.lastOrNull()?.appId
+                log("$top shows nothing to draw")
+                trace("STUCK $top: nothing to draw, nothing pending")
+            }
+        } catch (_: RejectedExecutionException) {
+            // Closed meanwhile.
         }
     }
 
@@ -186,47 +186,48 @@ class BloksSession(
 
     internal fun post(block: () -> Unit) {
         if (done) return
-        thread.execute {
-            try {
-                block()
-            } catch (error: BloksException) {
-                log("script failed: ${error.message}")
-                trace("SCRIPT FAILED: ${error.message}")
-            } catch (error: Exception) {
-                log("script failed: ${error.javaClass.simpleName}: ${error.message}")
-                trace("SCRIPT FAILED: ${error.javaClass.simpleName}: ${error.message}")
+        try {
+            thread.execute {
+                try {
+                    block()
+                } catch (error: Throwable) {
+                    val why = if (error is BloksException) error.message else "${error.javaClass.simpleName}: ${error.message}"
+                    log("script failed: $why")
+                    trace("SCRIPT FAILED: $why")
+                }
+                publish()
+                flushCounts()
             }
-            publish()
-            flushCounts()
+        } catch (_: RejectedExecutionException) {
+            // Closed meanwhile.
         }
     }
 
     private fun publish() {
         version++
-        state = State(render(), screens.size, dialog, pending > 0, version, focus, focusCount, dismissCount, toast, toastMillis, toastCount)
-        onState(state)
+        val top = screens.lastOrNull()
+        onState(State(render(), screens.size, dialog, pending > 0, version, toast, toastMillis, toastCount, top?.title))
     }
 
     /** Built-ins and chatty actions run by the thousand: one line of counts per run, not one line each. */
     private fun flushCounts() {
         val counts = interpreter.drainCounts()
-        if (counts.isNotEmpty()) {
-            trace("built-ins: " + counts.entries.sortedByDescending { it.value }.joinToString(" ") { "${it.key.removePrefix("bk.action.")}x${it.value}" })
-        }
+        if (counts.isNotEmpty()) trace("built-ins: " + tally(counts))
         if (quiet.isNotEmpty()) {
-            trace("quiet actions: " + quiet.entries.sortedByDescending { it.value }.joinToString(" ") { "${it.key.removePrefix("bk.action.")}x${it.value}" })
+            trace("quiet actions: " + tally(quiet))
             quiet.clear()
         }
     }
+
+    private fun tally(m: Map<String, Int>) = m.entries.sortedByDescending { it.value }.joinToString(" ") { "${it.key.removePrefix("bk.action.")}x${it.value}" }
 
     /** The top screen as [Ui]. Lifecycle scripts change state as they run, so the walk repeats until they are done. */
     private fun render(): Ui? {
         val screen = screens.lastOrNull() ?: return null
         val tree = screen.payload.tree ?: return null
         var ui: Ui? = null
-        val title = screen.title
         for (pass in 0 until 4) {
-            val builder = UiBuilder(interpreter, screen, darkMode, { text(screen, it) }, screen.started, { trace("render: $it") })
+            val builder = UiBuilder(this, screen)
             ui = try {
                 builder.build(tree, screen)
             } catch (error: Exception) {
@@ -235,10 +236,6 @@ class BloksSession(
                 return ui
             }
             if (!builder.ranLifecycle) break
-        }
-        // A bottom sheet's header title sits outside its content tree.
-        if (title != null && ui != null) {
-            ui = Box(Style(), column = true, justify = null, align = null, children = listOf(Text(Style(), listOf(Span(title, 22f, "bold", null, false, false, null)), Int.MAX_VALUE, null, null), ui), onClick = null, enabled = true, scroll = false)
         }
         return ui
     }
@@ -269,7 +266,7 @@ class BloksSession(
                     onFailure = { error ->
                         log("$label failed: ${error.message}")
                         trace("ANSWER $label FAILED: ${error.javaClass.simpleName}: ${error.message}")
-                        if (failed != null) failed(error) else dialog = Dialog(null, error.message ?: "Request failed", listOf("OK" to null))
+                        if (failed != null) failed(error) else dialog = Dialog(null, null, listOf(null to null), failed = true)
                     },
                 )
             }
@@ -292,25 +289,26 @@ class BloksSession(
         val replaced = HashMap<String, List<Any?>>()
 
         /** Children put in by the other tree actions (append, insert, remove), by the parent node itself. */
-        val children = java.util.IdentityHashMap<Node, List<Any?>>()
+        val children = IdentityHashMap<Node, List<Any?>>()
 
         /** Attributes set by `component.SetAttr`, by node. */
-        val attrs = java.util.IdentityHashMap<Node, MutableMap<Int, Any?>>()
+        val attrs = IdentityHashMap<Node, MutableMap<Int, Any?>>()
 
-        /** A bottom sheet's header title, its dismiss callback, and a back handler the screen set for itself. */
+        /** Whether it is a bottom sheet, a sheet's header title, its dismiss callback, and a back handler it set for itself. */
+        var sheet = false
         var title: String? = null
         var onClose: Lambda? = null
         var backOverride: Lambda? = null
 
-        /** A screen of the legacy stack's back-stack name, which CloseScreenV2 can pop through. */
+        /** A legacy-stack screen's back-stack name, which CloseScreenV2 pops to. */
         var name: String? = null
 
         /** `bloks.GetValue` results: each value is computed once per screen. */
         val values = HashMap<String, Any?>()
 
-        /** The children a node shows now: what a tree action put there, else its own. */
-        fun childrenOf(node: Node): List<Any?> =
-            children[node] ?: node[BloksSession.ID]?.toString()?.let { replaced[it] } ?: (node[primaryChildren(node.type)] as? List<*>).orEmpty()
+        /** The children a node shows now: what a tree action put there, else [own]. */
+        fun childrenOf(node: Node, own: Any? = node[primaryChildren(node.type)]): List<Any?> =
+            children[node] ?: node[ID]?.toString()?.let { replaced[it] } ?: (own as? List<*>) ?: listOfNotNull(own)
 
         init {
             declare(payload, this)
@@ -370,19 +368,18 @@ class BloksSession(
         return screen.vars[id]
     }
 
-    internal fun push(appId: String, payload: Payload, params: Map<*, *>) {
+    /** Puts a screen on top; [setup] configures it before its action runs. */
+    internal fun push(appId: String, payload: Payload, params: Map<*, *>, setup: Screen.() -> Unit = {}) {
         val screen = Screen(appId, payload, params)
         screens += screen
+        screen.setup()
         log("screen $appId")
         trace("SCREEN $appId (depth ${screens.size})")
         payload.action?.let { interpreter.run(it.expr, screen, listOf(screen)) }
         fetchComponents(payload, screen, screen)
     }
 
-    /**
-     * A payload's `component_queries`: each async component is fetched and replaces the children of its target, the
-     * skeleton the screen shows until then. The password step is one: without this it never leaves its skeleton.
-     */
+    /** Fetches each async component and puts it in place of its target's skeleton. */
     private fun fetchComponents(payload: Payload, screen: Screen, ctx: Ctx) {
         for (q in payload.componentQueries) {
             val target = q.target ?: continue
@@ -402,15 +399,15 @@ class BloksSession(
 
     /** An action's answer: its data and props go into the screen, then its script runs with the screen as context. */
     internal fun runAction(payload: Payload, screen: Screen?, props: Map<*, *>?) {
+        val ctx = Nested(payload, screen, screen)
+        declare(payload, ctx)
         if (screen != null) {
-            declare(payload, Nested(payload, screen, screen))
             props?.forEach { (k, v) ->
                 val id = payload.props[k.toString()] ?: k.toString()
                 screen.vars[id] = v
             }
         }
-        val ctx = Nested(payload, screen, screen)
-        payload.action?.let { interpreter.run(it.expr, ctx, if (screen != null) listOf(screen) else emptyList()) }
+        payload.action?.let { interpreter.run(it.expr, ctx, listOfNotNull(screen)) }
     }
 
     /** Every action call goes through here: what was called, with what, and how it ended. */
@@ -421,11 +418,10 @@ class BloksSession(
             return handler?.invoke(ActionCall(this, screen, ctx, name, args))
         }
         // What the user typed (an email, a code, a password) is copied around by the scripts: never shown.
-        val typed = screen?.texts?.values?.filter { it.isNotEmpty() }?.toSet().orEmpty()
-        val shown = if (name in SECRET_ARGS) "<hidden>" else args.joinToString(", ") { brief(it, typed) }
+        val hidden = (typed.values + screen?.texts?.values.orEmpty()).filter { it.isNotEmpty() }.toSet()
+        val shown = if (name in SECRET_ARGS) "<hidden>" else args.joinToString(", ") { brief(it, hidden) }
         if (handler == null) {
-            // Something this runtime does not do: the app would stop the script here; going on keeps what follows
-            // (a loading flag set back, the next screen) working, and the trace says it was skipped.
+            // Skipped rather than stopping the script, so what follows (a loading flag, the next screen) still runs.
             log("unsupported $name, skipped")
             trace("call $name($shown) UNSUPPORTED, skipped")
             return null
@@ -436,19 +432,17 @@ class BloksSession(
             trace("call $name($shown) FAILED: ${error.javaClass.simpleName}: ${error.message}")
             throw error
         }
-        trace("call $name($shown) ok -> ${if (name in SECRET_RESULT) "<hidden>" else brief(result, typed)}")
+        trace("call $name($shown) ok -> ${if (name in SECRET_RESULT) "<hidden>" else brief(result, hidden)}")
         return result
     }
 
-    private val quiet = HashMap<String, Int>()
-
     /** A value in a trace line: short, and with no secret in it (long strings cut, maps by their keys only). */
-    private fun brief(x: Any?, typed: Set<String> = emptySet()): String = when (x) {
+    private fun brief(x: Any?, hidden: Set<String>): String = when (x) {
         null -> "null"
         is Boolean, is Number -> x.toString()
         // A password the scripts carry is tagged #PWD; long strings (tokens, server context) keep only their start.
         is String -> when {
-            "#PWD" in x || x in typed -> "<typed>"
+            "#PWD" in x || x in hidden -> "<typed>"
             EMAIL.containsMatchIn(x) -> "<email>"
             x.length > 40 -> "\"${x.take(8)}...\"(${x.length})"
             else -> "\"$x\""
@@ -474,12 +468,15 @@ class BloksSession(
 
     private fun walk(screen: Screen, node: Node, test: (Node) -> Boolean): Node? {
         if (test(node)) return node
-        val seen = HashSet<Any?>()
-        for (value in listOf<Any?>(screen.children[node]) + node.attrs.values) {
-            when (value) {
-                is Node -> walk(screen, value, test)?.let { return it }
-                is List<*> -> value.forEach { item -> if (item is Node && seen.add(item)) walk(screen, item, test)?.let { return it } }
-                is Instance -> value.payload.tree?.let { walk(screen, it, test) }?.let { return it }
+        val primary = primaryChildren(node.type)
+        // The children the screen shows now, then every other attribute.
+        val others = node.attrs.filter { (k, _) -> k != primary }.values
+        for (value in listOf<Any?>(screen.childrenOf(node)) + others) {
+            for (item in value as? List<*> ?: listOf(value)) {
+                when (item) {
+                    is Node -> walk(screen, item, test)?.let { return it }
+                    is Instance -> item.payload.tree?.let { walk(screen, it, test) }?.let { return it }
+                }
             }
         }
         return null
@@ -488,7 +485,7 @@ class BloksSession(
     companion object {
         const val START = "com.bloks.www.meta.access.aymh_with_nta_fallback.async"
 
-        /** The attribute every component carries its id in (`pjkmhu:3`), what `bloks.Find` matches. */
+        /** The attribute every component carries its id in, what bloks.Find matches. */
         const val ID = 33
 
         /** A text input's initial text, and its "sensitive" flag (a password: GetText answers null). */
@@ -497,11 +494,11 @@ class BloksSession(
 
         internal val MACHINE_ID = UUID.randomUUID().toString()
 
-        /** Where a component keeps the children tree actions edit (`IIV.A0B`). */
+        /** Where a component keeps the children tree actions edit. */
         fun primaryChildren(type: Int): Int = when (type) {
             13327 -> 35
             13708 -> 41
-            14093, 16675 -> 36
+            UiBuilder.SCREEN, UiBuilder.SCREEN_QUERY -> 36
             16444 -> 42
             else -> 32
         }
@@ -517,11 +514,10 @@ class BloksSession(
         private val SECRET_RESULT = setOf("bk.action.textinput.GetText", "bk.action.textinput.GetSensitiveText", "bk.action.text.GetText")
 
         /** Logging, metrics and plain reads, run by the hundred: counted, not listed. */
-        private val QUIET = setOf(
-            "bk.action.logging.LogEvent", "bk.action.qpl.MarkerStartV2", "bk.action.qpl.MarkerAnnotate", "bk.action.qpl.MarkerPoint",
-            "bk.action.qpl.MarkerEndV2", "bk.action.bloks.GetVariable2", "bk.action.bloks.GetVariableWithScope",
-            "bk.action.core.GetTemplateArg", "bk.action.bloks.GetScript", "bk.action.tree.Make", "bk.action.ref.Read",
-            "bk.action.bloks.GetParameter", "bk.action.mwa.IsDarkModeEnabled",
+        private val QUIET = LOGGING + setOf(
+            "bk.action.bloks.GetVariable2", "bk.action.bloks.GetVariableWithScope", "bk.action.core.GetTemplateArg",
+            "bk.action.bloks.GetScript", "bk.action.tree.Make", "bk.action.ref.Read", "bk.action.bloks.GetParameter",
+            "bk.action.mwa.IsDarkModeEnabled",
         )
     }
 }

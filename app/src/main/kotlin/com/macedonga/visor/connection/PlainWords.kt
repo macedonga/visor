@@ -4,10 +4,10 @@ import com.macedonga.visor.core.identity.Diagnosis
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.transport.ConnectFailure
 
-/** The link's values in plain words, for the test client's screens and its event log. */
+/** The link's values in plain words, for the event log. */
 fun LinkState.words(): String = when (this) {
     LinkState.DISCONNECTED -> "not connected"
-    LinkState.CONNECTING -> "reaching the glasses over Bluetooth"
+    LinkState.CONNECTING -> "reaching the glasses"
     LinkState.LINK_SETUP -> "setting up the encrypted link"
     LinkState.TRUST -> "proving this phone's key"
     LinkState.READY -> "ready"

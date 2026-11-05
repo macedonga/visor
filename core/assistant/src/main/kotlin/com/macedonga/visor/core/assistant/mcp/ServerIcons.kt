@@ -44,7 +44,7 @@ internal class ServerIcons(http: OkHttpClient) {
                 val tag = m.value
                 val rel = REL.find(tag)?.groupValues?.get(1)?.lowercase() ?: return@mapNotNull null
                 val href = HREF.find(tag)?.groupValues?.get(1) ?: return@mapNotNull null
-                if ("icon" !in rel || href.endsWith(".svg")) return@mapNotNull null
+                if ("icon" !in rel || href.substringBefore('?').endsWith(".svg")) return@mapNotNull null
                 val url = base.resolve(href.replace("&amp;", "&"))?.toString() ?: return@mapNotNull null
                 (if ("apple-touch" in rel) 0 else 1) to url
             }.sortedBy { it.first }.map { it.second }.toList()

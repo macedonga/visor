@@ -4,11 +4,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-/**
- * Black, white and greys; colour comes from the glasses' light and the photos. [signal] is the one
- * hue of the interface and marks state only (recording, live, a critical battery, an error), never
- * a button.
- */
+/** Black, white and greys; [signal] marks state only (recording, live, critical battery, errors), never a button. */
 @Immutable
 data class VisorColors(
     val canvas: Color = Color(0xFF000000),

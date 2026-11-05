@@ -10,12 +10,10 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.MediaStore
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Base64
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.assistant.AssistantConfigStore
+import com.macedonga.visor.core.connection.CAMERA_VIDEO_STARTED
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.Shutter
 import com.macedonga.visor.core.connection.VideoKind
@@ -27,6 +25,9 @@ import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.DeveloperIntents as I
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -80,6 +81,9 @@ class DeveloperMode @Inject constructor(
     // Imports already said to have failed, until the next import starts.
     private val failed = Collections.synchronizedSet(HashSet<String>())
 
+    // The video shortcut reads Stop recording.
+    @Volatile private var stopShown = false
+
     init {
         open(_on.value)
     }
@@ -128,10 +132,17 @@ class DeveloperMode @Inject constructor(
             shortcuts.addDynamicShortcuts(
                 listOf(
                     shortcut(PHOTO, R.string.shutter_take_photo, R.mipmap.ic_shortcut_photo, I.TAKE_PHOTO),
-                    shortcut(VIDEO, R.string.shutter_record_video, R.mipmap.ic_shortcut_video, I.TOGGLE_VIDEO),
+                    videoShortcut(),
                 ),
             )
         }
+    }
+
+    /** The video shortcut toggles: it says Stop recording while a video runs. */
+    private fun videoShortcut(): ShortcutInfo {
+        stopShown = connection.state.value.device?.camera == CAMERA_VIDEO_STARTED
+        val label = if (stopShown) R.string.live_stop_recording else R.string.shutter_record_video
+        return shortcut(VIDEO, label, R.mipmap.ic_shortcut_video, I.TOGGLE_VIDEO)
     }
 
     private fun shortcut(id: String, label: Int, icon: Int, action: String) = ShortcutInfo.Builder(context, id)
@@ -198,12 +209,15 @@ class DeveloperMode @Inject constructor(
             var was: String? = null
             connection.state.map { it.device?.camera }.distinctUntilChanged().collect { camera ->
                 val event = when {
-                    camera == VIDEO_RUNNING -> I.VIDEO_STARTED
+                    camera == CAMERA_VIDEO_STARTED -> I.VIDEO_STARTED.takeIf { was != CAMERA_VIDEO_STARTED }
                     // No state at all is a link gone, not a video ended.
-                    was == VIDEO_RUNNING && camera != null -> I.VIDEO_STOPPED
+                    was == CAMERA_VIDEO_STARTED && camera != null -> I.VIDEO_STOPPED
                     else -> null
                 }
-                was = camera
+                if (camera != null) was = camera
+                if (camera != null && on.value && (camera == CAMERA_VIDEO_STARTED) != stopShown) {
+                    runCatching { context.getSystemService(ShortcutManager::class.java)?.updateShortcuts(listOf(videoShortcut())) }
+                }
                 if (event != null && on.value) tell(event, I.EXTRA_TIME to System.currentTimeMillis())
             }
         }
@@ -284,19 +298,14 @@ class DeveloperMode @Inject constructor(
         if (config.state.value.params.isEmpty()) {
             // A switch Visor never read, it never turned on.
             if (!on) return
-            // The configuration comes in a bug report of several megabytes: never on top of photos to bring over.
-            combine(media.importing, media.captures) { importing, captures -> !importing && captures.none { it.isNew && it.isMedia } }
-                .first { it }
-            log.add("Developer mode: reading the glasses' configuration once")
-            config.read()
-            withTimeoutOrNull(READ_MS) { config.state.first { it.params.isNotEmpty() } } ?: return
+            if (!config.readOnce(READ_MS) { log.add("Developer mode: reading the glasses' configuration once") }) return
         }
-        val state = config.state.first { it.busy.isEmpty() }
+        val state = config.state.first { it.busy == null }
         if (ROBUSTA !in state.params || (state.values[ROBUSTA] == true) == on) return
         log.add(if (on) "Developer mode: letting the glasses take photos for the phone" else "Developer mode: the glasses no longer take photos for the phone")
         config.apply(mapOf(ROBUSTA to on))
-        withTimeoutOrNull(WRITE_MS) { config.state.first { s -> s.busy.isEmpty() && s.values[ROBUSTA] == on } }
-            ?: log.add("Developer mode: the glasses did not take the change: ${config.state.value.note}")
+        withTimeoutOrNull(WRITE_MS) { config.state.first { s -> s.busy == null && s.values[ROBUSTA] == on } }
+            ?: log.add("Developer mode: the glasses did not take the change: ${config.state.value.note?.why.orEmpty()}")
     }
 
     private companion object {
@@ -306,7 +315,6 @@ class DeveloperMode @Inject constructor(
         const val PHOTO = "shutter_photo"
         const val VIDEO = "shutter_video"
         val SHORTCUTS = listOf(PHOTO, VIDEO)
-        const val VIDEO_RUNNING = "CAPTURE_VIDEO_STARTED"
         const val NOT_FOUND = "NOT_FOUND"
         const val WAKE_MS = 20_000L
         const val LIST_MS = 15_000L

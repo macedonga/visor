@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +25,10 @@ data class BroadcastState(
     val since: Long = 0,
     val kbps: Int = 0,
     val problem: String = "",
-)
+) {
+    /** Starting, on air or getting back on: not off, not given up. */
+    val airing: Boolean get() = phase != BroadcastPhase.OFF && phase != BroadcastPhase.FAILED
+}
 
 /**
  * The stream going out to an RTMP server while it runs: frames are queued here and sent from one coroutine, so a
@@ -42,6 +46,7 @@ class Broadcast(private val scope: CoroutineScope) {
     private var queue = Channel<Item>(Channel.UNLIMITED)
     private val queued = AtomicLong()
     private var job: Job? = null
+    @Volatile private var current: RtmpPublisher? = null
     @Volatile private var skipToKey = false
 
     val running: Boolean get() = job?.isActive == true
@@ -74,12 +79,15 @@ class Broadcast(private val scope: CoroutineScope) {
         job = null
         queue.close()
         _state.value = BroadcastState()
+        // Blocking socket calls ignore cancel: a stalled server is cut off once the goodbye has had its chance.
+        current?.let { rtmp -> scope.launch { delay(1_000); rtmp.abort() } }
+        current = null
     }
 
     private suspend fun run(target: BroadcastTarget, config: ByteArray, frameRate: Int, bitrate: Int, audioFormat: () -> AacFormat?) {
         var tries = 0
-        while (scope.isActive) {
-            val rtmp = RtmpPublisher(target.url, target.key)
+        while (currentCoroutineContext().isActive) {
+            val rtmp = RtmpPublisher(target.url, target.key).also { current = it }
             var transcoder: AvcTranscoder? = null
             try {
                 rtmp.connect(scope)
@@ -143,7 +151,7 @@ class Broadcast(private val scope: CoroutineScope) {
                 }
                 return
             } catch (e: Exception) {
-                if (!scope.isActive || job?.isCancelled == true) return
+                if (!currentCoroutineContext().isActive) return
                 val why = rtmp.failure ?: e.message ?: e.javaClass.simpleName
                 if (++tries > RETRIES) {
                     _state.update { it.copy(phase = BroadcastPhase.FAILED, problem = why) }

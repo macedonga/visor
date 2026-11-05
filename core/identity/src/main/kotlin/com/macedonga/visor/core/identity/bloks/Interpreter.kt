@@ -1,7 +1,21 @@
 package com.macedonga.visor.core.identity.bloks
 
+import java.net.URI
+import java.net.URLDecoder
+import java.text.DateFormat
+import java.text.NumberFormat
+import java.text.SimpleDateFormat
 import java.util.Base64
 import java.util.Collections
+import java.util.Currency
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.sign
+import kotlin.math.truncate
 
 /** A script function: its body, the args bound in front of a call's, and the context it resolves names in. */
 class Lambda(val body: Expr, val bound: List<Any?>, val ctx: Ctx)
@@ -24,11 +38,7 @@ private class DefaultMark(val body: Expr)
 
 private typealias Builtin = Interpreter.(List<Any?>) -> Any?
 
-/**
- * The Lispy evaluator of Meta's Bloks runtime, as `X/AbstractC34114IYn` does it: one frame per lambda call holding
- * exactly its args, read with GetArg and grown by SetArg; closures capture no frame, only their context. Laziness
- * exists only in the special forms. Pure built-ins are in [BUILTINS]; everything else goes to the context.
- */
+/** Bloks script evaluator: one frame per lambda call, lazy special forms, pure built-ins in [BUILTINS], the rest to the context. */
 class Interpreter {
     private val frames = ArrayList<MutableList<Any?>>()
 
@@ -58,7 +68,7 @@ class Interpreter {
 
     fun eval(e: Expr, ctx: Ctx): Any? = when (e) {
         is Lit -> e.value
-        is Call -> e.local?.let { local -> call(ctx.script(local), e.args.map { eval(it, ctx) }) } ?: special(e, ctx)
+        is Call -> if (e.local != null) call(ctx.script(e.local), e.args.map { eval(it, ctx) }) else special(e, ctx)
     }
 
     private fun special(c: Call, ctx: Ctx): Any? {
@@ -85,19 +95,12 @@ class Interpreter {
                 last
             }
             "bk.action.core.If" -> if (truthy(arg(0))) arg(1) else arg(2)
-            "bk.action.core.Coalesce" -> {
-                var found: Any? = null
-                for (x in a) {
-                    found = eval(x, ctx)
-                    if (found != null) break
-                }
-                found
-            }
+            "bk.action.core.Coalesce" -> a.firstNotNullOfOrNull { eval(it, ctx) }
             "bk.action.core.Pattern" -> PatternMark(arg(0), body(a[1]))
             "bk.action.core.Default" -> DefaultMark(body(a[0]))
             "bk.action.core.Match" -> {
                 val value = arg(0)
-                val hit = (arg(1) as? List<*>).orEmpty().firstOrNull { it is PatternMark && equal(it.value, value) } as PatternMark?
+                val hit = (arg(1) as? List<*>).orEmpty().filterIsInstance<PatternMark>().firstOrNull { equal(it.value, value) }
                 if (hit != null) eval(hit.body, ctx) else eval((arg(2) as? DefaultMark ?: throw BloksException("Match without default")).body, ctx)
             }
             "bk.action.core.While" -> {
@@ -115,7 +118,7 @@ class Interpreter {
             "bk.action.bool.Const" -> truthy(arg(0))
             else -> {
                 val args = a.map { eval(it, ctx) }
-                val builtin = BUILTINS_TABLE[name] ?: return ctx.extension(this, name, args)
+                val builtin = BUILTINS[name] ?: return ctx.extension(this, name, args)
                 try {
                     builtin(args)
                 } catch (error: BloksException) {
@@ -133,18 +136,7 @@ class Interpreter {
         if (e is Call && e.local == null && Functions.name(e.fn) == "bk.action.core.FuncConst") e.args[0] else e
 
     companion object {
-        private val SPECIAL = setOf(
-            "bk.action.core.FuncConst", "bk.action.core.Apply", "bk.action.core.GetArg", "bk.action.core.SetArg",
-            "bk.action.core.TakeLast", "bk.action.core.If", "bk.action.core.Coalesce", "bk.action.core.Pattern",
-            "bk.action.core.Default", "bk.action.core.Match", "bk.action.core.While", "bk.action.mins.ArgCount",
-            "bk.action.bloks.debug.Breakpoint", "bk.action.i64.Const", "bk.action.i32.Const", "bk.action.f32.Const",
-            "bk.action.f64.Const", "bk.action.bool.Const",
-        )
-
-        /** Every function the interpreter answers itself: special forms and pure built-ins. */
-        val BUILTINS: Set<String> get() = SPECIAL + BUILTINS_TABLE.keys
-
-        private val BUILTINS_TABLE: Map<String, Builtin> = HashMap<String, Builtin>().apply {
+        private val BUILTINS: Map<String, Builtin> = HashMap<String, Builtin>().apply {
             fun on(vararg names: String, f: Builtin) = names.forEach { put(it, f) }
 
             // ---- Arrays ----
@@ -180,7 +172,7 @@ class Interpreter {
             on("bk.action.array.Append") { v -> ((v.getOrNull(0) as? List<*>).orEmpty() + listOf(v.getOrNull(1))).toMutableList() }
             on("bk.action.array.Slice") { v ->
                 val l = v[0] as List<*>
-                runCatching { l.subList(int(v[1]), (v.getOrNull(2) as? Number)?.toInt() ?: l.size) }.getOrNull()
+                runCatching { ArrayList(l.subList(int(v[1]), (v.getOrNull(2) as? Number)?.toInt() ?: l.size)) }.getOrNull()
             }
             on("bk.action.array.Contains") { v ->
                 when (val c = v.getOrNull(0)) {
@@ -210,7 +202,7 @@ class Interpreter {
             }
             on("bk.action.array.SortedArray") { v ->
                 val out = ArrayList(v[0] as Collection<*>)
-                out.sortWith { x, y -> (call(v[1], listOf(x, y)) as? Int) ?: 0 }
+                out.sortWith { x, y -> sign((call(v[1], listOf(x, y)) as? Number)?.toDouble() ?: 0.0).toInt() }
                 out
             }
             on("bk.action.array.Max") { v -> (v.getOrNull(0) as? List<*>).orEmpty().filterIsInstance<Number>().maxOfOrNull { it.toDouble() } }
@@ -227,7 +219,6 @@ class Interpreter {
                 when (val c = v.getOrNull(0)) {
                     is Map<*, *> -> c[v.getOrNull(1)]
                     is List<*> -> c.getOrNull(int(v.getOrNull(1)))
-                    null -> throw BloksException("map.Get on null")
                     else -> throw BloksException("map.Get on ${kind(c)}")
                 }
             }
@@ -296,14 +287,14 @@ class Interpreter {
             on("bk.action.mins.ContainerClone") { v ->
                 when (val c = v[0]) {
                     is List<*> -> ArrayList(c)
-                    is Map<*, *> -> HashMap(c)
+                    is Map<*, *> -> LinkedHashMap(c)
                     else -> throw BloksException("ContainerClone of ${kind(c)}")
                 }
             }
             on("bk.action.mins.ImmutableClone") { v ->
                 when (val c = v.getOrNull(0)) {
-                    is List<*> -> Collections.unmodifiableList(c)
-                    is Map<*, *> -> Collections.unmodifiableMap(c)
+                    is List<*> -> Collections.unmodifiableList(ArrayList(c))
+                    is Map<*, *> -> Collections.unmodifiableMap(LinkedHashMap(c))
                     else -> c
                 }
             }
@@ -392,9 +383,9 @@ class Interpreter {
                 val replacement = v[2] as String
                 if (pattern.isEmpty()) buildString { s.forEach { append(replacement).append(it) }; append(replacement) } else s.replace(pattern, replacement)
             }
-            on("bk.action.js.string.CharAt") { v -> (v[0] as String).let { s -> (v[1] as Number).toInt().let { if (it in s.indices) s[it].toString() else "" } } }
-            on("bk.action.js.string.CharCodeAt") { v -> (v[0] as String).let { s -> (v[1] as Number).toInt().let { if (it in s.indices) s[it].code else Double.NaN } } }
-            on("bk.action.js.string.IndexOf") { v -> (v[0] as String).indexOf(v[1] as String, (v[2] as Number).toInt().coerceAtLeast(0)) }
+            on("bk.action.js.string.CharAt") { v -> (v[0] as String).getOrNull((v[1] as Number).toInt())?.toString() ?: "" }
+            on("bk.action.js.string.CharCodeAt") { v -> (v[0] as String).getOrNull((v[1] as Number).toInt())?.code ?: Double.NaN }
+            on("bk.action.js.string.IndexOf") { v -> (v[0] as String).indexOf(v[1] as String, ((v.getOrNull(2) as? Number)?.toInt() ?: 0).coerceAtLeast(0)) }
             on("bk.action.js.string.LastIndexOf") { v ->
                 val s = v[0] as String
                 val pos = ((v.getOrNull(2) as? Number)?.toInt() ?: s.length).coerceIn(0, s.length)
@@ -419,11 +410,11 @@ class Interpreter {
                 val b = ((v.getOrNull(2) as? Number)?.toInt() ?: s.length).coerceIn(0, s.length)
                 s.substring(minOf(a, b), maxOf(a, b))
             }
-            on("bk.action.js.string.Trim") { v -> (v[0] as String).trim { it.isWhitespace() || it == ' ' || it == '﻿' } }
+            on("bk.action.js.string.Trim") { v -> (v[0] as String).trim { it.isWhitespace() || it == '\uFEFF' } }
             on("bk.action.js.number.IsInteger") { v -> (v.getOrNull(0) as? Number)?.toDouble()?.let { it.isFinite() && it == Math.rint(it) } ?: false }
             on("bk.action.js.array.IndexOf") { v ->
                 val list = v[0] as List<*>
-                var from = (v[2] as Number).toInt()
+                var from = (v.getOrNull(2) as? Number)?.toInt() ?: 0
                 if (from < 0) from = maxOf(from + list.size, 0)
                 (from until list.size).firstOrNull { strictEqual(list[it], v[1]) } ?: -1
             }
@@ -437,7 +428,11 @@ class Interpreter {
             }
             on("bk.action.js.array.Find") { v -> (v[0] as List<*>).withIndex().firstOrNull { (i, x) -> strict(call(v[1], listOf(x, i.toLong(), v[0]))) }?.value }
             on("bk.action.js.array.FindIndex") { v -> (v[0] as List<*>).withIndex().firstOrNull { (i, x) -> strict(call(v[1], listOf(x, i.toLong(), v[0]))) }?.index?.toLong() ?: -1L }
-            on("bk.action.js.array.At") { v -> (v[0] as List<*>).let { l -> (v[1] as Number).toInt().let { if (it < 0) it + l.size else it }.let { l.getOrNull(it) } } }
+            on("bk.action.js.array.At") { v ->
+                val l = v[0] as List<*>
+                val i = (v[1] as Number).toInt()
+                l.getOrNull(if (i < 0) i + l.size else i)
+            }
             on("bk.action.js.array.Slice") { v ->
                 val l = v[0] as List<*>
                 fun clamp(x: Int) = (if (x < 0) x + l.size else x).coerceIn(0, l.size)
@@ -458,8 +453,8 @@ class Interpreter {
             on("bk.action.f32.Sub", "bk.action.i32.Sub", "bk.action.i64.Sub", "bk.action.num.Sub") { v -> arith(v.getOrNull(0), v.getOrNull(1), Double::minus, Long::minus) }
             on("bk.action.f32.Mul", "bk.action.i32.Mul", "bk.action.i64.Mul", "bk.action.num.Mul") { v -> arith(v.getOrNull(0), v.getOrNull(1), Double::times, Long::times) }
             on("bk.action.f32.Div") { v -> norm(num(v[0]) / num(v[1])) }
-            on("bk.action.i32.Div") { v -> norm(trunc(num(v[0]) / num(v[1]))) }
-            on("bk.action.i32.Mod") { v -> norm(trunc(num(v[0]) % num(v[1]))) }
+            on("bk.action.i32.Div") { v -> norm(truncate(num(v[0]) / num(v[1]))) }
+            on("bk.action.i32.Mod") { v -> norm(truncate(num(v[0]) % num(v[1]))) }
             on("bk.action.i64.Div") { v ->
                 val d = toI64(v[1])
                 if (d == 0L) throw BloksException("Division by Zero")
@@ -467,7 +462,7 @@ class Interpreter {
             }
             on("bk.action.i32.And") { v -> toI32(v[0]) and toI32(v[1]) }
             on("bk.action.i32.Or") { v -> toI32(v[0]) or toI32(v[1]) }
-            on("bk.action.i32.Rand") { v -> norm(trunc(num(v[0]) + (num(v[1]) - num(v[0])) * Math.random())) }
+            on("bk.action.i32.Rand") { v -> norm(truncate(num(v[0]) + (num(v[1]) - num(v[0])) * Math.random())) }
             on("bk.action.f32.Log") { v -> norm(Math.log((v[0] as Number).toDouble())) }
             on("bk.action.f32.Pow") { v -> norm(Math.pow((v[0] as Number).toDouble(), (v[1] as Number).toDouble())) }
             on("bk.action.f32.Sqrt") { v -> norm(Math.sqrt((v[0] as Number).toDouble())) }
@@ -477,9 +472,9 @@ class Interpreter {
             on("bk.action.num.Pow") { v -> pow(v[0], v[1]) }
             on("bk.action.math.Max") { v -> norm(v.maxOf { num(it) }) }
             on("bk.action.math.Min") { v -> norm(v.minOf { num(it) }) }
-            on("bk.action.math.Abs") { v -> norm(kotlin.math.abs(num(v[0]))) }
-            on("bk.action.math.Floor") { v -> norm(kotlin.math.floor(num(v[0]))) }
-            on("bk.action.math.Ceil") { v -> norm(kotlin.math.ceil(num(v[0]))) }
+            on("bk.action.math.Abs") { v -> norm(abs(num(v[0]))) }
+            on("bk.action.math.Floor") { v -> norm(floor(num(v[0]))) }
+            on("bk.action.math.Ceil") { v -> norm(ceil(num(v[0]))) }
             on("bk.action.bool.Not") { v -> !truthy(v.getOrNull(0)) }
             on("bk.action.bool.Or") { v -> truthy(toI32(v[0]) or toI32(v[1])) }
             on("bk.action.bool.And") { v -> truthy(toI32(v[0]) and toI32(v[1])) }
@@ -488,22 +483,22 @@ class Interpreter {
             on("bk.action.io.CurrentTimeMillis", "bk.action.io.CurrentTimeMillisV2") { System.currentTimeMillis() }
             // No touch recorded, as the app answers when none is.
             on("bk.action.bloks.TimestampOfLastTouchUpV2") { -1L }
-            on("bk.action.GetClientTimezone") { java.util.TimeZone.getDefault().id }
+            on("bk.action.GetClientTimezone") { TimeZone.getDefault().id }
             on("bk.action.StringToTimestamp") { v ->
-                runCatching { java.text.SimpleDateFormat(v[1] as String, java.util.Locale.US).parse(v[0] as String)!!.time / 1000 }.getOrNull()
+                runCatching { SimpleDateFormat(v[1] as String, Locale.US).parse(v[0] as String)!!.time / 1000 }.getOrNull()
             }
             on("bk.action.GetDatetimeText") { v -> datetime(v) }
             on("bk.action.currency.GetFormattedCurrency") { v ->
-                val currency = java.util.Currency.getInstance(v[0] as String)
+                val currency = Currency.getInstance(v[0] as String)
                 val digits = (v[1] as String).filter(Char::isDigit).ifEmpty { "0" }
                 val amount = digits.toDouble() / Math.pow(10.0, currency.defaultFractionDigits.coerceAtLeast(0).toDouble())
-                java.text.NumberFormat.getCurrencyInstance().apply { this.currency = currency }.format(if (amount <= 0) 0.0 else amount)
+                NumberFormat.getCurrencyInstance().apply { this.currency = currency }.format(if (amount <= 0) 0.0 else amount)
             }
             // A language pack lookup needs Meta's FlatBuffer packs; the scripts fall back to their own text.
             on("bk.action.i18n.LanguagePackResolveFbt", "bk.action.i18n.LanguagePackResolveFbtV2") { null }
         }
 
-        /** `IYn.A07`: null, false, "", 0 and NaN are false; everything else, empty lists and maps included, is true. */
+        /** null, false, "", 0 and NaN are false; everything else, empty lists and maps included, is true. */
         fun truthy(x: Any?): Boolean = when (x) {
             null -> false
             is Boolean -> x
@@ -520,7 +515,7 @@ class Interpreter {
             else -> throw BloksException("predicate returned ${kind(x)}")
         }
 
-        /** `IYn.A09`. */
+        /** Bloks equality: numbers and booleans by value, strings by content, containers and lambdas by identity. */
         fun equal(a: Any?, b: Any?): Boolean = when {
             a == null || b == null -> a == null && b == null
             a is Boolean && b is Boolean -> a == b
@@ -584,8 +579,6 @@ class Interpreter {
             else -> throw BloksException("Cannot cast ${kind(x)} to i64")
         }
 
-        private fun trunc(d: Double): Double = if (d > 0) kotlin.math.floor(d) else kotlin.math.ceil(d)
-
         /** A double that is an exact int32 becomes an Int. */
         fun norm(d: Double): Any = if (d == Math.rint(d) && d >= Int.MIN_VALUE && d <= Int.MAX_VALUE && !(d == 0.0 && 1 / d < 0)) d.toInt() else d
 
@@ -601,9 +594,9 @@ class Interpreter {
         /** `num.Pow`: doubles in the int32 range, exact longs past it, doubles again on overflow. */
         private fun pow(a: Any?, b: Any?): Any {
             val d = Math.pow(num(a), num(b))
-            fun whole(x: Any?) = x !is Double || (x.isFinite() && x == Math.rint(x) && kotlin.math.abs(x) < Long.MAX_VALUE.toDouble())
+            fun whole(x: Any?) = x !is Double || (x.isFinite() && x == Math.rint(x) && abs(x) < Long.MAX_VALUE.toDouble())
             fun small(x: Any?) = num(x).let { it >= Int.MIN_VALUE && it <= Int.MAX_VALUE }
-            if (!whole(a) || !whole(b) || (small(a) && small(b) && kotlin.math.abs(d) < 2147483648.0)) return norm(d)
+            if (!whole(a) || !whole(b) || (small(a) && small(b) && abs(d) < 2147483648.0)) return norm(d)
             val base = toI64(a)
             val exp = toI64(b)
             return when {
@@ -614,7 +607,11 @@ class Interpreter {
                 else -> {
                     var r = 1L
                     for (i in 0 until exp) {
-                        r = Math.multiplyHigh(r, base).let { high -> if (high != 0L && high != -1L) return Math.pow(base.toDouble(), exp.toDouble()) else Math.multiplyExact(r, base) }
+                        r = try {
+                            Math.multiplyExact(r, base)
+                        } catch (_: ArithmeticException) {
+                            return Math.pow(base.toDouble(), exp.toDouble())
+                        }
                     }
                     r
                 }
@@ -644,7 +641,7 @@ class Interpreter {
                     d.isNaN() -> "NaN"
                     d == Double.POSITIVE_INFINITY -> "Infinity"
                     d == Double.NEGATIVE_INFINITY -> "-Infinity"
-                    d == Math.rint(d) && kotlin.math.abs(d) < Long.MAX_VALUE.toDouble() -> d.toLong().toString()
+                    d == Math.rint(d) && abs(d) < Long.MAX_VALUE.toDouble() -> d.toLong().toString()
                     else -> d.toString()
                 }
             }
@@ -652,7 +649,7 @@ class Interpreter {
             else -> "[object Object]"
         }
 
-        private fun isChild(x: Any?): Boolean = x is Node || x?.javaClass?.simpleName == "Instance"
+        private fun isChild(x: Any?): Boolean = x is Node || x is BloksSession.Instance
 
         @Suppress("UNCHECKED_CAST")
         private fun put(container: Any?, key: Any?, value: Any?, quiet: Boolean): Any? {
@@ -691,11 +688,11 @@ class Interpreter {
         }
 
         private fun parseUrl(url: String): Map<String, Any?> {
-            val uri = runCatching { java.net.URI(url) }.getOrNull()
+            val uri = runCatching { URI(url) }.getOrNull()
             val params = LinkedHashMap<String, String>()
             uri?.rawQuery?.split('&')?.forEach { pair ->
-                val k = java.net.URLDecoder.decode(pair.substringBefore('='), "UTF-8")
-                if (k.isNotEmpty() && k !in params) params[k] = java.net.URLDecoder.decode(pair.substringAfter('=', ""), "UTF-8")
+                val k = URLDecoder.decode(pair.substringBefore('='), "UTF-8")
+                if (k.isNotEmpty() && k !in params) params[k] = URLDecoder.decode(pair.substringAfter('=', ""), "UTF-8")
             }
             return linkedMapOf(
                 "scheme" to uri?.scheme,
@@ -711,22 +708,22 @@ class Interpreter {
             val seconds = (v[0] as Number).toLong()
             val kind = v[1] as String
             fun style(s: Any?): Int? = when (s) {
-                "short" -> java.text.DateFormat.SHORT
-                "medium" -> java.text.DateFormat.MEDIUM
-                "long" -> java.text.DateFormat.LONG
-                "full" -> java.text.DateFormat.FULL
+                "short" -> DateFormat.SHORT
+                "medium" -> DateFormat.MEDIUM
+                "long" -> DateFormat.LONG
+                "full" -> DateFormat.FULL
                 else -> null
             }
             val date = style(v[2])
-            val time = style(v.getOrNull(3)) ?: date ?: java.text.DateFormat.MEDIUM
+            val time = style(v.getOrNull(3)) ?: date ?: DateFormat.MEDIUM
             val format = when (kind) {
-                "date" -> if (date == null) java.text.SimpleDateFormat(v[2] as String, java.util.Locale.US) else java.text.DateFormat.getDateInstance(date)
-                "time" -> java.text.DateFormat.getTimeInstance(time)
-                "datetime" -> java.text.DateFormat.getDateTimeInstance(date ?: java.text.DateFormat.MEDIUM, time)
+                "date" -> if (date == null) SimpleDateFormat(v[2] as String, Locale.US) else DateFormat.getDateInstance(date)
+                "time" -> DateFormat.getTimeInstance(time)
+                "datetime" -> DateFormat.getDateTimeInstance(date ?: DateFormat.MEDIUM, time)
                 else -> throw BloksException("Unknown dateformat type: $kind")
             }
-            (v.getOrNull(5) as? String)?.let { format.timeZone = java.util.TimeZone.getTimeZone(it) }
-            return format.format(java.util.Date(seconds * 1000))
+            (v.getOrNull(5) as? String)?.let { format.timeZone = TimeZone.getTimeZone(it) }
+            return format.format(Date(seconds * 1000))
         }
 
         /** `mins.CallRuntime`: 2 to number, 6 a map (keys first, then values), 8 to int64, 10 substring, 17 a map (pairs). */

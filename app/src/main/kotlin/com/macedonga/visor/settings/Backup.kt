@@ -4,20 +4,16 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,18 +24,23 @@ import com.macedonga.visor.core.assistant.mcp.AuthKind
 import com.macedonga.visor.core.assistant.mcp.McpServer
 import com.macedonga.visor.core.assistant.mcp.McpStore
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.strings
+import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.BroadcastCodec
 import com.macedonga.visor.core.media.LiveOverlay
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.settings.same
 import com.macedonga.visor.gallery.AutoImport
 import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.gallery.ImportChoice
 import com.macedonga.visor.language.LanguageInstaller
+import com.macedonga.visor.language.VOICE_KEY
 import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
+import com.macedonga.visor.update.Updates
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
@@ -47,7 +48,9 @@ import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,10 +60,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * Every setting in one file and back: the glasses' own (those set away from their default) and Visor's. The API key,
- * the Meta login and the stream key stay out of it.
- */
+/** Every setting in one file and back, without the API key, the Meta login and the stream key. */
 @Singleton
 class Backups @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -75,12 +75,27 @@ class Backups @Inject constructor(
     private val pins: Pins,
     private val mcp: McpStore,
     private val languages: LanguageInstaller,
+    private val updates: Updates,
 ) {
     private val prefs = context.getSharedPreferences("backup", Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _last = MutableStateFlow(prefs.getLong(LAST, 0L).takeIf { it > 0 })
 
     /** When a backup was last saved, if ever. */
     val last: StateFlow<Long?> = _last.asStateFlow()
+
+    private val _restoring = MutableStateFlow<Pair<Int, Int>?>(null)
+
+    /** The glasses' settings written and to write while a restore runs, null when none does. */
+    val restoring: StateFlow<Pair<Int, Int>?> = _restoring.asStateFlow()
+
+    private val _restored = MutableStateFlow<Result<Restored>?>(null)
+
+    /** How the last restore of this run ended. */
+    val restored: StateFlow<Result<Restored>?> = _restored.asStateFlow()
+
+    /** The glasses' settings a restore could not write, and whether the phone could check the voice's language. */
+    data class Restored(val notWritten: Int, val voiceChecked: Boolean)
 
     fun build(): JSONObject {
         val state = settings.state.value
@@ -96,7 +111,9 @@ class Backups @Inject constructor(
             .put("saved", Instant.now().toString())
             .put("serial", connection.state.value.target?.serial ?: connection.state.value.info?.serial ?: "")
             .put("read", state.readAt?.let { Instant.ofEpochMilli(it).toString() } ?: "")
-            .put("glasses", glasses)
+            // Unread this run, the glasses' values are not known: their part stays out.
+            .putOpt("glasses", glasses.takeIf { state.readAt != null })
+            .put("updates", updates.enabled.value)
             .put(
                 "assistant",
                 JSONObject()
@@ -113,7 +130,7 @@ class Backups @Inject constructor(
                 JSONObject()
                     .put("manual", l.manual).put("quality", l.quality.name).put("bitrate", l.bitrate).put("frameRate", l.frameRate)
                     .put("overlays", JSONArray(l.overlays.map { it.name })).put("replaySeconds", l.replaySeconds)
-                    .put("listen", l.listen).put("rtmpUrl", l.rtmpUrl).put("rtmpCodec", l.rtmpCodec.name),
+                    .put("listen", l.listen).put("rtmpUrl", l.rtmpUrl).put("rtmpCodec", l.rtmpCodec.name).put("glassesHost", l.glassesHost),
             )
             .put("pins", JSONArray(pins.ids.value))
             // The servers without their keys and sign-ins, which stay on this phone.
@@ -129,18 +146,35 @@ class Backups @Inject constructor(
     }
 
     suspend fun save(uri: Uri) = withContext(Dispatchers.IO) {
-        context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(build().toString(2).toByteArray()) }
+        (context.contentResolver.openOutputStream(uri, "wt") ?: error("no stream")).use { it.write(build().toString(2).toByteArray()) }
         val now = System.currentTimeMillis()
         prefs.edit().putLong(LAST, now).apply()
         _last.value = now
     }
 
     suspend fun read(uri: Uri): JSONObject = withContext(Dispatchers.IO) {
-        JSONObject(context.contentResolver.openInputStream(uri)!!.use { it.readBytes().decodeToString() })
+        JSONObject((context.contentResolver.openInputStream(uri) ?: error("no stream")).use { it.readBytes().decodeToString() })
+    }
+
+    /** Restores [backup] in Visor's own scope, so leaving the page does not stop it; one restore at a time. */
+    fun startRestore(backup: JSONObject) {
+        if (!_restoring.compareAndSet(null, 0 to 0)) return
+        _restored.value = null
+        scope.launch {
+            try {
+                _restored.value = Result.success(restore(backup))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                _restored.value = Result.failure(error)
+            } finally {
+                _restoring.value = null
+            }
+        }
     }
 
     /** Puts Visor's part back at once, and the glasses' part one write at a time; the glasses' part needs them connected. */
-    suspend fun restore(backup: JSONObject, onProgress: (Int, Int) -> Unit): Boolean {
+    private suspend fun restore(backup: JSONObject): Restored {
         backup.optJSONObject("assistant")?.let { o ->
             assistant.update {
                 it.copy(
@@ -171,7 +205,7 @@ class Backups @Inject constructor(
                         name = o.optString("name").ifBlank { url }, url = url, enabled = o.optBoolean("enabled", true),
                         auth = runCatching { AuthKind.valueOf(o.optString("auth")) }.getOrDefault(AuthKind.NONE),
                         header = o.optString("header"),
-                        off = o.optJSONArray("off")?.let { f -> (0 until f.length()).map { f.getString(it) }.toSet() }.orEmpty(),
+                        off = o.optJSONArray("off")?.strings()?.toSet().orEmpty(),
                         clientId = o.optString("clientId"), redirect = o.optString("redirect"),
                     ),
                 )
@@ -179,7 +213,7 @@ class Backups @Inject constructor(
         }
         backup.optJSONObject("notifications")?.let { o ->
             notify.set(o.optBoolean("enabled", true))
-            o.optJSONArray("muted")?.let { a -> apps.restore((0 until a.length()).map { a.getString(it) }.toSet()) }
+            o.optJSONArray("muted")?.let { a -> apps.restore(a.strings().toSet()) }
         }
         backup.optString("import").takeIf { it.isNotEmpty() }?.let { m -> runCatching { AutoImport.valueOf(m) }.getOrNull()?.let(import::set) }
         backup.optJSONObject("albums")?.let { o ->
@@ -199,31 +233,37 @@ class Backups @Inject constructor(
                     listen = o.optBoolean("listen", it.listen),
                     rtmpUrl = o.optString("rtmpUrl", it.rtmpUrl),
                     rtmpCodec = runCatching { BroadcastCodec.valueOf(o.getString("rtmpCodec")) }.getOrDefault(it.rtmpCodec),
+                    glassesHost = o.optBoolean("glassesHost", it.glassesHost),
                 )
             }
         }
-        backup.optJSONArray("pins")?.let { a -> pins.set((0 until a.length()).map { a.getString(it) }) }
+        backup.optJSONArray("pins")?.let { a -> pins.set(a.strings()) }
+        if (backup.has("updates") && backup.optBoolean("updates") != updates.enabled.value) updates.setEnabled(backup.optBoolean("updates"))
 
-        val glasses = backup.optJSONObject("glasses") ?: return true
-        if (connection.state.value.link != LinkState.READY) return true
+        val glasses = backup.optJSONObject("glasses") ?: return Restored(0, true)
         // The voice last: a phone that cannot speak it, or glasses that keep theirs, stop the restore with a reason.
-        val keys = glasses.keys().asSequence().filter { settings.catalogue[it]?.writable == true }.sortedBy { it == "assistant_voice_id" }.toList()
-        var recognitionChecked = true
+        val keys = glasses.keys().asSequence().filter { settings.catalogue[it]?.writable == true }.sortedBy { it == VOICE_KEY }.toList()
+        var notWritten = 0
+        var voiceChecked = true
         for ((i, key) in keys.withIndex()) {
-            onProgress(i, keys.size)
+            _restoring.value = i to keys.size
+            // Away, nothing more reaches the glasses.
+            if (connection.state.value.link != LinkState.READY) {
+                notWritten += keys.size - i
+                break
+            }
             val want = glasses.getString(key)
-            if (settings.value(key) != want) {
-                if (key == "assistant_voice_id") {
-                    recognitionChecked = languages.checkPhone(want)
-                    languages.switchVoice(want)
-                } else {
-                    settings.write(key, want)
-                    delay(WRITE_GAP_MS)
-                }
+            if (same(settings.catalogue[key]?.kind, settings.value(key), want)) continue
+            if (key == VOICE_KEY) {
+                voiceChecked = languages.checkPhone(want)
+                languages.switchVoice(want)
+            } else {
+                if (!settings.write(key, want)) notWritten++
+                delay(WRITE_GAP_MS)
             }
         }
-        onProgress(keys.size, keys.size)
-        return recognitionChecked
+        _restoring.value = keys.size to keys.size
+        return Restored(notWritten, voiceChecked)
     }
 
     private companion object {
@@ -233,93 +273,100 @@ class Backups @Inject constructor(
 }
 
 @HiltViewModel
-class BackupModel @Inject constructor(val backups: Backups, val connection: GlassesConnection) : ViewModel()
+class BackupModel @Inject constructor(val backups: Backups, val connection: GlassesConnection, val settings: GlassesSettings) : ViewModel()
 
 /** Save every setting to a file, or put a saved file back. */
 @Composable
 fun BackupScreen(model: BackupModel = hiltViewModel()) {
-    val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val glasses by model.connection.state.collectAsStateWithLifecycle()
+    val settings by model.settings.state.collectAsStateWithLifecycle()
     val last by model.backups.last.collectAsStateWithLifecycle()
+    val restoring by model.backups.restoring.collectAsStateWithLifecycle()
+    val restored by model.backups.restored.collectAsStateWithLifecycle()
     var pending by remember { mutableStateOf<JSONObject?>(null) }
-    var progress by remember { mutableStateOf<String?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
-    var restoring by remember { mutableStateOf(false) }
     val ready = glasses.link == LinkState.READY
-    val wordsSaved = stringResource(R.string.backup_saved)
-    val wordsDone = stringResource(R.string.backup_restored)
-    val recognitionUnknown = stringResource(R.string.language_recognition_unknown)
+    val busy = restoring != null
+    val steps = restoring?.takeIf { it.second > 0 }?.let { (done, total) -> stringResource(R.string.backup_restoring, done, total) }
+    // The last restore's outcome, until this page says something newer.
+    val outcome = restored?.takeIf { !busy && problem == null }
+    val done = outcome?.getOrNull()
 
     val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) scope.launch {
             saving = true
-            runCatching { model.backups.save(uri) }.onSuccess { progress = wordsSaved; problem = null }.onFailure { problem = it.message }
-            saving = false
+            try {
+                model.backups.save(uri)
+                problem = null
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                problem = resources.getString(R.string.backup_save_failed)
+            } finally {
+                saving = false
+            }
         }
     }
     val openFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
-            runCatching { model.backups.read(uri) }.onSuccess { if (it.has("visor")) pending = it else problem = context.getString(R.string.backup_not_ours) }
-                .onFailure { problem = it.message }
+            val backup = try {
+                model.backups.read(uri)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                null
+            }
+            if (backup != null && backup.has("visor")) pending = backup else problem = resources.getString(R.string.backup_not_ours)
         }
     }
 
-    SettingsPage(stringResource(R.string.backup_title), stringResource(R.string.backup_lede), light = 0.35f) {
+    SettingsPage(stringResource(R.string.backup_title), light = 0.35f) {
         item(key = "save") {
             Rows(
                 {
                     ValueRow(
-                        stringResource(R.string.backup_save), null, onClick = if (saving) null else ({ create.launch("visor-settings-${LocalDate.now()}.json") }), busy = saving,
+                        stringResource(R.string.backup_save), if (settings.readAt == null) stringResource(R.string.backup_visor_only) else null,
+                        onClick = if (saving) null else ({ create.launch("visor-settings-${LocalDate.now()}.json") }), busy = saving,
                         sub = last?.let { stringResource(R.string.backup_sum_last, dateWords(it)) } ?: stringResource(R.string.backup_sum_never),
                     )
                 },
                 {
                     ValueRow(
-                        stringResource(R.string.backup_restore), null, onClick = if (restoring) null else ({ openFile.launch(arrayOf("application/json", "text/plain", "*/*")) }),
-                        sub = if (restoring) progress else stringResource(R.string.backup_restore_sub), busy = restoring,
+                        stringResource(R.string.backup_restore), null, onClick = if (busy) null else ({ openFile.launch(arrayOf("application/json", "text/plain", "*/*")) }),
+                        sub = if (busy) steps else if (done?.notWritten == 0) stringResource(R.string.backup_restored) else null, busy = busy,
                     )
                 },
             )
         }
         item(key = "state") {
             Column {
-                progress?.let { Footnote(it) }
-                problem?.let { Footnote(it, color = com.macedonga.visor.core.design.Visor.colors.signal) }
-                Footnote(stringResource(R.string.backup_foot))
+                problem?.let { Footnote(it, color = Visor.colors.signal) }
+                if (done != null && done.notWritten > 0) Footnote(pluralStringResource(R.plurals.backup_settings_not_restored, done.notWritten, done.notWritten), color = Visor.colors.signal)
+                if (done != null && !done.voiceChecked) Footnote(stringResource(R.string.language_recognition_unknown), color = Visor.colors.signal)
+                if (outcome?.isFailure == true) Footnote(stringResource(R.string.backup_restore_failed), color = Visor.colors.signal)
             }
         }
     }
 
     pending?.let { backup ->
         val count = backup.optJSONObject("glasses")?.length() ?: 0
-        VisorSheet({ pending = null }) {
-            SheetTitle(
-                stringResource(R.string.backup_restore_title, backup.optString("saved").take(10)),
-                if (ready) stringResource(R.string.backup_restore_text, count) else stringResource(R.string.backup_restore_away, count),
-            )
-            Row(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                ActionPill(stringResource(R.string.backup_restore), {
-                    pending = null
-                    scope.launch {
-                        restoring = true
-                        try {
-                            val checked = model.backups.restore(backup) { done, total -> progress = context.getString(R.string.backup_restoring, done, total) }
-                            progress = wordsDone
-                            problem = if (checked) null else recognitionUnknown
-                        } catch (error: CancellationException) {
-                            throw error
-                        } catch (error: Exception) {
-                            progress = null
-                            problem = error.message ?: error::class.java.simpleName
-                        } finally {
-                            restoring = false
-                        }
-                    }
-                })
-                ActionPill(stringResource(R.string.language_cancel), { pending = null }, quiet = true)
-            }
-        }
+        val savedAt = runCatching { Instant.parse(backup.optString("saved")).toEpochMilli() }.getOrNull()
+        ConfirmSheet(
+            savedAt?.let { stringResource(R.string.backup_restore_title, dateWords(it)) } ?: stringResource(R.string.backup_restore),
+            when {
+                count == 0 -> null
+                ready -> stringResource(R.string.backup_restore_text, count)
+                else -> stringResource(R.string.backup_restore_away, count)
+            },
+            stringResource(R.string.backup_restore),
+            onConfirm = {
+                problem = null
+                model.backups.startRestore(backup)
+            },
+            onDismiss = { pending = null },
+        )
     }
 }

@@ -14,7 +14,7 @@
 
 - [ ] It builds: `./gradlew :app:assembleDebug`
 - [ ] I tried it on real glasses, as described above
-- [ ] New strings are in `values/` and `values-it/`
+- [ ] New strings are in `values/`, `values-it/` and `values-ru/`
 - [ ] For a screen change: I tried it with TalkBack and the largest font size, as [ACCESSIBILITY.md](https://github.com/macedonga/visor/blob/main/ACCESSIBILITY.md) says
 - [ ] Logs and screenshots hold no serial numbers, Bluetooth addresses, tokens or API keys
 - [ ] No new dependency, or the reason for it is above

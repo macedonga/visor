@@ -3,63 +3,66 @@ package com.macedonga.visor.notify
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.provider.Telephony
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
-import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
-import javax.inject.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** The glasses' svc46 requests: an app's icon for a notification (type 9), and their acks (types 2 and 1027). */
+/** The glasses' svc46 icon requests (type 9): an app's icon for a notification. */
 class NotifyIcons @Inject constructor(
     @ApplicationContext private val context: Context,
-    // A Provider, because EventLog needs the connection this responder is registered on.
-    private val log: Provider<EventLog>,
 ) : Responder {
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
-        when (message.info.messageType) {
-            MT_ICON_REQUEST -> {
-                val pkg = runCatching { String(Wire.parse(message.payload).bytes(1)) }.getOrDefault("")
-                val jpeg = withContext(Dispatchers.Default) { render(pkg) }
-                val answer = if (jpeg != null) {
-                    Wire.fieldVarint(2, 1) + Wire.fieldBytes(3, jpeg)
-                } else {
-                    Wire.fieldVarint(2, 0) + Wire.fieldBytes(4, "unknown package".toByteArray())
-                }
-                connection.send(DataXConnection.mirror(message.info.channelId), Wire.fieldBytes(1, pkg.toByteArray()) + answer, messageType = MT_ICON_RESPONSE)
-            }
-            MT_RESPONSE, MT_RESPONSE_ACK -> log.get().add("Glasses answered a notification (type ${message.info.messageType})")
+        if (message.info.messageType != MT_ICON_REQUEST) return
+        val pkg = runCatching { String(Wire.parse(message.payload).bytes(1)) }.getOrDefault("")
+        val jpeg = withContext(Dispatchers.Default) { render(pkg) }
+        val answer = if (jpeg != null) {
+            Wire.fieldVarint(2, 1) + Wire.fieldBytes(3, jpeg)
+        } else {
+            Wire.fieldVarint(2, 0) + Wire.fieldString(4, "unknown package")
         }
+        connection.send(DataXConnection.mirror(message.info.channelId), Wire.fieldString(1, pkg) + answer, messageType = MT_ICON_RESPONSE)
     }
 
     /** The app's icon as a 78 x 78 JPEG, or null when the package has none. */
     private fun render(pkg: String): ByteArray? = runCatching {
-        val d = runCatching { context.packageManager.getApplicationIcon(pkg) }.getOrNull()
-            ?: context.packageManager.getApplicationIcon(installed(pkg) ?: return null)
-        val bmp = Bitmap.createBitmap(ICON, ICON, Bitmap.Config.ARGB_8888)
-        d.setBounds(0, 0, ICON, ICON)
-        d.draw(Canvas(bmp))
-        ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 100, it) }.toByteArray()
+        val pm = context.packageManager
+        val d = runCatching { pm.getApplicationIcon(pkg) }.getOrNull()
+            ?: installed(pkg).firstNotNullOfOrNull { runCatching { pm.getApplicationIcon(it) }.getOrNull() }
+            ?: return null
+        iconBytes(d, ICON, Bitmap.CompressFormat.JPEG)
     }.getOrNull()
 
     // Chat notifications carry the app ids the glasses gate on, not the phone's packages.
-    private fun installed(appId: String): String? = when (appId) {
-        "com.android.sms" -> android.provider.Telephony.Sms.getDefaultSmsPackage(context)
-        else -> APP_PACKAGES[appId]
+    private fun installed(appId: String): List<String> = when (appId) {
+        "com.android.sms" -> listOfNotNull(Telephony.Sms.getDefaultSmsPackage(context))
+        else -> APP_PACKAGES[appId].orEmpty()
     }
 
     private companion object {
-        val APP_PACKAGES = mapOf("com.facebook.messenger" to "com.facebook.orca", "com.instagram" to "com.instagram.android")
-        const val MT_RESPONSE = 2
+        val APP_PACKAGES = mapOf(
+            "com.facebook.messenger" to listOf("com.facebook.orca", "com.facebook.mlite"),
+            "com.whatsapp" to listOf("com.whatsapp.w4b"),
+            "com.instagram" to listOf("com.instagram.android"),
+        )
         const val MT_ICON_REQUEST = 9
         const val MT_ICON_RESPONSE = 10
-        const val MT_RESPONSE_ACK = 1027
         const val ICON = 78
     }
+}
+
+/** [d] drawn on a [px] x [px] square, compressed as [format]. */
+internal fun iconBytes(d: Drawable, px: Int, format: Bitmap.CompressFormat): ByteArray {
+    val bmp = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+    d.setBounds(0, 0, px, px)
+    d.draw(Canvas(bmp))
+    return ByteArrayOutputStream().also { bmp.compress(format, 100, it) }.toByteArray()
 }

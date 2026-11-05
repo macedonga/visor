@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.media
 
 import android.content.Context
+import com.macedonga.visor.core.connection.strings
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -59,13 +60,11 @@ class GalleryIndex(context: Context) {
     @Synchronized
     fun dismiss(handle: String) {
         _dismissed.update { it + handle }
-        dismissedFile.writeText(JSONArray(_dismissed.value.toList()).toString())
+        dismissedFile.replaceWith(JSONArray(_dismissed.value.toList()).toString())
     }
 
-    private fun readDismissed(): Set<String> = runCatching {
-        val array = JSONArray(dismissedFile.readText())
-        (0 until array.length()).map { array.getString(it) }.toSet()
-    }.getOrDefault(emptySet())
+    private fun readDismissed(): Set<String> =
+        runCatching { JSONArray(dismissedFile.readText()).strings().toSet() }.getOrDefault(emptySet())
 
     /** By capture handle. */
     val entries: StateFlow<Map<String, Kept>> = _entries.asStateFlow()
@@ -74,27 +73,25 @@ class GalleryIndex(context: Context) {
 
     fun put(kept: Kept) = write { it + (kept.handle to kept) }
 
-    fun remove(handle: String) {
-        write { it - handle }
-        originals(handle).deleteRecursively()
-    }
-
-    fun byUri(uri: String): Kept? = _entries.value.values.firstOrNull { it.uri == uri }
-
     @Synchronized
     private fun write(change: (Map<String, Kept>) -> Map<String, Kept>) {
         _entries.update(change)
         val array = JSONArray()
         for (k in _entries.value.values) array.put(k.toJson())
-        val tmp = File(file.path + ".tmp")
-        tmp.writeText(array.toString())
-        tmp.renameTo(file)
+        file.replaceWith(array.toString())
     }
 
     private fun read(): Map<String, Kept> = runCatching {
         val array = JSONArray(file.readText())
-        (0 until array.length()).map { array.getJSONObject(it).toKept() }.associateBy { it.handle }
+        (0 until array.length()).mapNotNull { runCatching { array.getJSONObject(it).toKept() }.getOrNull() }.associateBy { it.handle }
     }.getOrDefault(emptyMap())
+}
+
+/** Writes [text] beside this file, then renames it over, so a crash never leaves half a file. */
+private fun File.replaceWith(text: String) {
+    val tmp = File("$path.tmp")
+    tmp.writeText(text)
+    tmp.renameTo(this)
 }
 
 private fun Kept.toJson() = JSONObject().apply {

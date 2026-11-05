@@ -35,15 +35,22 @@ fun decodeStill(file: File): Bitmap {
         ExifInterface.ORIENTATION_ROTATE_270 -> 270
         else -> 0
     }
-    // Upright already (a decoder that did apply it) when a quarter turn has already swapped the stored landscape.
+    // A decoder that already applied the quarter turn returns it portrait.
     if (degrees == 0 || (degrees != 180 && bitmap.height > bitmap.width)) return bitmap
     val turned = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, Matrix().apply { postRotate(degrees.toFloat()) }, true)
     if (turned !== bitmap) bitmap.recycle()
     return turned
 }
 
+/** A landscape capture's picture: the middle 4:3 band of the portrait frame, the whole width across. */
+internal fun landscapeCrop(bitmap: Bitmap): Bitmap {
+    if (bitmap.width >= bitmap.height) return bitmap
+    val band = bitmap.width * 3 / 4
+    return Bitmap.createBitmap(bitmap, 0, (bitmap.height - band) / 2, bitmap.width, band)
+}
+
 /** The Orientation tag of the first Exif block in [file], whatever holds it (HEIF item, JPEG APP1), or 1. */
-fun exifOrientation(file: File): Int {
+private fun exifOrientation(file: File): Int {
     val data = file.inputStream().use { it.readNBytes(minOf(file.length(), EXIF_SEARCH_BYTES).toInt()) }
     val at = indexOf(data, EXIF_HEADER).takeIf { it >= 0 } ?: return ExifInterface.ORIENTATION_NORMAL
     val tiff = at + EXIF_HEADER.size
@@ -53,7 +60,7 @@ fun exifOrientation(file: File): Int {
     else ((data[o].toInt() and 0xFF) shl 8) or (data[o + 1].toInt() and 0xFF)
     fun u32(o: Int) = if (little) u16(o) or (u16(o + 2) shl 16) else (u16(o) shl 16) or u16(o + 2)
     val ifd = tiff + u32(tiff + 4)
-    if (ifd + 2 > data.size) return ExifInterface.ORIENTATION_NORMAL
+    if (ifd < tiff || ifd + 2 > data.size) return ExifInterface.ORIENTATION_NORMAL
     for (i in 0 until u16(ifd)) {
         val entry = ifd + 2 + i * 12
         if (entry + 12 > data.size) break
@@ -84,7 +91,7 @@ fun matchFrame(clip: File, still: Bitmap): Pair<Int, Long>? {
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(clip.path)
-        // The still has matched the clip's second frame every time: the first few, decoded in one pass, are enough.
+        // The still is one of the clip's first frames: decode only those, in one pass.
         val count = minOf(times.size, MATCH_FRAMES)
         val params = MediaMetadataRetriever.BitmapParams().apply { preferredConfig = Bitmap.Config.RGB_565 }
         val frames = retriever.getFramesAtIndex(0, count, params)
@@ -159,7 +166,9 @@ fun clipFrame(fd: FileDescriptor, offset: Long, length: Long, us: Long): Bitmap?
     val retriever = MediaMetadataRetriever()
     return try {
         retriever.setDataSource(fd, offset, length)
-        retriever.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST)?.copy(Bitmap.Config.ARGB_8888, false)
+        retriever.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST)?.let { f ->
+            if (f.config == Bitmap.Config.ARGB_8888) f else f.copy(Bitmap.Config.ARGB_8888, false).also { f.recycle() }
+        }
     } finally {
         retriever.release()
     }
@@ -293,16 +302,15 @@ private val XMP_NAMESPACE = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray(Cha
 
 private const val JPEG_QUALITY = 95
 
-private val EXIF_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss").withZone(ZoneId.systemDefault())
+private val EXIF_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss")
 
 /** The camera's own words about the shot, carried from the HEIC to the JPEG. */
 private val COPIED = listOf(
-    ExifInterface.TAG_DATETIME_ORIGINAL, ExifInterface.TAG_DATETIME, ExifInterface.TAG_DATETIME_DIGITIZED,
-    ExifInterface.TAG_OFFSET_TIME_ORIGINAL, ExifInterface.TAG_OFFSET_TIME, ExifInterface.TAG_SUBSEC_TIME_ORIGINAL,
     ExifInterface.TAG_MAKE, ExifInterface.TAG_MODEL, ExifInterface.TAG_EXPOSURE_TIME, ExifInterface.TAG_F_NUMBER,
-    "ISOSpeedRatings", ExifInterface.TAG_FOCAL_LENGTH, ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+    ExifInterface.TAG_ISO_SPEED_RATINGS, ExifInterface.TAG_FOCAL_LENGTH, ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
     ExifInterface.TAG_EXPOSURE_PROGRAM, ExifInterface.TAG_EXPOSURE_BIAS_VALUE, ExifInterface.TAG_METERING_MODE,
     ExifInterface.TAG_WHITE_BALANCE, ExifInterface.TAG_FLASH, ExifInterface.TAG_APERTURE_VALUE,
-    ExifInterface.TAG_SHUTTER_SPEED_VALUE, ExifInterface.TAG_BRIGHTNESS_VALUE, "LensMake",
-    "LensModel",
+    ExifInterface.TAG_SHUTTER_SPEED_VALUE, ExifInterface.TAG_BRIGHTNESS_VALUE,
+    // android.media.ExifInterface has no constants for these.
+    "LensMake", "LensModel",
 )

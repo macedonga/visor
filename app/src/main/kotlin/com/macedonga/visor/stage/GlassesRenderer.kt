@@ -6,6 +6,7 @@ import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import android.view.TextureView
+import com.google.android.filament.Box
 import com.google.android.filament.Camera
 import com.google.android.filament.ColorGrading
 import com.google.android.filament.Engine
@@ -67,16 +68,13 @@ class GlassesPose {
     var variants = variantsOf(null)
 }
 
-/**
- * The glasses, drawn by Filament into a transparent TextureView. Lit by one key light that takes the
- * pool's colour and strength, and a studio of soft panels that never quite goes dark.
- * A frame is drawn only when the light, the pose or the surface changed.
- */
-class GlassesRenderer(context: Context, private val light: LightFrame, private val pose: GlassesPose, model: String = FrameModel.WAYFARER.asset) {
+/** The glasses, drawn by Filament into a transparent TextureView only when the light, the pose or the surface changed. */
+class GlassesRenderer(context: Context, private val light: LightFrame, private val pose: GlassesPose) {
     private val engine: Engine
     private val renderer: Renderer
     private val scene: Scene
     private val view: View
+    private val grading: ColorGrading
     private val camera: Camera
     private val cameraEntity: Int
     private val materials: UbershaderProvider
@@ -92,11 +90,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
     private val button: Mark?
     private val ledLight: Int
     private val buttonLight: Int
-    /**
-     * The views drawn into. The renderer outlives them; while one screen dissolves into another both hold a stage,
-     * and both are drawn, so neither shows an empty frame while the other's surface comes up.
-     */
-    private val targets = mutableListOf<Target>()
+    private var target: Target? = null
     private var framedFor = 0L
     private val choreographer = Choreographer.getInstance()
     private var loaded = false
@@ -119,6 +113,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         cameraEntity = EntityManager.get().create()
         // Exposure 1.3: f/1, 1.56 s, ISO 100.
         camera = engine.createCamera(cameraEntity).apply { setExposure(1f, 1.56f, 100f) }
+        grading = ColorGrading.Builder().toneMapper(ToneMapper.PBRNeutralToneMapper()).build(engine)
         view = engine.createView().apply {
             scene = this@GlassesRenderer.scene
             camera = this@GlassesRenderer.camera
@@ -130,11 +125,12 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
                 enabled = true
                 sampleCount = 4
             }
-            colorGrading = ColorGrading.Builder().toneMapper(ToneMapper.PBRNeutralToneMapper()).build(engine)
+            colorGrading = grading
         }
 
-        reflections = Studio.reflections(engine)
-        ibl = IndirectLight.Builder().reflections(reflections).irradiance(2, Studio.irradiance()).intensity(1f).build(engine)
+        val studio = Studio.radiance()
+        reflections = Studio.reflections(engine, studio)
+        ibl = IndirectLight.Builder().reflections(reflections).irradiance(2, Studio.irradiance(studio)).intensity(1f).build(engine)
         scene.indirectLight = ibl
 
         // A sun with a wide disc: its highlights spread like a big diffuser's instead of a point's.
@@ -143,9 +139,8 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
             sunAngularRadius(14f)
             sunHaloSize(0f)
         }
-        // A wide, softer light from just above and left of the camera: the front of the frame faces it, and its black
-        // acetate shows its shape instead of reading as a hole.
-        fill = light(LightManager.Type.SUN) {
+        // A soft fill from above-left of the camera, so the black acetate front shows its shape.
+        fill =light(LightManager.Type.SUN) {
             direction(0.22f, -0.32f, -1f)
             sunAngularRadius(24f)
             sunHaloSize(0f)
@@ -154,16 +149,13 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         materials = UbershaderProvider(engine)
         loader = AssetLoader(engine, materials, EntityManager.get())
         resources = ResourceLoader(engine)
-        asset = loader.createAsset(readModel(context, model))
+        asset = loader.createAsset(readModel(context, FrameModel.WAYFARER.asset))
         if (asset == null) Log.w(TAG, "the glasses model did not load")
         asset?.let {
             resources.asyncBeginLoad(it)
             scene.addEntities(it.entities)
         }
-        led = asset?.getFirstEntityByName("led")?.let { e ->
-            val rm = engine.renderableManager
-            rm.getInstance(e).takeIf { it != 0 }?.let { rm.getMaterialInstanceAt(it, 0) }
-        }
+        led = asset?.getFirstEntityByName("led")?.let { materialOf(it) }
         innerLed = mark("inner_led")
         button = mark("button")
         // Small point lights at the marks, so the frame around them catches their colour.
@@ -192,28 +184,28 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
 
     private fun mark(name: String): Mark? {
         val e = asset?.getFirstEntityByName(name)?.takeIf { it != 0 } ?: return null
-        val rm = engine.renderableManager
-        val mi = rm.getInstance(e).takeIf { it != 0 }?.let { rm.getMaterialInstanceAt(it, 0) } ?: return null
+        val mi = materialOf(e) ?: return null
         return Mark(e, mi).also { it.show(false) }
     }
 
+    private fun materialOf(entity: Int): MaterialInstance? {
+        val rm = engine.renderableManager
+        return rm.getInstance(entity).takeIf { it != 0 }?.let { rm.getMaterialInstanceAt(it, 0) }
+    }
+
     fun attach(textureView: TextureView) {
-        if (targets.any { it.view === textureView }) return
+        if (target?.view === textureView) return
+        target?.release()
         textureView.isOpaque = false
-        targets += Target(textureView)
+        target = Target(textureView)
     }
 
     /** Stops drawing into [textureView]: its surface goes, the scene and the model stay loaded for the next one. */
     fun detach(textureView: TextureView) {
-        targets.firstOrNull { it.view === textureView }?.let {
-            it.release()
-            targets.remove(it)
+        if (target?.view === textureView) {
+            target?.release()
+            target = null
         }
-    }
-
-    private fun detachAll() {
-        targets.forEach { it.release() }
-        targets.clear()
     }
 
     /** Nothing on screen shows the pair: no frames are drawn until it is wanted again. */
@@ -240,7 +232,9 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
     }
 
     private fun draw(frameTimeNanos: Long) {
-        if (paused || targets.none { it.chain != null }) return
+        if (paused) return
+        val t = target ?: return
+        val chain = t.chain ?: return
         val asset = asset ?: return
         if (!loaded) {
             resources.asyncUpdateLoad()
@@ -257,7 +251,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
             pose.idleYaw, pose.idlePitch, pose.idleRoll, pose.idleLift, pose.gestureYaw,
             pose.led, pose.viewYaw, pose.viewPitch, pose.innerLed, pose.button, if (loaded) 1f else 0f,
         )
-        if (loaded && signature.contentEqualsApprox(lastSignature)) return
+        if (loaded && pose.variants == appliedVariants && signature.contentEqualsApprox(lastSignature)) return
         lastSignature = signature
 
         if (pose.variants != appliedVariants) {
@@ -266,34 +260,23 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
             appliedVariants = pose.variants
             polishLenses(asset)
         }
-        val animator = asset.instance.animator
-        for (i in 0 until animator.animationCount) {
-            val fold = when (animator.getAnimationName(i)) {
-                "fold_l" -> pose.foldLeft
-                "fold_r" -> pose.foldRight
-                else -> continue
-            }
-            // The animator wraps time at the clip's end, so exactly 1 would spring the temple open again.
-            animator.applyAnimation(i, fold.coerceIn(0f, 0.999f))
-        }
+        fold(asset)
         place(asset)
         shine()
-        for (t in targets) {
-            val chain = t.chain ?: continue
-            if (!t.helper.isReadyToRender || t.width == 0) continue
-            val size = t.width.toLong() shl 32 or t.height.toLong()
-            if (size != framedFor) frame(t.width, t.height)
-            if (renderer.beginFrame(chain, frameTimeNanos)) {
-                renderer.render(view)
-                renderer.endFrame()
-            }
+        if (!t.helper.isReadyToRender || t.width == 0) return
+        val size = t.width.toLong() shl 32 or t.height.toLong()
+        if (size != framedFor) frame(t.width, t.height)
+        if (renderer.beginFrame(chain, frameTimeNanos)) {
+            renderer.render(view)
+            renderer.endFrame()
+        } else {
+            // Filament skipped this frame: draw it on the next vsync.
+            lastSignature = FloatArray(0)
+            invalidate()
         }
     }
 
-    /**
-     * The lenses polished but not mirrors: at the model's near-zero roughness they reflected the key light's wide disc
-     * with a hard edge, a line that swept across the lens as the pair drifted.
-     */
+    /** Lenses a little rough, so the key light's disc has no hard edge. */
     private fun polishLenses(asset: FilamentAsset) {
         val rm = engine.renderableManager
         for (e in asset.entities) {
@@ -302,6 +285,19 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
                 val mi = rm.getMaterialInstanceAt(r, p)
                 if (mi.name.startsWith("lens") && mi.material.hasParameter("roughnessFactor")) mi.setParameter("roughnessFactor", LENS_ROUGHNESS)
             }
+        }
+    }
+
+    private fun fold(asset: FilamentAsset) {
+        val animator = asset.instance.animator
+        for (i in 0 until animator.animationCount) {
+            val amount = when (animator.getAnimationName(i)) {
+                "fold_l" -> pose.foldLeft
+                "fold_r" -> pose.foldRight
+                else -> continue
+            }
+            // The animator wraps time at the clip's end, so exactly 1 would spring the temple open again.
+            animator.applyAnimation(i, amount.coerceIn(0f, 0.999f))
         }
     }
 
@@ -325,56 +321,59 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         // The square root lifts the dim moods most, so the pair reads in every state; zero stays dark for the way in.
         val lit = sqrt(max(light.level, 0f))
         val level = lit + light.flash
-        val c = light.core
+        val (r, g, b) = light.flashedCore()
         lm.getInstance(key).let {
-            lm.setColor(it, mixWhite(c[0], light.flash), mixWhite(c[1], light.flash), mixWhite(c[2], light.flash))
+            lm.setColor(it, r, g, b)
             lm.setIntensity(it, KEY_LUX * level)
         }
         lm.getInstance(fill).let {
-            lm.setColor(it, mixWhite(c[0], light.flash), mixWhite(c[1], light.flash), mixWhite(c[2], light.flash))
+            lm.setColor(it, r, g, b)
             lm.setIntensity(it, FILL_LUX * level)
         }
         // The studio never goes fully dark, so a pair out of reach still shows its outline.
         ibl.intensity = IBL * (0.18f + 0.82f * lit.coerceAtMost(1.1f))
-        led?.let { mi ->
+        led?.let {
             val e = LED_STRENGTH * pose.led
-            if (mi.material.hasParameter("emissiveStrength")) mi.setParameter("emissiveStrength", 1f)
-            if (mi.material.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", e, e, e)
+            it.emit(e, e, e)
         }
         glow(innerLed, ledLight, pose.innerLed, INNER_LED_COLOR, INNER_LED_STRENGTH, INNER_LED_LUMENS)
         glow(button, buttonLight, pose.button, BUTTON_COLOR, BUTTON_STRENGTH, BUTTON_LUMENS)
     }
 
+    private fun MaterialInstance.emit(r: Float, g: Float, b: Float) {
+        if (material.hasParameter("emissiveStrength")) setParameter("emissiveStrength", 1f)
+        if (material.hasParameter("emissiveFactor")) setParameter("emissiveFactor", r, g, b)
+    }
+
     private fun glow(mark: Mark?, lightEntity: Int, level: Float, colour: FloatArray, strength: Float, lumens: Float) {
         mark ?: return
         mark.show(level > 0f)
-        val mi = mark.material
         val e = strength * level
-        if (mi.material.hasParameter("emissiveStrength")) mi.setParameter("emissiveStrength", 1f)
-        if (mi.material.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", colour[0] * e, colour[1] * e, colour[2] * e)
+        mark.material.emit(colour[0] * e, colour[1] * e, colour[2] * e)
         val lm = engine.lightManager
         val li = lm.getInstance(lightEntity)
         lm.setIntensity(li, lumens * level)
         worldCentre(mark.entity)?.let { (x, y, z) -> lm.setPosition(li, x, y, z) }
     }
 
-    /** The centre of a part's box, in the world, as the pose last placed it. */
-    private fun worldCentre(entity: Int): FloatArray? {
+    /** The centre of a part's box, in the world, as the pose last placed it; [mirrorX] mirrors the box across the model first. */
+    private fun worldCentre(entity: Int, mirrorX: Boolean = false): FloatArray? {
         val rm = engine.renderableManager
         val instance = rm.getInstance(entity).takeIf { it != 0 } ?: return null
-        val box = com.google.android.filament.Box()
+        val box = Box()
         rm.getAxisAlignedBoundingBox(instance, box)
         val c = box.center
         val tm = engine.transformManager
         val world = FloatArray(16)
         tm.getWorldTransform(tm.getInstance(entity), world)
         val p = FloatArray(4)
-        Matrix.multiplyMV(p, 0, world, 0, floatArrayOf(c[0], c[1], c[2], 1f), 0)
+        Matrix.multiplyMV(p, 0, world, 0, floatArrayOf(if (mirrorX) -c[0] else c[0], c[1], c[2], 1f), 0)
         return floatArrayOf(p[0], p[1], p[2])
     }
 
-    /** Where the named part's centre is in the view, as fractions of its width and height, from the pose last drawn. */
+    /** Where the named part's centre is in the view, as fractions of its width and height, for the current pose. */
     fun partOnScreen(name: String): Pair<Float, Float>? {
+        poseForProjection()
         val entity = asset?.getFirstEntityByName(name)?.takeIf { it != 0 } ?: return null
         val p = worldCentre(entity) ?: return null
         return project(p[0], p[1], p[2])
@@ -388,28 +387,19 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         return ((clip[0] / clip[3] + 1) / 2).toFloat() to ((1 - clip[1] / clip[3]) / 2).toFloat()
     }
 
-    private fun mixWhite(v: Float, w: Float) = v + (1 - v) * w
-
-    /**
-     * Where the camera's glass is in the view, as fractions of its width and height, from the pose last drawn. The
-     * model has the camera on the wearer's left and the capture LED mirrored on the right, so the LED's box, mirrored,
-     * is the camera's.
-     */
+    /** Where the camera's glass is in the view: the capture LED's box, mirrored. */
     fun cameraOnScreen(): Pair<Float, Float>? {
-        val asset = asset ?: return null
-        val entity = asset.getFirstEntityByName("led").takeIf { it != 0 } ?: return null
-        val rm = engine.renderableManager
-        val instance = rm.getInstance(entity).takeIf { it != 0 } ?: return null
-        val box = com.google.android.filament.Box()
-        rm.getAxisAlignedBoundingBox(instance, box)
-        val c = box.center
-        val tm = engine.transformManager
-        val world = FloatArray(16)
-        tm.getWorldTransform(tm.getInstance(entity), world)
-        val local = floatArrayOf(-c[0], c[1], c[2], 1f)
-        val p = FloatArray(4)
-        Matrix.multiplyMV(p, 0, world, 0, local, 0)
-        return project(p[0], p[1], p[2])
+        poseForProjection()
+        return asset?.getFirstEntityByName("led")?.takeIf { it != 0 }?.let { worldCentre(it, mirrorX = true) }?.let { project(it[0], it[1], it[2]) }
+    }
+
+    /** Folds, places and frames the pair as a draw would, so a projection holds while nothing is drawn. */
+    private fun poseForProjection() {
+        val asset = asset?.takeIf { !destroyed } ?: return
+        fold(asset)
+        place(asset)
+        val t = target?.takeIf { it.width > 0 && it.height > 0 } ?: return
+        if ((t.width.toLong() shl 32 or t.height.toLong()) != framedFor) frame(t.width, t.height)
     }
 
     private fun mul(m: DoubleArray, v: DoubleArray) = DoubleArray(4) { r -> (0 until 4).sumOf { k -> m[k * 4 + r] * v[k] } }
@@ -442,7 +432,8 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         if (destroyed) return
         destroyed = true
         choreographer.removeFrameCallback(onFrame)
-        detachAll()
+        target?.release()
+        target = null
         asset?.let { loader.destroyAsset(it) }
         resources.destroy()
         loader.destroy()
@@ -456,6 +447,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         engine.destroyTexture(reflections)
         engine.destroyRenderer(renderer)
         engine.destroyView(view)
+        engine.destroyColorGrading(grading)
         engine.destroyScene(scene)
         engine.destroyCameraComponent(cameraEntity)
         EntityManager.get().destroy(cameraEntity)
@@ -517,7 +509,7 @@ class GlassesRenderer(context: Context, private val light: LightFrame, private v
         const val FIT_RADIUS = 0.128
         const val LOOK_Y = -0.004
         const val REST_YAW = -24f
-        /** How far forward the folded pair's centre is from the open pair's, from tools/glasses_glb.py's geometry. */
+        /** How far forward the folded pair's centre sits from the open pair's. */
         const val CLOSED_CENTRE_Z = 0.0569f
         const val CLOSED_DROP = 0.007f
         const val LENS_ROUGHNESS = 0.22f

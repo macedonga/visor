@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
-import android.os.Build
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -44,8 +43,7 @@ object Mms {
         ContextCompat.registerReceiver(context, receiver, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED)
         return try {
             val sent = PendingIntent.getBroadcast(context, 0, Intent(action).setPackage(context.packageName), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
-            val sms = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
-            sms.sendMultimediaMessage(context, uri, null, null, sent)
+            context.getSystemService(SmsManager::class.java).sendMultimediaMessage(context, uri, null, null, sent)
             when (val code = withTimeoutOrNull(SEND_TIMEOUT_MS) { result.await() }) {
                 null -> "No answer from the phone's MMS service"
                 Activity.RESULT_OK -> null
@@ -61,8 +59,7 @@ object Mms {
 
     // SmsManager's MMS config needs no permission; the carrier config would need the phone state.
     private fun maxBytes(context: Context): Int {
-        val sms = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
-        val max = runCatching { sms.carrierConfigValues.getInt(SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE, 0) }.getOrDefault(0)
+        val max = runCatching { context.getSystemService(SmsManager::class.java).carrierConfigValues.getInt(SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE, 0) }.getOrDefault(0)
         return (if (max > 0) max else DEFAULT_MAX_BYTES) - PDU_ROOM
     }
 

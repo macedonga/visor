@@ -1,6 +1,5 @@
 package com.macedonga.visor.connection
 
-import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -26,17 +25,14 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.notify.MirrorListener
-import com.macedonga.visor.phone.companionAssociated
+import com.macedonga.visor.phone.mayOpenApps
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -52,8 +48,8 @@ import kotlinx.coroutines.sync.withLock
  * an app starts from the foreground or as a companion only. Other requests are logged once and not answered.
  */
 @Singleton
-class PhoneMedia @Inject constructor(@ApplicationContext private val context: Context, private val log: Provider<EventLog>) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + CoroutineExceptionHandler { _, _ -> })
+class PhoneMedia @Inject constructor(@ApplicationContext private val context: Context, private val log: EventLog) : Responder {
+    private val scope = responderScope(log, "Media", Dispatchers.Main)
     private val sending = Mutex()
     private val main = Handler(Looper.getMainLooper())
     private val unserved = mutableSetOf<Int>()
@@ -73,21 +69,20 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val reply = DataXConnection.mirror(message.info.channelId)
-        if (message.info.flags.isClosed) {
-            if (subscriber?.second == reply) subscriber = null
-            return
-        }
+        if (message.info.flags.isClosed) return
         when (message.info.messageType) {
             MT_SUBSCRIBE -> scope.launch {
-                subscriber = connection to reply
-                sentInfo = null
-                sentArt = null
+                sending.withLock {
+                    subscriber = connection to reply
+                    sentInfo = null
+                    sentArt = null
+                }
                 watch()
                 push()
             }
             MT_INFO_REQUEST -> {
                 val (player, name) = player(controller)
-                connection.send(reply, Wire.fieldVarint(1, player) + Wire.fieldBytes(2, name.encodeToByteArray()), messageType = MT_INFO_RESPONSE)
+                connection.send(reply, Wire.fieldVarint(1, player) + Wire.fieldString(2, name), messageType = MT_INFO_RESPONSE)
             }
             // TryLaunchAppMessage {1 package, 2 payload, 3 metadata}.
             MT_TRY_LAUNCH -> {
@@ -99,13 +94,13 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
             // Empty from the music screen's connect button; AIActionsLaunchApp {2 Android package} from the native handler.
             MT_CONNECT_AUDIO_APP -> {
                 val pkg = fields(message)?.bytes(2)?.decodeToString().orEmpty()
-                if (pkg.isEmpty()) log.get().add("Partner ecosystem: the glasses asked to connect a music app")
+                if (pkg.isEmpty()) log.add("Partner ecosystem: the glasses asked to connect a music app")
                 else scope.launch { tryLaunch(pkg, "") }
             }
             MT_LIKE -> scope.launch { setLiked(fields(message)?.varint(1) == 1L) }
             MT_NOTIFICATION_ACCESS -> scope.launch {
-                if (!startFromHere(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) && !askAccess()) {
-                    log.get().add("Notification access: Visor may not open settings from the background")
+                if (!startFromHere(listenerPage()) && !askAccess()) {
+                    log.add("Notification access: Visor may not open settings from the background")
                 }
             }
             MT_SPOTIFY_PLAYLISTS_REQUEST -> connection.send(reply, EMPTY, messageType = MT_SPOTIFY_PLAYLISTS_RESPONSE)
@@ -113,8 +108,12 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
                 val partner = fields(message)?.bytes(1) ?: EMPTY
                 connection.send(reply, Wire.fieldBytes(3, partner), messageType = MT_PLAYLIST_RESPONSE)
             }
-            else -> if (unserved.add(message.info.messageType)) log.get().add("Partner ecosystem: request ${message.info.messageType} not served")
+            else -> if (unserved.add(message.info.messageType)) log.add("Partner ecosystem: request ${message.info.messageType} not served")
         }
+    }
+
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        if (subscriber?.let { it.first === connection && it.second == DataXConnection.mirror(channelId) } == true) subscriber = null
     }
 
     private fun fields(message: DataXMessage) = runCatching { Wire.parse(message.payload) }.getOrNull()
@@ -131,6 +130,13 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     }
 
     private fun listener() = ComponentName(context, MirrorListener::class.java)
+
+    // Visor's own page among the notification listeners, else the list on phones without it.
+    private fun listenerPage(): Intent {
+        val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+            .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, listener().flattenToString())
+        return if (detail.resolveActivity(context.packageManager) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+    }
 
     private fun active(manager: MediaSessionManager): List<MediaController> =
         runCatching { manager.getActiveSessions(listener()) }.getOrDefault(emptyList())
@@ -154,7 +160,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
                 val (mux, reply) = subscriber ?: return@withLock
                 val (player, name) = player(session)
                 val info = Wire.fieldVarint(1, player) + Wire.fieldVarint(2, CONTENT_UNKNOWN) + Wire.fieldVarint(3, liked(session)) +
-                    Wire.fieldBytes(4, name.encodeToByteArray())
+                    Wire.fieldString(4, name)
                 val art = session?.metadata?.let { art(it) }
                 val newInfo = !info.contentEquals(sentInfo)
                 val newArt = !(art === sentArt || (art != null && sentArt?.let { art.sameAs(it) } == true))
@@ -169,7 +175,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     }
 
     private suspend fun sendArt(mux: DataXConnection, reply: Int, art: Bitmap?) {
-        if (art == null) return mux.send(reply, ByteArray(0), messageType = MT_ART_LAST)
+        if (art == null) return mux.send(reply, EMPTY, messageType = MT_ART_LAST)
         val jpeg = ByteArrayOutputStream().also { fit(art).compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }.toByteArray()
         for (at in jpeg.indices step CHUNK) {
             val end = minOf(at + CHUNK, jpeg.size)
@@ -229,7 +235,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
         when {
             session.ratingType == Rating.RATING_HEART -> session.transportControls.setRating(Rating.newHeartRating(wanted))
             session.ratingType == Rating.RATING_THUMB_UP_DOWN -> session.transportControls.setRating(Rating.newThumbRating(wanted))
-            action == null -> log.get().add("Like: ${session.packageName} has no like control")
+            action == null -> log.add("Like: ${session.packageName} has no like control")
             liked(session) != (if (wanted) LIKED_YES else LIKED_NO) -> session.transportControls.sendCustomAction(action.action, null)
         }
         push()
@@ -238,7 +244,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     // Tap and hold on a music tile asks for the app and its music: its session plays when it has one.
     private fun tryLaunch(pkg: String, payload: String) {
         if (pkg.isEmpty() || pkg == BE_MY_EYES) return
-        if (!launch(pkg)) return log.get().add("Partner app $pkg: not started from the background")
+        if (!launch(pkg)) return log.add("Partner app $pkg: not started from the background")
         if (payload == TAP_AND_HOLD) sessions?.let { active(it) }?.firstOrNull { it.packageName == pkg }?.transportControls?.play()
     }
 
@@ -252,15 +258,15 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     private fun askAccess(): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false
         if (!manager.areNotificationsEnabled()) return false
-        manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.finish_conn_channel), NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.access_listener_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(
             context, ACCESS_ID,
-            Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            listenerPage().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_visor)
-            .setContentTitle(context.getString(R.string.finish_conn_notification_access))
+            .setContentTitle(context.getString(R.string.access_listener_prompt))
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
@@ -268,10 +274,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     }
 
     private fun startFromHere(intent: Intent): Boolean =
-        (onScreen() || companionAssociated(context)) && runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
-
-    private fun onScreen(): Boolean = ActivityManager.RunningAppProcessInfo()
-        .also(ActivityManager::getMyMemoryState).importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        mayOpenApps(context) && runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
 
     companion object {
         const val SVC = 9012
@@ -310,7 +313,7 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
         // Thumbs down and dislike sit beside the like action in many players.
         private val NOT_LIKE = Regex("dislike|unlike|down|remove", RegexOption.IGNORE_CASE)
         private val PLAYERS = mapOf(
-            "com.spotify.music" to 1L, "com.apple.android.music" to 2L, "com.amazon.mp3" to 3L,
+            SPOTIFY to 1L, "com.apple.android.music" to 2L, "com.amazon.mp3" to 3L,
             "com.audible.application" to 4L, "com.clearchannel.iheartradio.controller" to 5L, "com.calm.android" to 6L,
         )
     }

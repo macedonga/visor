@@ -1,8 +1,10 @@
 package com.macedonga.visor.core.identity.firmware
 
-import com.macedonga.visor.core.identity.HttpPost
-import com.macedonga.visor.core.identity.UrlConnectionPost
-import com.macedonga.visor.core.identity.language.constellationPost
+import com.macedonga.visor.core.identity.constellationPost
+import com.macedonga.visor.core.identity.number
+import com.macedonga.visor.core.identity.obj
+import com.macedonga.visor.core.identity.path
+import com.macedonga.visor.core.identity.text
 import com.macedonga.visor.core.identity.token.Token
 import com.macedonga.visor.core.identity.token.TokenError
 import java.util.UUID
@@ -14,7 +16,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -57,7 +58,6 @@ fun fetchFirmwareOffer(
     constellationType: String? = null,
     constellationFirmware: String? = null,
     constellationSerial: String? = null,
-    http: HttpPost = UrlConnectionPost,
 ): FirmwareOffer? {
     val sessionId = UUID.randomUUID().toString()
     val info = buildJsonObject {
@@ -75,10 +75,10 @@ fun fetchFirmwareOffer(
         put("constellation_device_firmware_version", constellationFirmware)
         put("constellation_device_serial", constellationSerial)
     }
-    val (status, json) = constellationPost(token, "FetchConstellationUpdates", UPDATES_DOC, info, http)
+    val (status, json) = constellationPost(token, "FetchConstellationUpdates", UPDATES_DOC, info)
     val responses = json.path("data", "xar_constellation_updates")?.get("constellation_updates_response_info") as? JsonArray
         ?: throw TokenError("Meta answered $status without updates")
-    val offer = responses.firstNotNullOfOrNull { (it.jsonObject["firmware_update_info"] as? JsonObject) } ?: return null
+    val offer = responses.firstNotNullOfOrNull { (it as? JsonObject)?.obj("firmware_update_info") } ?: return null
     val url = offer.text("file_uri") ?: throw TokenError("Meta's firmware offer has no file")
     // The options come as an object or as the JSON text of one.
     val options = when (val raw = offer["extra_install_options"]) {
@@ -110,11 +110,3 @@ fun fetchFirmwareOffer(
         sessionId = sessionId,
     )
 }
-
-private fun JsonObject.path(vararg keys: String): JsonObject? =
-    keys.fold(this as JsonObject?) { o, k -> o?.get(k) as? JsonObject }
-
-private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
-
-// A number Meta sends as a number or as its text.
-private fun JsonObject.number(key: String): Long? = (this[key] as? JsonPrimitive)?.let { it.longOrNull ?: it.contentOrNull?.toLongOrNull() }

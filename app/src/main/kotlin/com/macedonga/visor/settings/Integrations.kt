@@ -1,14 +1,12 @@
 package com.macedonga.visor.settings
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
@@ -27,7 +25,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -75,7 +72,10 @@ import com.macedonga.visor.core.assistant.mcp.SignIn
 import com.macedonga.visor.core.assistant.mcp.Transport
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.allows
+import com.macedonga.visor.ui.copy
 import com.macedonga.visor.ui.lineLimit
+import com.macedonga.visor.ui.paste
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.launch
@@ -101,7 +101,7 @@ fun IntegrationsScreen(open: (NavKey) -> Unit, model: IntegrationsViewModel = hi
         item(key = "servers") {
             Rows(
                 *servers.map { s -> @Composable { ServerRow(s, statuses[s.id]) { open(IntegrationKey(s.id)) } } }.toTypedArray(),
-                { AddRow { adding = true } },
+                { NavRow(VisorIcons.Plus, stringResource(R.string.mcp_add), null, onClick = { adding = true }, onCard = true) },
             )
         }
     }
@@ -118,7 +118,7 @@ private fun ServerRow(server: McpServer, status: McpStatus?, onClick: () -> Unit
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ServerMark(server, status, 40, onCard = true)
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(server.name, style = Visor.type.body, color = colors.textPrimary, maxLines = lineLimit(1), overflow = TextOverflow.Ellipsis)
             Text(
@@ -131,33 +131,6 @@ private fun ServerRow(server: McpServer, status: McpStatus?, onClick: () -> Unit
         }
         if (status?.busy == true) Spinner(Modifier.padding(start = 12.dp))
         Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = colors.textTertiary)
-    }
-}
-
-/** The last row of the list: a tile with a plus, in line with the servers' marks. */
-@Composable
-private fun AddRow(onClick: () -> Unit) {
-    val colors = Visor.colors
-    Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(colors.control), contentAlignment = Alignment.Center) {
-            Icon(VisorIcons.Plus, null, Modifier.size(20.dp), tint = colors.textPrimary)
-        }
-        Spacer(Modifier.width(14.dp))
-        Text(stringResource(R.string.mcp_add), style = Visor.type.body, color = colors.textPrimary)
-    }
-}
-
-/** A row that destroys something, in the signal colour, on a card like any other. */
-@Composable
-private fun DangerRow(text: String, onClick: () -> Unit) {
-    Box(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onClick).padding(horizontal = 16.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Text(text, style = Visor.type.body, color = Visor.colors.signal)
     }
 }
 
@@ -236,11 +209,11 @@ private fun toolsWords(n: Int) = pluralStringResource(R.plurals.mcp_tools, n, n)
 
 /** For the assistant's settings: what the integrations come to, in a line. */
 @Composable
-fun integrationsSummary(hub: McpHub): String {
+fun integrationsSummary(hub: McpHub): String? {
     val servers by hub.store.servers.collectAsStateWithLifecycle()
     val statuses by hub.status.collectAsStateWithLifecycle()
     return when (servers.size) {
-        0 -> stringResource(R.string.mcp_row_none)
+        0 -> null
         1 -> servers[0].name + " · " + statusLine(servers[0], statuses[servers[0].id])
         else -> servers.count { it.enabled && statuses[it.id]?.phase == McpStatus.Phase.READY }.let { pluralStringResource(R.plurals.mcp_connected, it, it) }
     }
@@ -261,20 +234,23 @@ private fun AddServerSheet(hub: McpHub, onDismiss: () -> Unit, onAdded: (String)
     var probing by remember { mutableStateOf(false) }
     var probe by remember { mutableStateOf<Probe?>(null) }
     val address = url.trim()
-    val valid = address.startsWith("https://") || address.startsWith("http://")
+    val valid = isWebAddress(address)
     fun server(kind: AuthKind) = McpServer(name = name.trim().ifEmpty { hostOf(address) }, url = address, auth = kind, secret = secret.trim(), header = header.trim())
+    fun save(kind: AuthKind, signIn: Boolean = false) {
+        val s = server(kind)
+        hub.store.add(s)
+        if (signIn) hub.signIn(s.id)
+        onAdded(s.id)
+    }
     fun connect() {
         probing = true
         probe = null
         scope.launch {
-            val found = hub.probe(address, auth, secret, header)
+            val found = hub.probe(address, auth, secret.trim(), header.trim())
             probing = false
             probe = found
             when (found) {
-                is Probe.Works -> server(auth).let { s ->
-                    hub.store.add(s)
-                    onAdded(s.id)
-                }
+                is Probe.Works -> save(auth)
                 is Probe.NeedsKey -> if (auth == AuthKind.NONE) auth = AuthKind.TOKEN
                 else -> Unit
             }
@@ -289,14 +265,14 @@ private fun AddServerSheet(hub: McpHub, onDismiss: () -> Unit, onAdded: (String)
         AnimatedVisibility(auth != AuthKind.NONE, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
             Column {
                 Box(Modifier.padding(horizontal = 16.dp).padding(top = 20.dp)) {
-                    Pills(listOf(AuthKind.TOKEN to stringResource(R.string.mcp_token), AuthKind.HEADER to stringResource(R.string.mcp_header)), auth) { auth = it }
+                    Pills(listOf(AuthKind.TOKEN to stringResource(R.string.mcp_token), AuthKind.HEADER to stringResource(R.string.mcp_header)), auth) { auth = it; probe = null }
                 }
                 if (auth == AuthKind.HEADER) {
                     FieldLabel(stringResource(R.string.mcp_header_name))
-                    SheetField(header, { header = it.trim() }, hint = "X-API-Key")
+                    SheetField(header, { header = it.trim(); probe = null }, hint = "X-API-Key")
                 }
                 FieldLabel(stringResource(if (auth == AuthKind.HEADER) R.string.mcp_header_value else R.string.mcp_token))
-                SheetField(secret, { secret = it }, secret = true, keyboard = KeyboardType.Password)
+                SheetField(secret, { secret = it; probe = null }, secret = true, keyboard = KeyboardType.Password)
             }
         }
         val found = probe
@@ -316,22 +292,11 @@ private fun AddServerSheet(hub: McpHub, onDismiss: () -> Unit, onAdded: (String)
             horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
         ) {
             if (found is Probe.Failed) {
-                ActionPill(stringResource(R.string.mcp_save_anyway), {
-                    server(auth).let { s ->
-                        hub.store.add(s)
-                        onAdded(s.id)
-                    }
-                }, quiet = true)
+                ActionPill(stringResource(R.string.mcp_save_anyway), { save(auth) }, quiet = true)
             }
             Spacer(Modifier.weight(1f))
             if (found is Probe.SignIn) {
-                ActionPill(stringResource(R.string.mcp_sign_in), {
-                    server(AuthKind.OAUTH).let { s ->
-                        hub.store.add(s)
-                        hub.signIn(s.id)
-                        onAdded(s.id)
-                    }
-                })
+                ActionPill(stringResource(R.string.mcp_sign_in), { save(AuthKind.OAUTH, signIn = true) })
             } else {
                 ActionPill(stringResource(R.string.mcp_connect), ::connect, enabled = valid && !probing)
             }
@@ -375,10 +340,19 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
             openInBrowser(context, s.url)
         }
     }
+    val activity = LocalActivity.current
     var lanAllowed by remember { mutableStateOf(localNetworkAllowed(context)) }
     val askLan = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         lanAllowed = it
         if (it) hub.check(id)
+        else if (Build.VERSION.SDK_INT >= 37 && activity?.shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_LOCAL_NETWORK) == false) openAppPage(context)
+    }
+    // A grant made in the system's own page counts on the way back.
+    LifecycleResumeEffect(Unit) {
+        val now = localNetworkAllowed(context)
+        if (now && !lanAllowed) hub.check(id)
+        lanAllowed = now
+        onPauseOrDispose { }
     }
     val needsLan = !lanAllowed && isLocalAddress(server.url)
     val mine = signIn.takeIf { it.id == id }
@@ -390,11 +364,10 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
         actions = {
             when {
                 status?.busy == true || signing -> Spinner(Modifier.padding(horizontal = 13.dp))
-                server.enabled -> com.macedonga.visor.gallery.RoundIcon(VisorIcons.Refresh, stringResource(R.string.mcp_check_again), { hub.check(id) })
+                server.enabled -> RoundIcon(VisorIcons.Refresh, stringResource(R.string.mcp_check_again), { hub.check(id) })
             }
         },
-    ) {
-        item(key = "head") {
+        sheet = {
             val host = LocalHost.current
             val done = stringResource(R.string.mcp_signed_in)
             LaunchedEffect(mine) {
@@ -403,15 +376,16 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
                     hub.clearSignIn()
                 }
             }
-            ServerHead(server, status)
-        }
+        },
+    ) {
+        item(key = "head") { ServerHead(server, status) }
         item(key = "use") {
             Column(Modifier.padding(top = 24.dp)) {
                 Rows(
                     { ToggleRow(stringResource(R.string.mcp_use), server.enabled, onChange = { on -> update { it.copy(enabled = on) } }) },
                     if (needsLan) row {
                         RowFrame(stringResource(R.string.mcp_local_network), onClick = null) {
-                            ActionPill(stringResource(R.string.access_allow), { if (Build.VERSION.SDK_INT >= 36) askLan.launch(Manifest.permission.ACCESS_LOCAL_NETWORK) }, modifier = Modifier.padding(start = 12.dp))
+                            ActionPill(stringResource(R.string.allow), { if (Build.VERSION.SDK_INT >= 37) askLan.launch(Manifest.permission.ACCESS_LOCAL_NETWORK) }, modifier = Modifier.padding(start = 12.dp))
                         }
                     } else null,
                 )
@@ -422,10 +396,7 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
                 SectionLabel(stringResource(R.string.mcp_section_access))
                 val wantsAccount = status?.phase == McpStatus.Phase.SIGN_IN
                 Rows(*accessRows(server, mine, wantsAccount, onSheet = { sheet = it }, onSignIn = { hub.signIn(id) }, onSignOut = { hub.signOut(id) }, context).toTypedArray())
-                val failed = mine as? SignIn.Failed
-                if (failed != null) {
-                    Footnote(if (failed.needsClient) stringResource(R.string.mcp_needs_client) else failed.why, color = Visor.colors.signal)
-                }
+                if ((mine as? SignIn.Failed)?.needsClient == true) Footnote(stringResource(R.string.mcp_needs_client), color = Visor.colors.signal)
             }
         }
         item(key = "tools") {
@@ -437,7 +408,7 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
                 Rows(
                     { ValueRow(stringResource(R.string.mcp_name), server.name, onClick = { sheet = "name" }) },
                     { ValueRow(stringResource(R.string.mcp_address), null, onClick = { sheet = "url" }, keyLine = server.url) },
-                    { DangerRow(stringResource(R.string.mcp_remove)) { sheet = "remove" } },
+                    { RowFrame(stringResource(R.string.mcp_remove), onClick = { sheet = "remove" }) },
                 )
             }
         }
@@ -446,12 +417,7 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
     when (sheet) {
         "method" -> ChoiceSheet(
             stringResource(R.string.mcp_method),
-            listOf(
-                Triple(AuthKind.NONE, stringResource(R.string.mcp_method_none), null),
-                Triple(AuthKind.TOKEN, stringResource(R.string.mcp_method_token), null),
-                Triple(AuthKind.HEADER, stringResource(R.string.mcp_method_header), null),
-                Triple(AuthKind.OAUTH, stringResource(R.string.mcp_method_oauth), null),
-            ),
+            AuthKind.entries.map { Triple(it, methodWords(it), null) },
             server.auth,
             onPick = { kind ->
                 update { it.copy(auth = kind) }
@@ -459,17 +425,13 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
             },
             onDismiss = { sheet = null },
         )
-        "token" -> TextSheet(
-            stringResource(R.string.mcp_token), server.secret, onSave = { t -> update { it.copy(secret = t.trim()) } }, onDismiss = { sheet = null },
+        "secret" -> TextSheet(
+            stringResource(if (server.auth == AuthKind.HEADER) R.string.mcp_header_value else R.string.mcp_token), server.secret,
+            onSave = { t -> update { it.copy(secret = t.trim()) } }, onDismiss = { sheet = null },
             secret = true, keyboard = KeyboardType.Password,
-            extra = { set -> ActionPill(stringResource(R.string.ai_paste), { pasted(context)?.let { set(it.trim()) } }, quiet = true) },
+            extra = { set -> ActionPill(stringResource(R.string.ai_paste), { paste(context)?.let { set(it.trim()) } }, quiet = true) },
         )
         "header" -> TextSheet(stringResource(R.string.mcp_header_name), server.header, onSave = { h -> update { it.copy(header = h.trim()) } }, onDismiss = { sheet = null }, hint = "X-API-Key")
-        "value" -> TextSheet(
-            stringResource(R.string.mcp_header_value), server.secret, onSave = { v -> update { it.copy(secret = v.trim()) } }, onDismiss = { sheet = null },
-            secret = true, keyboard = KeyboardType.Password,
-            extra = { set -> ActionPill(stringResource(R.string.ai_paste), { pasted(context)?.let { set(it.trim()) } }, quiet = true) },
-        )
         "client" -> TextSheet(
             stringResource(R.string.mcp_client_id), server.clientId, onSave = { c -> update { it.copy(clientId = c.trim()) } }, onDismiss = { sheet = null },
         )
@@ -490,18 +452,13 @@ fun IntegrationScreen(id: String, onGone: () -> Unit, model: IntegrationsViewMod
         "name" -> TextSheet(stringResource(R.string.mcp_name), server.name, onSave = { n -> update { it.copy(name = n.trim().ifEmpty { it.name }) } }, onDismiss = { sheet = null })
         "url" -> TextSheet(
             stringResource(R.string.mcp_address), server.url, onSave = { u -> update { it.copy(url = u.trim(), transport = Transport.AUTO) } }, onDismiss = { sheet = null },
-            keyboard = KeyboardType.Uri, valid = { it.trim().startsWith("http://") || it.trim().startsWith("https://") },
+            keyboard = KeyboardType.Uri, valid = ::isWebAddress,
         )
-        "remove" -> VisorSheet({ sheet = null }) {
-            SheetTitle(stringResource(R.string.mcp_remove_title, server.name))
-            Row(Modifier.fillMaxWidth().padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Spacer(Modifier.weight(1f))
-                ActionPill(stringResource(R.string.mcp_remove_confirm), {
-                    sheet = null
-                    hub.store.remove(id)
-                })
-            }
-        }
+        "remove" -> ConfirmSheet(
+            stringResource(R.string.mcp_remove_title, server.name), null, stringResource(R.string.mcp_remove_confirm),
+            onConfirm = { hub.store.remove(id) },
+            onDismiss = { sheet = null },
+        )
     }
 }
 
@@ -517,16 +474,9 @@ private fun ServerHead(server: McpServer, status: McpStatus?) {
             Column(Modifier.weight(1f)) {
                 Text(statusLine(server, status), style = Visor.type.heading, color = if (problem) colors.signal else colors.textPrimary)
                 val info = status?.info
-                val about = listOfNotNull(
-                    info?.let { "${it.name} ${it.version}".trim() }?.takeIf { it.isNotEmpty() },
-                    info?.protocol?.let { "MCP $it" },
-                    status?.takeIf { it.phase == McpStatus.Phase.READY }?.latencyMs?.let { "$it ms" },
-                ).joinToString(" · ")
+                val about = info?.let { "${it.name} ${it.version}".trim() }.orEmpty()
                 if (about.isNotEmpty()) Text(about, style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(top = 2.dp))
             }
-        }
-        if (server.enabled && status?.phase == McpStatus.Phase.FAILED && status.error.isNotBlank()) {
-            Text(status.error, style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(top = 12.dp))
         }
     }
 }
@@ -544,10 +494,10 @@ private fun accessRows(
     val rows = ArrayList<@Composable () -> Unit>()
     rows += { ValueRow(stringResource(R.string.mcp_method), methodWords(server.auth), onClick = { onSheet("method") }) }
     when (server.auth) {
-        AuthKind.TOKEN -> rows += { ValueRow(stringResource(R.string.mcp_token), masked(server.secret) ?: stringResource(R.string.settings_not_set), onClick = { onSheet("token") }) }
+        AuthKind.TOKEN -> rows += { ValueRow(stringResource(R.string.mcp_token), masked(server.secret) ?: stringResource(R.string.settings_not_set), onClick = { onSheet("secret") }) }
         AuthKind.HEADER -> {
             rows += { ValueRow(stringResource(R.string.mcp_header_name), server.header.ifEmpty { stringResource(R.string.settings_not_set) }, onClick = { onSheet("header") }) }
-            rows += { ValueRow(stringResource(R.string.mcp_header_value), masked(server.secret) ?: stringResource(R.string.settings_not_set), onClick = { onSheet("value") }) }
+            rows += { ValueRow(stringResource(R.string.mcp_header_value), masked(server.secret) ?: stringResource(R.string.settings_not_set), onClick = { onSheet("secret") }) }
         }
         AuthKind.OAUTH, AuthKind.NONE -> if (server.auth == AuthKind.OAUTH || wantsAccount) {
             rows += {
@@ -563,21 +513,21 @@ private fun accessRows(
                         else -> stringResource(R.string.mcp_not_signed_in)
                     },
                     busy = busy,
+                    problem = if (signIn is SignIn.Failed && !signIn.needsClient) stringResource(R.string.mcp_sign_in_failed) else null,
                 ) {
                     if (grant?.signedIn == true) {
                         ActionPill(stringResource(R.string.mcp_sign_out), onSignOut, modifier = Modifier.padding(start = 12.dp), quiet = true)
                     } else {
-                        ActionPill(stringResource(R.string.mcp_sign_in), onSignIn, modifier = Modifier.padding(start = 12.dp), enabled = !busy)
+                        ActionPill(
+                            stringResource(if (signIn is SignIn.Failed) R.string.mcp_sign_in_again else R.string.mcp_sign_in),
+                            onSignIn, modifier = Modifier.padding(start = 12.dp), enabled = !busy,
+                        )
                     }
                 }
             }
-            rows += {
-                val auto = server.oauth?.takeIf { !it.manualClient && it.clientId.isNotEmpty() }
-                ValueRow(
-                    stringResource(R.string.mcp_client_id),
-                    server.clientId.ifEmpty { if (auto != null) stringResource(R.string.mcp_client_auto) else stringResource(R.string.settings_not_set) },
-                    onClick = { onSheet("client") },
-                )
+            // Asked for only when the server cannot register Visor itself.
+            if (server.clientId.isNotEmpty() || (signIn as? SignIn.Failed)?.needsClient == true) {
+                rows += { ValueRow(stringResource(R.string.mcp_client_id), server.clientId.ifEmpty { stringResource(R.string.settings_not_set) }, onClick = { onSheet("client") }) }
             }
             if (server.clientId.isNotEmpty()) {
                 rows += { ValueRow(stringResource(R.string.mcp_client_secret), masked(server.clientSecret) ?: stringResource(R.string.settings_not_set), onClick = { onSheet("clientSecret") }) }
@@ -585,16 +535,18 @@ private fun accessRows(
                     val host = LocalHost.current
                     val copied = stringResource(R.string.mcp_copied)
                     val redirect = server.redirect.ifEmpty { OAuthRedirects.APP }
-                    ValueRow(
+                    RowFrame(
                         stringResource(R.string.mcp_redirect),
-                        stringResource(if (redirect == OAuthRedirects.APP) R.string.mcp_redirect_app else R.string.mcp_redirect_loopback),
                         onClick = { onSheet("redirect") },
-                        onLongClick = {
-                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("redirect", redirect))
-                            host.notice.show(copied)
-                        },
+                        value = stringResource(if (redirect == OAuthRedirects.APP) R.string.mcp_redirect_app else R.string.mcp_redirect_loopback),
                         keyLine = redirect,
-                    )
+                    ) {
+                        ActionPill(stringResource(R.string.meta_ai_copy), {
+                            copy(context, redirect, "redirect")
+                            host.notice.show(copied)
+                        }, quiet = true, modifier = Modifier.padding(start = 12.dp))
+                        Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = Visor.colors.textTertiary)
+                    }
                 }
             }
         }
@@ -605,15 +557,10 @@ private fun accessRows(
 /** Its tools, each on or off for the assistant, with what it does in the server's own words. */
 @Composable
 private fun ToolsSection(server: McpServer, tools: List<McpTool>, update: ((McpServer) -> McpServer) -> Unit) {
+    if (tools.isEmpty()) return
     Column {
         val on = tools.count { it.name !in server.off }
-        SectionLabel(
-            stringResource(R.string.mcp_section_tools) + if (tools.isNotEmpty()) " · " + stringResource(R.string.mcp_tools_on, on, tools.size) else "",
-        )
-        if (tools.isEmpty()) {
-            Footnote(stringResource(R.string.mcp_tools_empty))
-            return@Column
-        }
+        SectionLabel(stringResource(R.string.mcp_section_tools) + " · " + stringResource(R.string.mcp_tools_on, on, tools.size))
         Rows(
             if (tools.size > 1) row {
                 ToggleRow(
@@ -646,8 +593,6 @@ private fun methodWords(kind: AuthKind) = stringResource(
     },
 )
 
-private fun masked(secret: String): String? = secret.takeIf { it.isNotBlank() }?.let { "••••" + it.takeLast(4) }
-
 /** "turnOn" as "Turn on", "list_issues" as "List issues". */
 private fun readable(name: String): String {
     return name.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2").replace('_', ' ').replace('-', ' ').trim().lowercase().replaceFirstChar { it.uppercase() }
@@ -663,9 +608,6 @@ private fun firstSentences(text: String, max: Int = 160): String? {
 
 private fun hostOf(url: String): String = runCatching { Uri.parse(url.trim()).host.orEmpty() }.getOrDefault("").removePrefix("www.")
 
-private fun pasted(context: Context): String? =
-    context.getSystemService(ClipboardManager::class.java)?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-
 /** The sign-in page in a Custom Tab, or in any browser there is. */
 private fun openInBrowser(context: Context, url: String) {
     val uri = Uri.parse(url)
@@ -677,16 +619,20 @@ private fun openInBrowser(context: Context, url: String) {
 }
 
 private fun localNetworkAllowed(context: Context): Boolean =
-    Build.VERSION.SDK_INT < 36 || context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
+    Build.VERSION.SDK_INT < 37 || context.allows(Manifest.permission.ACCESS_LOCAL_NETWORK)
 
 /** An address on the home network: private ranges, link-local, .local and the like, a bare host name. */
 private fun isLocalAddress(url: String): Boolean {
     val host = runCatching { Uri.parse(url.trim()).host }.getOrNull()?.lowercase() ?: return false
     if (host == "localhost" || host.startsWith("127.")) return false
+    // Uri keeps an IPv6 literal's brackets.
+    if (':' in host) {
+        val v6 = host.trim('[', ']')
+        return v6.startsWith("fe80") || v6.startsWith("fc") || v6.startsWith("fd")
+    }
     val v4 = host.split('.').mapNotNull { it.toIntOrNull() }.takeIf { it.size == 4 }
     if (v4 != null) {
         return v4[0] == 10 || (v4[0] == 192 && v4[1] == 168) || (v4[0] == 172 && v4[1] in 16..31) || (v4[0] == 169 && v4[1] == 254)
     }
-    if (host.startsWith("[fe80") || host.startsWith("[fc") || host.startsWith("[fd") || host.startsWith("fe80") || host.startsWith("fd")) return true
     return '.' !in host || listOf(".local", ".lan", ".home", ".home.arpa", ".internal").any { host.endsWith(it) }
 }

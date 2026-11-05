@@ -16,6 +16,8 @@
     <string name="webapps_not_opened">The glasses did not open it</string>
     <string name="webapps_not_https">Use an https address</string>
     <string name="webapps_full">Up to 20 web apps</string>
-    <string name="webapps_not_connected">Connect the glasses first</string>
     <string name="webapps_unreadable">Could not read the glasses\' web apps</string>
+    <string name="webapps_err_missing">No such web app</string>
+    <string name="webapps_err_open">Web apps open from the phone</string>
+    <string name="webapps_err_unknown">Unknown action</string>
 </resources>

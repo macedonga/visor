@@ -1,11 +1,19 @@
 package com.macedonga.visor.core.assistant
 
+import com.macedonga.visor.core.connection.objects
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+
+internal const val ANTHROPIC_API = "https://api.anthropic.com/v1"
+
+internal fun anthropicHeaders(key: String) = mapOf("x-api-key" to key, "anthropic-version" to "2023-06-01")
+
+internal fun bearerHeaders(key: String) = if (key.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer $key")
 
 /** A model the provider offers: its id, the name it gives it, and when it came out (epoch seconds, 0 unknown). */
 data class ModelInfo(val id: String, val name: String, val created: Long)
@@ -20,14 +28,13 @@ class ModelsError(val refused: Boolean, message: String) : Exception(message)
 suspend fun listModels(config: AssistantConfig): List<ModelInfo> = withContext(Dispatchers.IO) {
     when (config.provider) {
         Provider.CLAUDE -> {
-            val headers = mapOf("x-api-key" to config.apiKey, "anthropic-version" to "2023-06-01")
+            val headers = anthropicHeaders(config.apiKey)
             val all = mutableListOf<ModelInfo>()
             var after: String? = null
             do {
-                val page = get("https://api.anthropic.com/v1/models?limit=1000" + (after?.let { "&after_id=" + URLEncoder.encode(it, "UTF-8") } ?: ""), headers)
-                val data = page.optJSONArray("data")
-                for (i in 0 until (data?.length() ?: 0)) {
-                    val m = data!!.getJSONObject(i)
+                val page = get("$ANTHROPIC_API/models?limit=1000" + (after?.let { "&after_id=" + URLEncoder.encode(it, "UTF-8") } ?: ""), headers)
+                val data = page.optJSONArray("data") ?: JSONArray()
+                for (m in data.objects()) {
                     all += ModelInfo(m.getString("id"), m.optString("display_name").ifEmpty { m.getString("id") }, created(m.optString("created_at")))
                 }
                 after = if (page.optBoolean("has_more")) page.optString("last_id").ifEmpty { null } else null
@@ -35,13 +42,9 @@ suspend fun listModels(config: AssistantConfig): List<ModelInfo> = withContext(D
             all
         }
         Provider.OPENAI_COMPATIBLE -> {
-            val headers = if (config.apiKey.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${config.apiKey}")
-            val page = get(config.baseUrl.trimEnd('/') + "/models", headers)
-            val data = page.optJSONArray("data")
-            (0 until (data?.length() ?: 0)).map { i ->
-                val m = data!!.getJSONObject(i)
-                ModelInfo(m.getString("id"), m.getString("id"), m.optLong("created"))
-            }
+            val page = get(config.baseUrl.trimEnd('/') + "/models", bearerHeaders(config.apiKey))
+            val data = page.optJSONArray("data") ?: JSONArray()
+            data.objects().map { m -> ModelInfo(m.getString("id"), m.getString("id"), m.optLong("created")) }
         }
     }.sortedByDescending { it.created }
 }

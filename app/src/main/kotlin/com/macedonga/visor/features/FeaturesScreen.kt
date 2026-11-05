@@ -1,23 +1,22 @@
 package com.macedonga.visor.features
 
+import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,7 +26,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -43,26 +41,28 @@ import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.Hearing
 import com.macedonga.visor.core.assistant.HearingMode
 import com.macedonga.visor.core.assistant.HearingRun
+import com.macedonga.visor.core.assistant.HearingState
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.ConfigState
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.Card
 import com.macedonga.visor.settings.Footnote
 import com.macedonga.visor.settings.KeyLine
 import com.macedonga.visor.settings.LocalHost
-import com.macedonga.visor.settings.NavRow
 import com.macedonga.visor.settings.Pins
+import com.macedonga.visor.settings.RowFrame
 import com.macedonga.visor.settings.Rows
 import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SectionLabel
-import com.macedonga.visor.settings.SettingsPage
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.Spinner
 import com.macedonga.visor.settings.Topic
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.VisorSwitch
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.asHeading
 import com.macedonga.visor.ui.switchRow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -72,13 +72,10 @@ class FeaturesModel @Inject constructor(
     val features: Features,
     val config: GlassesConfig,
     val settings: GlassesSettings,
-    val hearing: com.macedonga.visor.core.assistant.Hearing,
+    val hearing: Hearing,
 ) : ViewModel()
 
-/**
- * [topic]'s features Meta keeps off, on its page. A row says what one does while it is off and how to use it once it
- * is on; held, it opens what Visor changes for it.
- */
+/** [topic]'s hidden features as rows; a long press opens the switches Visor writes. */
 fun LazyListScope.featureSection(topic: Topic, open: (NavKey) -> Unit, heading: Boolean = true) {
     val features = Feature.entries.filter { it.topic == topic }
     if (features.isNotEmpty()) item(key = "feature-rows") { FeatureSection(features, open, heading) }
@@ -87,7 +84,8 @@ fun LazyListScope.featureSection(topic: Topic, open: (NavKey) -> Unit, heading: 
 @Composable
 private fun FeatureSection(all: List<Feature>, open: (NavKey) -> Unit, heading: Boolean, model: FeaturesModel = hiltViewModel()) {
     val state by model.features.state.collectAsStateWithLifecycle()
-    val features = all.filter { it.on(state.product) }
+    val now by model.hearing.state.collectAsStateWithLifecycle()
+    val features = all.filter { it.offeredOn(state.product) }
     if (features.isEmpty()) return
     val host = LocalHost.current
     var details by remember { mutableStateOf<Feature?>(null) }
@@ -102,12 +100,15 @@ private fun FeatureSection(all: List<Feature>, open: (NavKey) -> Unit, heading: 
                 @Composable {
                     FeatureRow(
                         f, state.standings[f] ?: Standing.UNKNOWN, on = state.wanted[f] == true, waits = f in state.restart,
-                        configRead = state.configRead, open = open, toggle = { model.features.set(f, it) }, details = { details = f },
+                        running = f.page && now.runFor(f) == HearingRun.ON, configRead = state.configRead, busy = state.busy,
+                        open = open, toggle = { model.features.set(f, it) }, read = model.features::check, details = { details = f },
                     )
                 }
             }.toTypedArray(),
         )
-        state.problem?.let { Footnote(stringResource(R.string.features_problem, it), Visor.colors.signal) }
+        state.problem?.let {
+            Footnote(stringResource(if (it == FeatureProblem.NOT_READ) R.string.features_not_read else R.string.features_problem), Visor.colors.signal)
+        }
     }
     details?.let { FeatureDetails(it, onDismiss = { details = null }) }
 }
@@ -118,18 +119,15 @@ fun FeatureDetails(feature: Feature, onDismiss: () -> Unit, model: FeaturesModel
     val state by model.features.state.collectAsStateWithLifecycle()
     val config by model.config.state.collectAsStateWithLifecycle()
     FeatureSheet(
-        feature, state.standings[feature] ?: Standing.UNKNOWN, on = state.wanted[feature] == true, config = config, settings = model.settings,
-        toggle = { model.features.set(feature, it) }, onDismiss = onDismiss,
+        feature, feature.gatesFor(state.device), state.standings[feature] ?: Standing.UNKNOWN, on = state.wanted[feature] == true, config = config,
+        settings = model.settings, toggle = { model.features.set(feature, it) }, onDismiss = onDismiss,
     )
 }
 
 /** A pinned feature as its tile shows it, and what a tap on it does. */
 class FeatureFace(val title: String, val state: String, val on: Boolean, val busy: Boolean, val act: () -> Unit)
 
-/**
- * [feature] on a quick tile. Focus and correction start, stop and resume from it, and open their page while they
- * cannot; the others turn on and off as their row does.
- */
+/** [feature] as a quick tile: focus and correction start and stop, the rest turn on and off. */
 @Composable
 fun featureFace(feature: Feature, features: Features, hearing: Hearing, open: (NavKey) -> Unit): FeatureFace {
     val host = LocalHost.current
@@ -140,13 +138,11 @@ fun featureFace(feature: Feature, features: Features, hearing: Hearing, open: (N
         val now by hearing.state.collectAsStateWithLifecycle()
         val tested by features.tested.collectAsStateWithLifecycle()
         val focus = feature == Feature.CONVERSATION_FOCUS
-        val modes = if (focus) setOf(HearingMode.FOCUS, HearingMode.UNSET) else setOf(HearingMode.CORRECTION, HearingMode.CORRECTION_NARROW)
-        val run = if (now.mode in modes) now.run else HearingRun.OFF
-        val paused = run == HearingRun.PAUSED || run == HearingRun.PAUSED_BY_USER
+        val run = now.runFor(feature)
+        val paused = run.paused
         val blocker = when {
             standing == Standing.UNKNOWN -> R.string.settings_not_read
             standing != Standing.ON -> R.string.cf_now_locked
-            !focus && feature in state.restart -> R.string.features_restart_title
             !focus && !(now.fitted ?: tested) -> R.string.hc_now_untested
             else -> null
         }
@@ -166,49 +162,54 @@ fun featureFace(feature: Feature, features: Features, hearing: Hearing, open: (N
         }
     }
     val on = state.wanted[feature] == true
-    val busy = standing == Standing.SENDING || standing == Standing.CHECKING
+    val busy = standing == Standing.SENDING || standing == Standing.CHECKING || (standing == Standing.UNKNOWN && state.busy)
     val words = when (standing) {
         Standing.UNKNOWN -> R.string.settings_not_read
         Standing.PARTLY -> R.string.tile_partly
         Standing.REFUSED -> R.string.tile_refused
+        Standing.UNCONFIRMED -> R.string.features_unconfirmed
         Standing.ON -> if (feature in state.restart) R.string.features_restart_title else R.string.sum_on
         else -> if (on) R.string.sum_on else R.string.sum_off
     }
-    val readFirst = stringResource(R.string.features_read_first)
+    val connectFirst = stringResource(R.string.settings_locked)
     return FeatureFace(title, stringResource(words), on = standing == Standing.ON, busy) {
         when {
-            feature.needsConfig && !state.configRead -> host.notice.show(readFirst)
+            !features.ready -> host.notice.show(connectFirst)
+            // Unread or unconfirmed: the tap reads the glasses again.
+            (feature.needsConfig && !state.configRead) || standing == Standing.UNCONFIRMED -> if (!state.busy) features.check()
             !busy -> features.set(feature, !on)
         }
     }
 }
 
-/**
- * A feature: its tile lit while it is on, its name, and a line that says what it does, how to use it once it is on, or
- * what it is waiting for. A tap turns it on or off (or opens its page); held, it opens what Visor changes.
- */
-@OptIn(ExperimentalFoundationApi::class)
+/** A feature row: a tap turns it on or off or opens its page, a long press opens its switches. */
 @Composable
 private fun FeatureRow(
     feature: Feature,
     standing: Standing,
     on: Boolean,
     waits: Boolean,
+    running: Boolean,
     configRead: Boolean,
+    busy: Boolean,
     open: (NavKey) -> Unit,
     toggle: (Boolean) -> Boolean,
+    read: () -> Unit,
     details: () -> Unit,
 ) {
     val host = LocalHost.current
-    val colors = Visor.colors
     val connectFirst = stringResource(R.string.settings_locked)
-    val readFirst = stringResource(R.string.features_read_first)
     val locked = !host.ready || (feature.needsConfig && !configRead)
     val tap: () -> Unit = when {
         feature.page -> ({ open(pageOf(feature)) })
-        locked -> ({
+        !host.ready -> ({
             host.haptics.tick(0.3f)
-            host.notice.show(if (!host.ready) connectFirst else readFirst)
+            host.notice.show(connectFirst)
+        })
+        // Unread or unconfirmed: the tap reads the glasses again.
+        (feature.needsConfig && !configRead) || standing == Standing.UNCONFIRMED -> ({
+            host.haptics.tick(0.3f)
+            if (!busy) read()
         })
         standing == Standing.SENDING || standing == Standing.CHECKING -> ({ host.haptics.tick(0.3f) })
         else -> ({
@@ -217,53 +218,109 @@ private fun FeatureRow(
         })
     }
     val (line, warn) = lineOf(feature, standing, waits)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = tap, onLongClick = { host.haptics.tick(0.5f); details() })
-            .then(if (feature.page) Modifier else Modifier.switchRow(on))
-            .heightIn(min = 72.dp)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val spinning = standing == Standing.SENDING || standing == Standing.CHECKING || (standing == Standing.UNKNOWN && busy)
+    // Unread or unconfirmed with the glasses there: a read, not a switch.
+    val recheck = !feature.page && host.ready && ((feature.needsConfig && !configRead) || standing == Standing.UNCONFIRMED)
+    RowFrame(
+        stringResource(feature.title),
+        onClick = tap,
+        onLongClick = { host.haptics.tick(0.5f); details() },
+        busy = spinning,
+        sub = if (warn) null else line,
+        problem = if (warn) line else null,
+        dim = locked && !feature.page && !recheck,
+        modifier = if (feature.page || recheck) Modifier else Modifier.switchRow(on),
+        leading = { FeatureTile(feature.icon, lit = if (feature.page) running else standing == Standing.ON) },
     ) {
-        FeatureTile(feature.icon, lit = standing == Standing.ON, dim = locked && !feature.page)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f).alpha(if (locked && !feature.page) 0.55f else 1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(stringResource(feature.title), style = Visor.type.body, color = colors.textPrimary)
-            Text(line, style = Visor.type.label, color = if (warn) colors.signal else colors.textSecondary)
-        }
         when {
-            standing == Standing.SENDING || standing == Standing.CHECKING -> Spinner(Modifier.padding(start = 12.dp))
-            feature.page -> Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = colors.textTertiary)
-            else -> Box(Modifier.alpha(if (locked) 0.4f else 1f)) { VisorSwitch(on) }
+            spinning -> Unit
+            feature.page -> Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = Visor.colors.textTertiary)
+            recheck -> ActionPill(stringResource(R.string.try_again), tap, Modifier.padding(start = 12.dp), quiet = true)
+            else -> VisorSwitch(on)
         }
     }
 }
 
 /** The feature's icon on a rounded tile, which lights up white while the feature is on. */
 @Composable
-internal fun FeatureTile(icon: ImageVector, lit: Boolean, dim: Boolean = false, size: Int = 40) {
+internal fun FeatureTile(icon: ImageVector, lit: Boolean, size: Int = 40) {
     val back by animateColorAsState(if (lit) Color.White else Visor.colors.control, tween(240), label = "tile")
     val ink by animateColorAsState(if (lit) Color.Black else Visor.colors.textPrimary, tween(240), label = "ink")
     Box(
-        Modifier.size(size.dp).alpha(if (dim) 0.55f else 1f).clip(RoundedCornerShape((size * 0.3f).dp)).background(back),
+        Modifier.size(size.dp).clip(RoundedCornerShape((size * 0.3f).dp)).background(back),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, null, Modifier.size((size / 2).dp), tint = ink)
     }
 }
 
-/** The line under a feature's name, and whether it is bad news. */
+/** A hearing feature's status card: its tile, where it stands, and the one pill that changes it, or a spinner while [busy]. */
 @Composable
-private fun lineOf(feature: Feature, standing: Standing, waits: Boolean): Pair<String, Boolean> = when (standing) {
-    Standing.UNKNOWN -> stringResource(R.string.features_needs_config) to false
-    Standing.OFF -> stringResource(feature.about) to false
-    Standing.PARTLY -> stringResource(R.string.features_partly) to false
-    Standing.SENDING -> stringResource(R.string.features_sending) to false
-    Standing.CHECKING -> stringResource(R.string.features_checking) to false
-    Standing.UNCONFIRMED -> stringResource(R.string.features_unconfirmed) to false
-    Standing.REFUSED -> stringResource(R.string.features_refused) to true
-    Standing.ON -> stringResource(if (waits) R.string.features_restart_line else feature.use) to false
+internal fun NowCard(
+    icon: ImageVector,
+    lit: Boolean,
+    title: String,
+    sub: String?,
+    warn: Boolean,
+    @StringRes action: Int,
+    quiet: Boolean = false,
+    busy: Boolean = false,
+    onAction: () -> Unit,
+) {
+    val host = LocalHost.current
+    val connectFirst = stringResource(R.string.settings_locked)
+    Card {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            FeatureTile(icon, lit = lit, size = 52)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = Visor.type.heading, color = Visor.colors.textPrimary, modifier = Modifier.asHeading())
+                if (sub != null) Text(sub, style = Visor.type.label, color = if (warn) Visor.colors.signal else Visor.colors.textSecondary)
+            }
+            if (busy) {
+                Spinner(Modifier.padding(start = 12.dp))
+            } else {
+                Spacer(Modifier.width(12.dp))
+                ActionPill(
+                    stringResource(action),
+                    {
+                        if (!host.ready) {
+                            host.notice.show(connectFirst)
+                        } else {
+                            host.haptics.toggle()
+                            onAction()
+                        }
+                    },
+                    Modifier.minimumInteractiveComponentSize(),
+                    quiet = quiet,
+                )
+            }
+        }
+    }
+}
+
+/** [feature]'s run: the hearing app runs one mode at a time. */
+internal fun HearingState.runFor(feature: Feature): HearingRun {
+    val modes = if (feature == Feature.CONVERSATION_FOCUS) setOf(HearingMode.FOCUS, HearingMode.UNSET) else setOf(HearingMode.CORRECTION, HearingMode.CORRECTION_NARROW)
+    return if (mode in modes) run else HearingRun.OFF
+}
+
+internal fun signed(n: Int) = if (n > 0) "+$n" else "$n"
+
+/** The line under a feature's name, if any, and whether it is bad news. */
+@Composable
+private fun lineOf(feature: Feature, standing: Standing, waits: Boolean): Pair<String?, Boolean> {
+    val note = feature.note?.let { stringResource(it) }
+    return when (standing) {
+        Standing.UNKNOWN -> stringResource(R.string.settings_not_read) to false
+        Standing.OFF -> note to false
+        Standing.PARTLY -> stringResource(R.string.tile_partly) to false
+        Standing.SENDING -> stringResource(R.string.features_sending) to false
+        Standing.CHECKING -> stringResource(R.string.features_checking) to false
+        Standing.UNCONFIRMED -> stringResource(R.string.features_unconfirmed) to false
+        Standing.REFUSED -> stringResource(R.string.features_refused) to true
+        Standing.ON -> (if (waits) stringResource(R.string.features_restart_title) else note) to false
+    }
 }
 
 /** Where a feature with a page of its own lives. */
@@ -277,6 +334,7 @@ private fun pageOf(feature: Feature): NavKey = when (feature) {
 @Composable
 private fun FeatureSheet(
     feature: Feature,
+    gates: List<Gate>,
     standing: Standing,
     on: Boolean,
     config: ConfigState,
@@ -294,10 +352,7 @@ private fun FeatureSheet(
             Text(stringResource(feature.use), style = Visor.type.body, color = Visor.colors.textPrimary)
             Spacer(Modifier.size(14.dp))
             Text(stringResource(R.string.features_changes), style = Visor.type.label, color = Visor.colors.textSecondary)
-            for (gate in feature.gates) KeyLine(gateWords(gate, config, settings))
-            if (feature.gates.any { it is Gate.Config && it.needsRestart(config.params) }) {
-                Text(stringResource(R.string.features_changes_restart), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(top = 6.dp))
-            }
+            for (gate in gates) KeyLine(gateWords(gate, config, settings))
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 22.dp)) {
             val pin = Pins.feature(feature.id)
@@ -310,7 +365,7 @@ private fun FeatureSheet(
                         host.haptics.toggle()
                         if (toggle(!on)) onDismiss() else host.notice.show(connectFirst)
                     },
-                    enabled = host.ready && standing != Standing.SENDING && standing != Standing.CHECKING,
+                    enabled = host.ready && standing != Standing.SENDING && standing != Standing.CHECKING && (!feature.needsConfig || config.params.isNotEmpty()),
                 )
             }
         }
@@ -319,6 +374,7 @@ private fun FeatureSheet(
 
 /** One switch in a line: where it lives, what the glasses hold, and what turns the feature on. */
 private fun gateWords(gate: Gate, config: ConfigState, settings: GlassesSettings): String = when (gate) {
-    is Gate.Config -> "${gate.name}  ${config.reported[gate.name] ?: "–"} → ${gate.on}"
+    // A floor holds at any build but -1.
+    is Gate.Config -> "${gate.name}  ${config.reported[gate.name] ?: "–"} ${if (gate.floor) "≠ -1" else "→ ${gate.on}"}"
     is Gate.Setting -> "${gate.key}  ${settings.value(gate.key) ?: "–"} → ${gate.on}"
 }

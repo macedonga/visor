@@ -9,7 +9,13 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
+import kotlin.concurrent.withLock
 import kotlin.random.Random
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -29,15 +35,16 @@ enum class BroadcastCodec { HEVC, H264 }
  */
 class RtmpPublisher(private val url: String, private val key: String) {
     private lateinit var socket: Socket
+    @Volatile private var tcp: Socket? = null
     private lateinit var input: DataInputStream
     private lateinit var output: OutputStream
-    private val writeLock = Any()
+    private val writeLock = ReentrantLock()
     private var outChunk = 128
     private var inChunk = 128
     private var streamId = 0
     private var txn = 1.0
     private val waiting = ConcurrentHashMap<Double, CompletableDeferred<List<Any?>>>()
-    private var published = CompletableDeferred<String>()
+    private val published = CompletableDeferred<String>()
     private var reader: Job? = null
     private var received = 0L
     private var acked = 0L
@@ -53,14 +60,27 @@ class RtmpPublisher(private val url: String, private val key: String) {
         val secure = uri.scheme.equals("rtmps", ignoreCase = true)
         val port = if (uri.port > 0) uri.port else if (secure) 443 else 1935
         val plain = Socket().apply { tcpNoDelay = true }
+        tcp = plain
         plain.connect(InetSocketAddress(uri.host, port), 8_000)
-        socket = if (secure) (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, uri.host, port, true) else plain
+        // Bounds the TLS and RTMP handshakes against a server that accepts and never answers.
+        plain.soTimeout = 10_000
+        socket = if (secure) {
+            val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plain, uri.host, port, true) as SSLSocket
+            tls.startHandshake()
+            // A bare SSLSocket checks the chain but not the name.
+            if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(uri.host, tls.session)) {
+                tls.close()
+                throw SSLPeerUnverifiedException("the certificate is not for ${uri.host}")
+            }
+            tls
+        } else plain
         input = DataInputStream(socket.getInputStream().buffered(64 * 1024))
         output = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
         handshake()
+        socket.soTimeout = 0
         reader = scope.launch(Dispatchers.IO) { readLoop() }
-        send(2, 0, MSG_SET_CHUNK_SIZE, 0, int32(4096))
-        outChunk = 4096
+        send(2, 0, MSG_SET_CHUNK_SIZE, 0, int32(OUT_CHUNK))
+        outChunk = OUT_CHUNK
 
         val app = uri.path.trim('/').ifEmpty { error("the server address has no application, like /live2") }
         val tcUrl = uri.toString()
@@ -104,17 +124,21 @@ class RtmpPublisher(private val url: String, private val key: String) {
 
     /** The decoder configuration: an hvcC record for HEVC, an avcC one for H.264. */
     fun videoHeader(codec: BroadcastCodec, record: ByteArray) {
-        val body = if (codec == BroadcastCodec.HEVC) byteArrayOf((0x80 or (1 shl 4) or 0).toByte()) + fourCcBytes("hvc1") + record
-        else byteArrayOf(0x17, 0, 0, 0, 0) + record
+        val body = if (codec == BroadcastCodec.HEVC) {
+            byteArrayOf((EX_HEADER or (FRAME_KEY shl 4) or PACKET_SEQUENCE_START).toByte()) + fourCcBytes("hvc1") + record
+        } else {
+            byteArrayOf(0x17, 0, 0, 0, 0) + record
+        }
         send(6, 0, MSG_VIDEO, streamId, body)
     }
 
     /** One frame, length-prefixed NAL units, at [ms] from the start. */
-    fun video(codec: BroadcastCodec, ms: Long, key: Boolean, units: ByteArray) {
+    fun video(codec: BroadcastCodec, ms: Long, keyFrame: Boolean, units: ByteArray) {
         val body = if (codec == BroadcastCodec.HEVC) {
-            byteArrayOf((0x80 or ((if (key) 1 else 2) shl 4) or 3).toByte()) + fourCcBytes("hvc1") + units
+            val frame = if (keyFrame) FRAME_KEY else FRAME_INTER
+            byteArrayOf((EX_HEADER or (frame shl 4) or PACKET_CODED_FRAMES_X).toByte()) + fourCcBytes("hvc1") + units
         } else {
-            byteArrayOf(if (key) 0x17 else 0x27, 1, 0, 0, 0) + units
+            byteArrayOf(if (keyFrame) 0x17 else 0x27, 1, 0, 0, 0) + units
         }
         send(6, ms, MSG_VIDEO, streamId, body)
     }
@@ -124,14 +148,25 @@ class RtmpPublisher(private val url: String, private val key: String) {
     fun audio(ms: Long, frame: ByteArray) = send(4, ms, MSG_AUDIO, streamId, byteArrayOf(0xAF.toByte(), 1) + frame)
 
     fun close() {
+        // A writer stuck on a stalled server holds the lock; then the goodbye is skipped.
         runCatching {
-            if (streamId != 0) {
-                notify("FCUnpublish", null, key)
-                sendCommand(0, "deleteStream", 0.0, null, streamId.toDouble())
+            if (streamId != 0 && failure == null && writeLock.tryLock(500, TimeUnit.MILLISECONDS)) {
+                try {
+                    notify("FCUnpublish", null, key)
+                    sendCommand(0, "deleteStream", 0.0, null, streamId.toDouble())
+                } finally {
+                    writeLock.unlock()
+                }
             }
         }
         reader?.cancel()
         runCatching { socket.close() }
+        abort()
+    }
+
+    /** Closes the connection from any thread, under a blocked read or write. */
+    fun abort() {
+        runCatching { tcp?.close() }
     }
 
     private fun handshake() {
@@ -167,7 +202,7 @@ class RtmpPublisher(private val url: String, private val key: String) {
     }
 
     /** One message in chunks: a type-0 header first, type-3 headers after. */
-    private fun send(csid: Int, ms: Long, type: Int, stream: Int, body: ByteArray) = synchronized(writeLock) {
+    private fun send(csid: Int, ms: Long, type: Int, stream: Int, body: ByteArray) = writeLock.withLock {
         val extended = ms >= 0xFFFFFF
         val ts = if (extended) 0xFFFFFF else ms.toInt()
         output.write(csid and 0x3F)
@@ -191,6 +226,7 @@ class RtmpPublisher(private val url: String, private val key: String) {
 
     private class Partial(var type: Int = 0, var length: Int = 0) {
         var body = ByteArrayOutputStream()
+        var extended = false
     }
 
     private fun readLoop() {
@@ -205,14 +241,14 @@ class RtmpPublisher(private val url: String, private val key: String) {
                     else -> b0 and 0x3F
                 }
                 val p = partial.getOrPut(csid) { Partial() }
-                // Timestamps of what the server sends do not matter to a publisher; they are read past.
-                val ts = if (fmt <= 2) read24() else 0L
+                // Server timestamps are read past; type 3 repeats the extended one whenever the last header had it.
+                if (fmt <= 2) p.extended = read24() == 0xFFFFFFL
                 if (fmt <= 1) {
                     p.length = read24().toInt()
                     p.type = input.readUnsignedByte()
                 }
                 if (fmt == 0) input.readInt()
-                if (ts == 0xFFFFFFL) input.readInt()
+                if (p.extended) input.readInt()
                 val n = minOf(inChunk, p.length - p.body.size())
                 val chunk = ByteArray(n).also(input::readFully)
                 p.body.write(chunk)
@@ -281,6 +317,14 @@ class RtmpPublisher(private val url: String, private val key: String) {
         const val MSG_VIDEO = 9
         const val MSG_DATA_AMF0 = 18
         const val MSG_COMMAND_AMF0 = 20
+        const val OUT_CHUNK = 4096
+
+        // Enhanced RTMP video header: IsExHeader, frame type, packet type.
+        const val EX_HEADER = 0x80
+        const val FRAME_KEY = 1
+        const val FRAME_INTER = 2
+        const val PACKET_SEQUENCE_START = 0
+        const val PACKET_CODED_FRAMES_X = 3
     }
 }
 

@@ -2,9 +2,11 @@ package com.macedonga.visor.core.assistant
 
 import android.content.Context
 import android.content.Intent
+import android.icu.util.ULocale
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -23,14 +25,12 @@ import kotlin.concurrent.thread
 /**
  * The server's ears. When the glasses leave recognition to the server (a follow-up after an answer, or a whole
  * Live AI session) they stream their microphone as Opus on s0; here it is decoded and fed to the phone's speech
- * recogniser as its audio source. [continuous] keeps one session going across utterances for Live AI; otherwise
- * it hears one stream, until [finish], and stops. Each utterance goes to [onUtterance] with when it began and
- * ended on the glasses' audio clock.
+ * recogniser as its audio source. One recogniser session runs across utterances until [finish] or [stop]. Each
+ * utterance goes to [onUtterance] with when it began and ended on the glasses' audio clock.
  */
 class GlassesEars(
     private val context: Context,
     private val locale: Locale,
-    private val continuous: Boolean,
     private val onUtterance: (text: String, startMs: Long, endMs: Long) -> Unit,
     private val onProblem: (String) -> Unit,
     private val onDone: () -> Unit = {},
@@ -41,6 +41,7 @@ class GlassesEars(
     private var tag = speechTag(locale)
     private var recognizer: SpeechRecognizer? = null
     private var pipe: Array<ParcelFileDescriptor>? = null
+    private var writer: Thread? = null
     private val queue = LinkedBlockingQueue<ShortArray>(800)
     private var opus: MediaCodec? = null
     private val info = MediaCodec.BufferInfo()
@@ -64,6 +65,7 @@ class GlassesEars(
     /** From now on audio is taken; the recogniser starts on the main thread and reads what was queued meanwhile. */
     fun start() {
         if (accepting || closed) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return onProblem("hearing the glasses needs Android 13 or newer")
         if (!SpeechRecognizer.isRecognitionAvailable(context)) return onProblem("this phone has no speech recognition")
         // The recogniser wants the microphone permission even when the audio is handed to it.
         if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -95,7 +97,7 @@ class GlassesEars(
                 }
                 val packet = ByteArray(n).also { b.get(it) }
                 decode(packet, clockMs)
-                clockMs += opusMs(packet)
+                clockMs += opusDurationUs(packet) / 1000
             }
             return
         }
@@ -120,7 +122,7 @@ class GlassesEars(
     fun finish() {
         if (!accepting) return
         accepting = false
-        odd?.let { c -> onProblem("a microphone chunk did not parse: " + c.take(32).joinToString("") { "%02x".format(it) }) }
+        odd?.let { c -> onProblem("a microphone chunk did not parse: " + c.toHexString(0, minOf(32, c.size))) }
         queue.offer(END)
     }
 
@@ -133,49 +135,7 @@ class GlassesEars(
     @Synchronized
     private fun decode(packet: ByteArray, ms: Long) {
         val codec = opus ?: return
-        runCatching {
-            val i = codec.dequeueInputBuffer(5_000)
-            if (i >= 0) {
-                codec.getInputBuffer(i)!!.apply { clear(); put(packet) }
-                codec.queueInputBuffer(i, 0, packet.size, ms * 1000, 0)
-            }
-            while (true) {
-                val o = codec.dequeueOutputBuffer(info, 0)
-                if (o < 0) break
-                val out = codec.getOutputBuffer(o)
-                if (out != null && info.size > 0) {
-                    out.position(info.offset)
-                    out.limit(info.offset + info.size)
-                    val pcm = ShortArray(info.size / 2)
-                    out.order(ByteOrder.nativeOrder()).asShortBuffer().get(pcm)
-                    // The decoder gives 48 kHz mono; the recogniser takes 16 kHz.
-                    queue.offer(ShortArray(pcm.size / 3) { k -> ((pcm[k * 3] + pcm[k * 3 + 1] + pcm[k * 3 + 2]) / 3).toShort() })
-                }
-                codec.releaseOutputBuffer(o, false)
-            }
-        }
-    }
-
-    /** How long an Opus packet plays, from its TOC byte (RFC 6716, 3.1). */
-    private fun opusMs(packet: ByteArray): Long {
-        val toc = packet[0].toInt() and 0xFF
-        val config = toc shr 3
-        val frameUs = when {
-            config < 12 -> intArrayOf(10_000, 20_000, 40_000, 60_000)[config and 3]
-            config < 16 -> intArrayOf(10_000, 20_000)[config and 1]
-            else -> intArrayOf(2_500, 5_000, 10_000, 20_000)[config and 3]
-        }
-        val frames = when (toc and 3) {
-            0 -> 1
-            3 -> if (packet.size > 1) packet[1].toInt() and 0x3F else 1
-            else -> 2
-        }
-        return frameUs.toLong() * frames / 1000
-    }
-
-    private fun intent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+        runCatching { codec.decode16k(packet, ms * 1000, info).forEach { queue.offer(it) } }
     }
 
     private fun listen() {
@@ -184,7 +144,7 @@ class GlassesEars(
         tag = SpeechModels.pick(locale)
         val (read, write) = ParcelFileDescriptor.createPipe().also { pipe = it }
         // On the phone if it holds the language, else the phone's usual recogniser.
-        val onDevice = onDeviceLanguages[tag] != false && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        val onDevice = tag !in notOnDevice && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
         val r = recognizer ?: (
             if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
             ).also {
@@ -192,9 +152,7 @@ class GlassesEars(
             usingOnDevice = onDevice
             it.setRecognitionListener(Listener())
         }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+        val intent = recognizeIntent(tag).apply {
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, read)
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
@@ -204,7 +162,9 @@ class GlassesEars(
         }
         r.startListening(intent)
         val out = FileOutputStream(write.fileDescriptor)
-        thread(name = "glasses-ears") {
+        // The writer of the last pipe would race this one for the queue.
+        writer?.interrupt()
+        writer = thread(name = "glasses-ears") {
             try {
                 while (true) {
                     val chunk = queue.take()
@@ -231,6 +191,7 @@ class GlassesEars(
         accepting = false
         queue.clear()
         queue.offer(END)
+        writer?.interrupt()
         pipe?.forEach { runCatching { it.close() } }
         pipe = null
         recognizer?.let { r ->
@@ -248,10 +209,10 @@ class GlassesEars(
     // When the last few sessions began: a recogniser that ends at once every time is not listening.
     private val starts = ArrayDeque<Long>()
 
-    /** A continuous session that ended starts again on a fresh pipe; a single one is over. */
+    /** A session that ended starts again on a fresh pipe while audio is taken. */
     private fun ended() {
         main.post {
-            if (!continuous || !accepting) return@post close()
+            if (!accepting) return@post close()
             val now = System.currentTimeMillis()
             starts.addLast(now)
             while (starts.size > RESTARTS) starts.removeFirst()
@@ -259,6 +220,17 @@ class GlassesEars(
                 onProblem("speech recognition keeps ending at once; stopped listening")
                 return@post close()
             }
+            relisten(fresh = false)
+        }
+    }
+
+    /** Listening again on a fresh pipe; [fresh] on a new recogniser too. */
+    private fun relisten(fresh: Boolean) {
+        if (fresh) {
+            recognizer?.destroy()
+            recognizer = null
+        }
+        if (!closed) {
             pipe?.forEach { runCatching { it.close() } }
             listen()
         }
@@ -278,15 +250,11 @@ class GlassesEars(
         override fun onError(error: Int) {
             // The phone has no model for this language yet: ask it to fetch one, and hear on its usual recogniser.
             if (usingOnDevice && (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)) {
-                onDeviceLanguages[tag] = false
+                notOnDevice += tag
                 onProblem("no on-device speech model for ${tag}; asking the phone to download it, using its usual recogniser meanwhile")
                 main.post {
-                    recognizer?.let { r -> runCatching { r.triggerModelDownload(intent()) }; r.destroy() }
-                    recognizer = null
-                    if (!closed) {
-                        pipe?.forEach { runCatching { it.close() } }
-                        listen()
-                    }
+                    SpeechModels.prepare(context, locale, onProblem)
+                    relisten(fresh = true)
                 }
                 return
             }
@@ -295,14 +263,7 @@ class GlassesEars(
             // The recognition service dropped its connection: once, a fresh recogniser picks up where it was.
             if (error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED && !reconnected) {
                 reconnected = true
-                main.post {
-                    recognizer?.destroy()
-                    recognizer = null
-                    if (!closed) {
-                        pipe?.forEach { runCatching { it.close() } }
-                        listen()
-                    }
-                }
+                main.post { relisten(fresh = true) }
                 return
             }
             onProblem(when (error) {
@@ -337,19 +298,43 @@ class GlassesEars(
         const val RESTART_WINDOW_MS = 5_000L
         val END = ShortArray(0)
         /** Languages the on-device recogniser turned out not to hold, for the life of the process. */
-        val onDeviceLanguages = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        val notOnDevice: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 }
 
 /** A recogniser language tag with a region, which the on-device models need. */
 fun speechTag(locale: Locale): String = when {
     locale.country.isNotEmpty() -> locale.toLanguageTag()
-    else -> when (locale.language) {
-        "en" -> "en-US"
-        "pt" -> "pt-BR"
-        "" -> "en-US"
-        else -> "${locale.language}-${locale.language.uppercase()}"
+    locale.language.isEmpty() -> "en-US"
+    else -> ULocale.addLikelySubtags(ULocale.forLocale(locale)).country.let { if (it.isEmpty()) locale.language else "${locale.language}-$it" }
+}
+
+internal fun recognizeIntent(tag: String): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+    .putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+
+/** One Opus packet through [opusDecoder], out as 16 kHz: it decodes at 48 kHz, so every three samples become one. */
+internal fun MediaCodec.decode16k(packet: ByteArray, ptsUs: Long, info: MediaCodec.BufferInfo): List<ShortArray> {
+    val i = dequeueInputBuffer(5_000)
+    if (i >= 0) {
+        getInputBuffer(i)!!.apply { clear(); put(packet) }
+        queueInputBuffer(i, 0, packet.size, ptsUs, 0)
     }
+    val decoded = ArrayList<ShortArray>()
+    while (true) {
+        val o = dequeueOutputBuffer(info, 0)
+        if (o < 0) break
+        val out = getOutputBuffer(o)
+        if (out != null && info.size > 0) {
+            out.position(info.offset)
+            out.limit(info.offset + info.size)
+            val pcm = ShortArray(info.size / 2)
+            out.order(ByteOrder.nativeOrder()).asShortBuffer().get(pcm)
+            decoded += ShortArray(pcm.size / 3) { k -> ((pcm[k * 3] + pcm[k * 3 + 1] + pcm[k * 3 + 2]) / 3).toShort() }
+        }
+        releaseOutputBuffer(o, false)
+    }
+    return decoded
 }
 
 /** SILK wideband in an Opus decoder: an OpusHead for one channel at 16 kHz, no pre-skip, the usual pre-roll. */

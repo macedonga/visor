@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="wifi_networks">Сети Wi-Fi</string>
+    <string name="wifi_networks_title">Сети Wi-Fi</string>
+    <string name="wifi_add">Добавить сеть</string>
+    <string name="wifi_remove">Удалить</string>
+    <string name="wifi_network_name">Имя сети</string>
+    <string name="wifi_password">Пароль</string>
+    <string name="wifi_password_hint">Пароль (от 8 символов)</string>
+    <string name="wifi_open">Открытая сеть</string>
+    <string name="wifi_none">Нет сохранённых сетей</string>
+    <string name="wifi_unread">Не удалось прочитать сети</string>
+    <string name="wifi_saved">Сохранено</string>
+    <string name="wifi_wrong_password">Неверный пароль</string>
+    <string name="wifi_removed">Удалено</string>
+    <string name="wifi_failed">Не удалось</string>
+</resources>

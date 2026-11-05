@@ -3,38 +3,29 @@ package com.macedonga.visor.home
 import android.Manifest
 import android.app.Activity
 import android.content.Context
-import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
-import android.os.Build
 import android.provider.ContactsContract
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -43,46 +34,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.tappableElementIgnoringVisibility
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.GenericShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -92,46 +70,51 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.macedonga.visor.R
+import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GlassesService
-import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesState
-import com.macedonga.visor.pairs.Pairs
-import com.macedonga.visor.R
-import com.macedonga.visor.settings.TextSheet
+import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.core.identity.IdentityStore
-import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.Albums
+import com.macedonga.visor.core.media.Capture
+import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.transport.LeKeeper
-import com.macedonga.visor.stage.AnimateLight
+import com.macedonga.visor.display.DisplayShelf
+import com.macedonga.visor.display.DisplayTool
+import com.macedonga.visor.gallery.rememberImportGate
+import com.macedonga.visor.pairs.Looks
+import com.macedonga.visor.pairs.Pairs
+import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.Need
+import com.macedonga.visor.settings.TextSheet
+import com.macedonga.visor.settings.openAppPage
 import com.macedonga.visor.stage.Choreography
-import com.macedonga.visor.stage.GlassesPose
-import com.macedonga.visor.stage.GlassesStage
 import com.macedonga.visor.stage.HOME_STRIP
 import com.macedonga.visor.stage.HOME_STRIP_SCALE
-import com.macedonga.visor.stage.LightFrame
-import com.macedonga.visor.stage.LightPool
 import com.macedonga.visor.stage.LocalStage
-import com.macedonga.visor.stage.Looks
 import com.macedonga.visor.stage.Mood
-import com.macedonga.visor.stage.modelled
-import com.macedonga.visor.stage.POOL_Y
+import com.macedonga.visor.stage.SETTLE_EASE
 import com.macedonga.visor.stage.SHEET_RADIUS
 import com.macedonga.visor.stage.STAGE_ASPECT
 import com.macedonga.visor.stage.StageDebug
 import com.macedonga.visor.stage.StageLight
 import com.macedonga.visor.stage.StagePages
-import com.macedonga.visor.stage.StageSpot
 import com.macedonga.visor.stage.closedOf
 import com.macedonga.visor.stage.liveliness
 import com.macedonga.visor.stage.lookOf
+import com.macedonga.visor.stage.modelled
 import com.macedonga.visor.stage.moodOf
 import com.macedonga.visor.stage.sheetShape
+import com.macedonga.visor.stage.stageSpot
 import com.macedonga.visor.stage.turnsThePair
 import com.macedonga.visor.stage.variantsOf
+import com.macedonga.visor.ui.allows
 import com.macedonga.visor.ui.rememberHaptics
 import com.macedonga.visor.ui.rememberTrailingFold
 import com.macedonga.visor.update.REPO_URL
@@ -141,15 +124,23 @@ import com.macedonga.visor.update.openLink
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import kotlin.math.PI
-import kotlin.math.sin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** An import as the home shows it: what was waiting when it began, how far it is, and the wait for Bluetooth after. */
+data class ImportView(val set: List<Capture> = emptyList(), val progress: Float = 0f, val finished: Boolean = false, val settling: Boolean = false)
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -158,59 +149,70 @@ class HomeViewModel @Inject constructor(
     val connection: GlassesConnection,
     val live: LiveStream,
     val media: MediaImport,
-    private val store: IdentityStore,
     keeper: LeKeeper,
     val looks: Looks,
     val lastSeen: LastSeen,
     val pairs: Pairs,
-    val band: com.macedonga.visor.band.BandLink,
-    val bands: com.macedonga.visor.band.Bands,
+    val band: BandLink,
+    val bands: Bands,
     val star: StarAsk,
 ) : ViewModel() {
     /** The LE link is up: the glasses are right here, whatever RFCOMM says. */
     val nearby = keeper.connected
     /** Null until the store has been read. */
-    val paired = MutableStateFlow<Boolean?>(null)
+    val paired: StateFlow<Boolean?> = pairs.stored.map { it?.isNotEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, pairs.stored.value?.isNotEmpty())
     val shots = MutableStateFlow<List<PhoneShot>>(emptyList())
     val firstName = MutableStateFlow<String?>(null)
-    val lastBattery = lastSeen.battery
-    val lastPosture = lastSeen.posture
+    val importView = MutableStateFlow(ImportView())
 
     init {
         // Whatever is saved shows up here as soon as it lands.
         viewModelScope.launch { media.saved.collect { shots.value = recentShots(context, albums) } }
+        viewModelScope.launch {
+            var imported = false
+            media.importing.collectLatest { on ->
+                if (on) {
+                    imported = true
+                    val set = media.fresh.value
+                    val total = set.size.coerceAtLeast(1)
+                    importView.value = ImportView(set)
+                    // Done captures plus the share of the one in flight, never going back.
+                    combine(media.fresh, media.transfers) { fresh, transfers ->
+                        val size = transfers.sumOf { it.size }
+                        val file = if (size > 0) transfers.sumOf { it.received }.toFloat() / size else 0f
+                        (((total - fresh.size).coerceIn(0, total) + file) / total).coerceIn(0f, 1f)
+                    }.first { p ->
+                        importView.update { it.copy(progress = maxOf(it.progress, p)) }
+                        importView.value.progress >= 1f
+                    }
+                    delay(DONE_HOLD_MS)
+                    importView.update { it.copy(finished = true) }
+                } else if (imported) {
+                    // Importing drops Bluetooth on purpose: until it is back the glasses still count as here.
+                    importView.update { it.copy(progress = 0f, finished = false, settling = true) }
+                    withTimeoutOrNull(SETTLE_MS) { connection.state.first { it.link == LinkState.READY } }
+                    importView.update { it.copy(settling = false) }
+                }
+            }
+        }
     }
 
     fun refresh() {
-        viewModelScope.launch(Dispatchers.IO) { paired.value = runCatching { store.all().isNotEmpty() }.getOrDefault(false) }
         viewModelScope.launch { shots.value = recentShots(context, albums) }
         viewModelScope.launch { firstName.value = ownerFirstName(context) }
         pairs.refresh()
     }
 }
 
-/**
- * The glasses' media volume as Android holds it for them, in percent: with AVRCP absolute volume the phone's media
- * volume while it plays to the glasses is theirs. Null when media does not go to these glasses. The glasses send
- * their own only when it changes, and after a setup they have sent none.
- */
-fun heldVolume(context: Context, address: String?): Int? {
-    address ?: return null
-    val audio = context.getSystemService(AudioManager::class.java) ?: return null
-    val route = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        audio.getAudioDevicesForAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
-    } else {
-        audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
-    }
-    val glasses = route.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP && it.address.equals(address, ignoreCase = true) }
-    val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-    if (!glasses || max <= 0) return null
-    return audio.getStreamVolume(AudioManager.STREAM_MUSIC) * 100 / max
-}
+/** How long after an import or a Live the glasses count as here while Bluetooth comes back. */
+private const val SETTLE_MS = 25_000L
+/** Held at 100% this long, the import is done as far as anyone looking can tell, relinked or not. */
+private const val DONE_HOLD_MS = 2_000L
 
 /** The phone owner's own contact card, first word of the name; null without one or without the permission. */
 suspend fun ownerFirstName(context: Context): String? = withContext(Dispatchers.IO) {
-    if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) return@withContext null
+    if (!context.allows(Manifest.permission.READ_CONTACTS)) return@withContext null
     runCatching {
         context.contentResolver.query(
             ContactsContract.Profile.CONTENT_URI, arrayOf(ContactsContract.Profile.DISPLAY_NAME_PRIMARY), null, null, null,
@@ -218,19 +220,27 @@ suspend fun ownerFirstName(context: Context): String? = withContext(Dispatchers.
     }.getOrNull()
 }
 
-/**
- * The glasses under their light, held in place at the top while the feed scrolls beneath them. As it
- * scrolls the pair draws back a little and the greeting and the status pill fade away.
- */
+/** What the home reads coming back to it, set by the screens it opened. */
+class HomeReturn {
+    /** The home has played its entrance in this process; coming back to it plays nothing. */
+    var entered = false
+    /** The Live view left the pair where the open home has it: the home comes back scrolled to the top. */
+    var toTop = false
+    /** A Live stream has just closed: the home counts the glasses as here while Bluetooth comes back. */
+    var fromLive = false
+}
+
+/** The glasses under their light, held at the top while the feed scrolls beneath them and the pair draws back. */
 @Composable
 fun HomeScreen(
+    returning: HomeReturn,
     onSetUp: () -> Unit,
     onChangeOwner: (address: String?) -> Unit,
     onMedia: () -> Unit,
     onLive: () -> Unit,
     onMetaAi: () -> Unit,
     onSettings: () -> Unit,
-    onDisplayTool: (com.macedonga.visor.display.DisplayTool) -> Unit = {},
+    onDisplayTool: (DisplayTool) -> Unit = {},
     model: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -240,13 +250,12 @@ fun HomeScreen(
     val captures by model.media.captures.collectAsStateWithLifecycle()
     val previews by model.media.previews.collectAsStateWithLifecycle()
     val importing by model.media.importing.collectAsStateWithLifecycle()
-    val transfers by model.media.transfers.collectAsStateWithLifecycle()
     val problem by model.media.problem.collectAsStateWithLifecycle()
     val overBluetooth by model.media.overBluetooth.collectAsStateWithLifecycle()
     val shots by model.shots.collectAsStateWithLifecycle()
-    val lastBattery by model.lastBattery.collectAsStateWithLifecycle()
+    val lastBattery by model.lastSeen.battery.collectAsStateWithLifecycle()
     val firstName by model.firstName.collectAsStateWithLifecycle()
-    val lastPosture by model.lastPosture.collectAsStateWithLifecycle()
+    val lastPosture by model.lastSeen.posture.collectAsStateWithLifecycle()
     val nearby by model.nearby.collectAsStateWithLifecycle()
     val paired by model.paired.collectAsStateWithLifecycle()
     // Every pair set up here; the stage shows one at a time and a drag goes to the next.
@@ -257,6 +266,9 @@ fun HomeScreen(
     val peeking by model.pairs.peeking.collectAsStateWithLifecycle()
     val current by model.connection.pair.collectAsStateWithLifecycle()
     val selectedProduct by model.lastSeen.product.collectAsStateWithLifecycle()
+    val band by model.band.state.collectAsStateWithLifecycle()
+    val bands by model.bands.all.collectAsStateWithLifecycle()
+    val ours = band.takeIf { b -> b.battery != null && bands.any { it.serial == b.serial && it.glasses == current } }
     // The page shown: a pair's serial, null for the pair Visor is for, or ADD_PAGE after the last pair.
     var page by remember { mutableStateOf<String?>(null) }
     val adding = page == ADD_PAGE && pairs.isNotEmpty()
@@ -267,7 +279,7 @@ fun HomeScreen(
     // Away from the pair Visor is for, its Live, Meta AI and settings are not this page's.
     val elsewhere = other || adding
     val shownSeen = shown?.let { seen[it.serial] }
-    val lastFacts = (if (elsewhere) shownSeen else current?.let(seen::get))?.facts ?: GlassesFacts(null, null, null)
+    val lastFacts = (if (elsewhere) shownSeen else current?.let(seen::get))?.facts ?: GlassesFacts()
     var renaming by remember { mutableStateOf<String?>(null) }
     val forced by StageDebug.mood.collectAsStateWithLifecycle()
     val variant by StageDebug.variant.collectAsStateWithLifecycle()
@@ -275,30 +287,24 @@ fun HomeScreen(
     val stage = LocalStage.current
     HideGestureHandle()
     // Only the launch gets an entrance: coming back from another screen, the home is simply there as it was.
-    val firstVisit = remember { !stage.entered }
-    LaunchedEffect(Unit) { stage.entered = true }
+    val firstVisit = remember { !returning.entered }
+    LaunchedEffect(Unit) { returning.entered = true }
     val entrance = rememberEntrance(firstVisit)
 
-    var allowed by remember { mutableStateOf(hasBluetooth(context)) }
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { allowed = hasBluetooth(context) }
-    // Follow-ups and Live AI are recognised on the phone, whose recogniser wants the microphone permission even
-    // though it is handed the glasses' audio. Asked once, at the first launch that lacks it.
-    val askHearing = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    LaunchedEffect(allowed) {
-        val prefs = context.getSharedPreferences("home", Context.MODE_PRIVATE)
-        val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (allowed && !granted && !prefs.getBoolean("asked_hearing", false)) {
-            prefs.edit().putBoolean("asked_hearing", true).apply()
-            askHearing.launch(Manifest.permission.RECORD_AUDIO)
-        }
+    var allowed by remember { mutableStateOf(context.allows(Manifest.permission.BLUETOOTH_CONNECT)) }
+    val activity = LocalActivity.current
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        allowed = context.allows(Manifest.permission.BLUETOOTH_CONNECT)
+        // Refused for good, Android asks no more: Visor's own page is the way left.
+        val connect = Manifest.permission.BLUETOOTH_CONNECT
+        if (!allowed && result[connect] == false && activity?.shouldShowRequestPermissionRationale(connect) == false) openAppPage(context)
     }
     LifecycleResumeEffect(Unit) {
-        allowed = hasBluetooth(context)
+        allowed = context.allows(Manifest.permission.BLUETOOTH_CONNECT)
         model.refresh()
         onPauseOrDispose { }
     }
-    // The glasses push their battery, and its temperature, only when the percentage moves: while the home is in
-    // view a fresh snapshot is asked for every minute, so the numbers are never old.
+    // The glasses push their battery only when the percentage moves, so the home in view asks for it every minute.
     val ready = state.link == LinkState.READY
     val scope = rememberCoroutineScope()
     LifecycleResumeEffect(ready) {
@@ -312,73 +318,41 @@ fun HomeScreen(
     }
     // Reach the glasses as soon as there are glasses to reach.
     LaunchedEffect(allowed, paired, running) {
-        if (allowed && paired == true && !running) GlassesService.start(context)
+        if (allowed && paired == true && !running && !GlassesService.stoppedByUser) GlassesService.start(context)
     }
+    // Disconnected by hand: the pill offers Connect.
+    val disconnected = allowed && paired == true && !running && GlassesService.stoppedByUser
 
-    // What an import has to do and how far it is, across files: done captures plus the share of the one in flight,
-    // never going back. Importing drops the Bluetooth link on purpose, so until it is back the glasses still count
-    // as here, and the temples do not fold and open again.
     val fresh by model.media.fresh.collectAsStateWithLifecycle()
-    var importTotal by remember { mutableIntStateOf(0) }
-    var importBest by remember { mutableFloatStateOf(0f) }
-    var settling by remember { mutableStateOf(false) }
-    // What was waiting when the import began: the page shows it to the end instead of counting down to zero.
-    var importSet by remember { mutableStateOf(emptyList<com.macedonga.visor.core.media.Capture>()) }
-    // Two seconds at 100% and the import is done as far as anyone looking can tell, relinked or not.
-    var finished by remember { mutableStateOf(false) }
+    val imp by model.importView.collectAsStateWithLifecycle()
     var leaving by remember { mutableStateOf(false) }
-    LaunchedEffect(importing) {
-        if (importing) {
-            importTotal = fresh.size.coerceAtLeast(1)
-            importBest = 0f
-            importSet = fresh
-            finished = false
-        } else if (importTotal > 0) {
-            settling = true
-            withTimeoutOrNull(SETTLE_MS) { snapshotFlow { model.connection.state.value.link }.first { it == LinkState.READY } }
-            settling = false
-            importTotal = 0
-        }
-    }
-    val importProgress = if (importing && importTotal > 0) {
-        val size = transfers.sumOf { it.size }
-        val file = if (size > 0) transfers.sumOf { it.received }.toFloat() / size else 0f
-        maxOf(importBest, ((importTotal - fresh.size).coerceIn(0, importTotal) + file) / importTotal).coerceIn(0f, 1f)
-    } else 0f
-    SideEffect { if (importing) importBest = importProgress }
-    LaunchedEffect(importing, importProgress >= 1f) {
-        if (importing && importProgress >= 1f) {
-            delay(DONE_HOLD_MS)
-            finished = true
-        }
-    }
-    val transferring = importing && !finished
-    // The waiting page stays while there is something to import or bring over; when it should go, it is first
-    // slid out of sight.
+    val transferring = importing && !imp.finished
+    // The waiting page stays while there is something to import; before it goes it slides out of sight.
     val wantsWaiting = transferring || (!importing && fresh.isNotEmpty())
     var hadWaiting by remember { mutableStateOf(wantsWaiting) }
     LaunchedEffect(wantsWaiting) {
         if (hadWaiting && !wantsWaiting) leaving = true
         hadWaiting = wantsWaiting
     }
-    val gate = com.macedonga.visor.gallery.rememberImportGate()
+    // Only the connected pair's page slides the waiting page out; elsewhere it is simply gone.
+    LaunchedEffect(elsewhere, leaving) { if (elsewhere && leaving) leaving = false }
+    val gate = rememberImportGate()
     val onImport = { haptics.toggle(); gate { model.media.importAllNew() } }
 
-    // Sticky: the first unanswered try sets it and only a ready link clears it. The session clears its own
-    // failure at every retry, which made the pill say "looking" between "away"s.
+    // Sticky: the session clears its failure at every retry, so only a ready link clears this.
     var unanswered by remember { mutableStateOf(false) }
     LaunchedEffect(state.link, state.failure) {
         if (state.link == LinkState.READY) unanswered = false
         else if (state.failure != null || state.link == LinkState.LOST) unanswered = true
     }
     // The Live view pauses Bluetooth too; until it is back the glasses are as present as they were on Wi-Fi.
-    val backFromLive = remember { stage.fromLive.also { stage.fromLive = false } }
+    val backFromLive = remember { returning.fromLive.also { returning.fromLive = false } }
     var liveSettling by remember { mutableStateOf(backFromLive) }
     var wasLive by remember { mutableStateOf(live || backFromLive) }
     LaunchedEffect(live) {
         if (wasLive && !live) {
             liveSettling = true
-            withTimeoutOrNull(SETTLE_MS) { snapshotFlow { model.connection.state.value.link }.first { it == LinkState.READY } }
+            withTimeoutOrNull(SETTLE_MS) { model.connection.state.first { it.link == LinkState.READY } }
             liveSettling = false
         }
         wasLive = live
@@ -393,14 +367,10 @@ fun HomeScreen(
         }
         transferring -> Mood.IMPORTING
         live && state.link != LinkState.READY -> Mood.RECORDING
-        (importing || settling || liveSettling) && state.link != LinkState.READY -> Mood.CONNECTED
-        // Once a try has gone unanswered, the reconnect ladder keeps flipping between trying and failing; the home
-        // keeps one word, from how the glasses were when they went quiet.
-        state.link != LinkState.READY && state.target != null && unanswered -> when {
-            lastPosture.inCase -> Mood.IN_CASE
-            lastPosture.folded || nearby -> Mood.ASLEEP
-            else -> Mood.FAR
-        }
+        (importing || imp.settling || liveSettling) && state.link != LinkState.READY -> Mood.CONNECTED
+        disconnected -> restingMood(lastPosture, nearby)
+        // Once a try goes unanswered, the home keeps one word, from how the glasses were when they went quiet.
+        state.link != LinkState.READY && state.target != null && unanswered -> restingMood(lastPosture, nearby)
         else -> moodOf(state, live)
     }
     val colors = Visor.colors
@@ -409,7 +379,6 @@ fun HomeScreen(
     StageLight(lookOf(mood, colors))
     val look by model.looks.look.collectAsStateWithLifecycle()
     val shownLook = if (other) shown?.let { looks[it.serial] } else look
-    stage.pose.variants = variant?.let(::listOf) ?: variantsOf(shownLook)
     // The model is a Wayfarer: another frame, or a pair not connected, shows as Meta pictures it, once Meta has.
     val currentPicture = current?.takeIf { !modelled(looks[it]) }?.let(pictures::get)
     val picture = when {
@@ -418,6 +387,7 @@ fun HomeScreen(
         else -> null
     }
     SideEffect {
+        stage.pose.variants = variant?.let(::listOf) ?: variantsOf(shownLook)
         stage.picture = picture
         stage.vacant = adding
     }
@@ -442,9 +412,9 @@ fun HomeScreen(
     Choreography(if (elsewhere) GlassesState() else state, mood, stage.light, stage.pose, haptics::connected, haptics::shutter)
 
     val list = rememberLazyListState()
-    remember {
-        if (stage.homeToTop) {
-            stage.homeToTop = false
+    LaunchedEffect(Unit) {
+        if (returning.toTop) {
+            returning.toTop = false
             list.requestScrollToItem(0)
         }
     }
@@ -463,7 +433,7 @@ fun HomeScreen(
             if (list.firstVisibleItemIndex == 0) list.firstVisibleItemScrollOffset.toFloat() else fullPx
         }
         // Folded, the pair sits small in the middle of the strip, clear of the camera cut-out; at launch it fades in.
-        val spot = StageSpot(if (elsewhere) closedOf(GlassesState(), mood, shownSeen?.folded ?: true) else closedOf(state, mood, lastPosture.folded), liveliness(mood)) {
+        val spot = stageSpot(if (elsewhere) closedOf(GlassesState(), mood, shownSeen?.folded ?: true) else closedOf(state, mood, lastPosture.folded), liveliness(mood)) {
             folding(fullPx, stripPx, fold, HOME_STRIP_SCALE, topPx + (stripPx - topPx) / 2)
             alpha = entranceAlpha(entrance, STAGE_FADE_FROM_MS, STAGE_FADE_MS)
         }
@@ -475,8 +445,7 @@ fun HomeScreen(
         }
         LazyColumn(
             state = list,
-            // The sheet: its rounded top rides on the cards until it reaches the stage, then stays docked under the
-            // stage's edge, and the cards scroll away beneath that rounded edge instead of under the stage.
+            // The sheet: its rounded top rides on the cards up to the stage, then docks under the stage's edge.
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -489,24 +458,22 @@ fun HomeScreen(
                 .drawBehind { drawRect(colors.surface) },
             contentPadding = PaddingValues(bottom = bottom + 24.dp),
         ) {
-            // The open stage's room, as the first item: the feed moves only with the finger, never with the
-            // fold, and cards that load later go in below it instead of pushing the list down.
+            // The open stage's room as the first item, so the feed moves only with the finger, never with the fold.
             item(key = "stage") { Spacer(Modifier.fillMaxWidth().height(stageHeight)) }
-            // At rest the latest moments and the four numbers fill the screen under the stage exactly, with air at the
-            // bottom; the rest of the feed waits below.
+            // At rest the moments and the four numbers fill the screen under the stage; the rest of the feed waits below.
             val memories = moments(shots)
-            val waitingPage: (@Composable (Modifier) -> Unit)? = if (wantsWaiting || leaving) {
+            // The waiting captures are the connected pair's: not on another pair's page.
+            val waitingPage: (@Composable (Modifier) -> Unit)? = if (!elsewhere && (wantsWaiting || leaving)) {
                 { m ->
-                    val shown = if (importing || leaving) importSet else fresh
-                    WaitingCard(shown, previews, transferring || leaving, if (leaving) 1f else importProgress, onImport, m, problem, overBluetooth)
+                    val waiting = if (importing || leaving) imp.set else fresh
+                    WaitingCard(waiting, previews, transferring || leaving, if (leaving) 1f else imp.progress, onImport, m, problem, overBluetooth)
                 }
             } else null
             item(key = "hero") {
-                val here = (state.link == com.macedonga.visor.core.session.LinkState.READY && state.device != null) || importing
-                val lastCapture = listOfNotNull(shots.firstOrNull()?.takenAt, captures.mapNotNull { it.takenAtMillis }.maxOrNull()).maxOrNull()
+                val here = (ready && state.device != null) || importing
+                val lastCapture = if (elsewhere) null else listOfNotNull(shots.firstOrNull()?.takenAt, captures.mapNotNull { it.takenAtMillis }.maxOrNull()).maxOrNull()
                 val pages = memories.isNotEmpty() || waitingPage != null
-                // With no moments yet, the first waiting page grows the block to the screen and fades in, rather than
-                // appearing; the last one going shrinks it back.
+                // With no moments yet, the first waiting page grows the block to the screen; the last one going shrinks it back.
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -521,16 +488,23 @@ fun HomeScreen(
                     ) {
                         Memories(
                             memories, onMedia, Modifier.fillMaxSize().padding(top = GAP).appear(entrance, 1), waitingPage,
-                            waitingCount = fresh.size, leaving = leaving, onLeft = { leaving = false },
+                            waitingCount = if (elsewhere) 0 else fresh.size, leaving = leaving && !elsewhere, onLeft = { leaving = false },
                         )
                     }
-                    Facts(lastFacts, live = here && !elsewhere, lastCapture = lastCapture, modifier = Modifier.padding(top = GAP).appear(entrance, 2))
+                    // Nothing to describe with no pair set up, or on the page for adding one.
+                    AnimatedVisibility(
+                        visible = paired != false && !adding,
+                        enter = fadeIn(tween(220)) + expandVertically(spring(dampingRatio = 0.9f, stiffness = 220f)),
+                        exit = fadeOut(tween(160)) + shrinkVertically(spring(dampingRatio = 0.9f, stiffness = 220f)),
+                    ) {
+                        Facts(lastFacts, live = here && !elsewhere, lastCapture = lastCapture, modifier = Modifier.padding(top = GAP).appear(entrance, 2))
+                    }
                     Spacer(Modifier.height(FOOT))
                 }
             }
             // The Display's tools, for a Display: known by its build while connected, by what it last said while away.
-            if (!elsewhere && (com.macedonga.visor.settings.hasDisplay(state.info?.build) || com.macedonga.visor.settings.isDisplayProduct(selectedProduct))) {
-                item(key = "display") { com.macedonga.visor.display.DisplayShelf(onDisplayTool, Modifier.padding(top = 4.dp, bottom = 8.dp).appear(entrance, 4)) }
+            if (!elsewhere && (isDisplayBuild(state.info?.build) || isDisplayProduct(selectedProduct))) {
+                item(key = "display") { DisplayShelf(onDisplayTool, Modifier.padding(top = 4.dp, bottom = 8.dp).appear(entrance, 4)) }
             }
             item(key = "places") { Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5), forThisPair = !elsewhere) }
         }
@@ -556,14 +530,14 @@ fun HomeScreen(
         ) {
             val fade = Modifier.graphicsLayer { alpha = (1f - (fold * 2.5f).coerceIn(0f, 1f)) * stage.shown(spot) }
             Column(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp).then(fade).appear(entrance, 0)) {
-                Greeting(firstName, Modifier)
+                Greeting(firstName)
                 // Which pair this is; a tap names it.
                 if (shown != null) {
                     PairName(pairName(shownSeen, looks[shown.serial]), { renaming = shown.serial }, Modifier.padding(top = 2.dp))
                 }
             }
             Column(
-                Modifier.align(Alignment.BottomCenter).padding(bottom = if (pairs.isNotEmpty()) 8.dp else 26.dp).then(fade).appear(entrance, 0),
+                Modifier.align(Alignment.BottomCenter).padding(bottom = if (pairs.isNotEmpty()) 0.dp else 26.dp).then(fade).appear(entrance, 0),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // Paging, the old page's capsule gives way to the new one from the side the swipe came from.
@@ -572,8 +546,8 @@ fun HomeScreen(
                     transitionSpec = {
                         val order = { key: String? -> if (key == ADD_PAGE) pairs.size else pairs.indexOfFirst { it.serial == key } }
                         val step = if (order(targetState) >= order(initialState)) 1 else -1
-                        (fadeIn(tween(260, delayMillis = 60)) + slideInHorizontally(tween(340, easing = PAGE_EASE)) { step * it / 4 })
-                            .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(220, easing = PAGE_EASE)) { -step * it / 4 })
+                        (fadeIn(tween(260, delayMillis = 60)) + slideInHorizontally(tween(340, easing = SETTLE_EASE)) { step * it / 4 })
+                            .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(220, easing = SETTLE_EASE)) { -step * it / 4 })
                             .using(SizeTransform(clip = false))
                     },
                     contentAlignment = Alignment.BottomCenter,
@@ -581,31 +555,29 @@ fun HomeScreen(
                 ) { key ->
                     val pair = pairs.firstOrNull { it.serial == key }
                     when {
-                        key == ADD_PAGE && pairs.isNotEmpty() -> AddPairPage(onSetUp)
+                        key == ADD_PAGE && pairs.isNotEmpty() -> ActionPill(stringResource(R.string.glasses_set_up_new), onSetUp)
                         pair != null && current != null && pair.serial != current -> OtherPairPill(
                             if (pair.serial == shown?.serial) mood else Mood.FAR, seen[pair.serial], peeking = peeking == pair.serial,
                             onConnect = if (live || importing) null else ({
                                 haptics.toggle()
                                 model.pairs.connect(pair.serial)
                             }),
-                            modifier = Modifier,
                         )
-                        else -> {
-                            val band by model.band.state.collectAsStateWithLifecycle()
-                            val bands by model.bands.all.collectAsStateWithLifecycle()
-                            val ours = band.takeIf { b -> b.battery != null && bands.any { it.serial == b.serial && it.glasses == current } }
-                            StatusPill(
-                                state, mood, lastBattery, paired, allowed, transferring, importProgress, waiting = if (importing) 0 else fresh.size, onImport = onImport,
-                                onAllow = { ask.launch(wanted()) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner, modifier = Modifier,
-                                band = state.device?.bandBattery ?: ours?.battery,
-                                bandCharging = state.device?.bandCharging ?: (ours?.charging == true),
-                            )
-                        }
+                        disconnected -> ActionPill(stringResource(R.string.glasses_connect), {
+                            haptics.toggle()
+                            GlassesService.start(context)
+                        })
+                        else -> StatusPill(
+                            state, mood, lastBattery, paired = paired, allowed = allowed,
+                            onAllow = { ask.launch(Need.NEARBY.ask(context)) }, onSetUp = onSetUp, onChangeOwner = onChangeOwner,
+                            band = state.device?.bandBattery ?: ours?.battery,
+                            bandCharging = state.device?.bandCharging ?: (ours?.charging == true),
+                        )
                     }
                 }
                 if (pairs.isNotEmpty()) {
                     val names = pairs.map { pairName(seen[it.serial], looks[it.serial]) }
-                    PairPager(names, shownIndex, onGo = { i -> page = pairs.getOrNull(i)?.serial ?: ADD_PAGE }, Modifier.padding(top = 4.dp))
+                    PairPager(names, shownIndex, onGo = { i -> page = pairs.getOrNull(i)?.serial ?: ADD_PAGE })
                 }
             }
             renaming?.let { serial ->
@@ -614,7 +586,8 @@ fun HomeScreen(
                     onSave = { model.lastSeen.rename(serial, it.trim()) },
                     onDismiss = { renaming = null },
                     hint = pairName(null, looks[serial]),
-                    valid = { it.isNotBlank() && it.trim().length <= 40 },
+                    valid = { it.isNotBlank() },
+                    filter = { it.take(LastSeen.NAME_MAX) },
                 )
             }
         }
@@ -636,50 +609,41 @@ fun HomeScreen(
                 openLink(context, REPO_URL)
                 model.star.never()
             },
-            onNo = model.star::later,
+            onLater = model.star::later,
             onNever = model.star::never,
         )
     }
 }
 
-/**
- * The home runs to the bottom edge with no gesture handle over it. A swipe from the edge brings the
- * handle back for a moment; leaving the home brings it back for good.
- */
+/** Under gesture navigation the home runs to the bottom edge with no handle; leaving it brings the handle back. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HideGestureHandle() {
     val view = LocalView.current
-    LifecycleResumeEffect(view) {
+    val density = LocalDensity.current
+    // A bar at the bottom that takes no taps is the gesture handle; the 3-button bar takes them.
+    val gestures = WindowInsets.navigationBarsIgnoringVisibility.getBottom(density) > 0 &&
+        WindowInsets.tappableElementIgnoringVisibility.getBottom(density) == 0
+    LifecycleResumeEffect(view, gestures) {
         val window = (view.context as? Activity)?.window
         val bars = window?.let { WindowCompat.getInsetsController(it, view) }
-        bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        bars?.hide(WindowInsetsCompat.Type.navigationBars())
+        if (gestures) {
+            bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            bars?.hide(WindowInsetsCompat.Type.navigationBars())
+        }
         onPauseOrDispose { bars?.show(WindowInsetsCompat.Type.navigationBars()) }
     }
 }
 
-private fun wanted(): Array<String> = buildList {
-    add(Manifest.permission.BLUETOOTH_CONNECT)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
-    add(Manifest.permission.READ_CONTACTS)
-}.toTypedArray()
-
-private fun hasBluetooth(context: Context) =
-    context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-
 
 private const val STAGE_FADE_FROM_MS = 60f
 private const val STAGE_FADE_MS = 900f
-/** The air between blocks on the sheet, now that they have no headings. */
+/** Space between blocks on the sheet. */
 private val GAP = 16.dp
 /** The air under the four numbers when they close the screen. */
 private val FOOT = 20.dp
-/** How long after an import the glasses count as here while the Bluetooth link comes back. */
-private const val SETTLE_MS = 25_000L
-private const val DONE_HOLD_MS = 2_000L
 private const val REFRESH_MS = 60_000L
 
 /** The home's page after the last pair, for setting up another. */
 private const val ADD_PAGE = "+"
-private val PAGE_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private const val STAR_DELAY_MS = 4_000L

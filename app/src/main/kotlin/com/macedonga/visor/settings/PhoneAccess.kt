@@ -6,12 +6,15 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -32,10 +35,11 @@ import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiDirectPermissions
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.gallery.allows
 import com.macedonga.visor.notify.MirrorListener
 import com.macedonga.visor.phone.associateCompanion
 import com.macedonga.visor.phone.companionAssociated
+import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 
@@ -62,7 +66,7 @@ enum class Need(val title: Int, val why: Int) {
     fun granted(context: Context): Boolean = when (this) {
         NEARBY -> context.allows(Manifest.permission.BLUETOOTH_CONNECT) && context.allows(Manifest.permission.BLUETOOTH_SCAN)
         LISTENER -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
-        NOTIFY -> context.allows(Manifest.permission.POST_NOTIFICATIONS)
+        NOTIFY -> Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || context.allows(Manifest.permission.POST_NOTIFICATIONS)
         MIC -> context.allows(Manifest.permission.RECORD_AUDIO)
         CONTACTS -> context.allows(Manifest.permission.READ_CONTACTS)
         SMS -> context.allows(Manifest.permission.READ_SMS) && context.allows(Manifest.permission.SEND_SMS)
@@ -79,7 +83,7 @@ enum class Need(val title: Int, val why: Int) {
     fun ask(context: Context): Array<String> = when (this) {
         NEARBY -> arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
         LISTENER -> emptyArray()
-        NOTIFY -> arrayOf(Manifest.permission.POST_NOTIFICATIONS)
+        NOTIFY -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) arrayOf(Manifest.permission.POST_NOTIFICATIONS) else emptyArray()
         MIC -> arrayOf(Manifest.permission.RECORD_AUDIO)
         CONTACTS -> arrayOf(Manifest.permission.READ_CONTACTS)
         SMS -> arrayOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS)
@@ -107,12 +111,15 @@ class PhoneAccessModel @Inject constructor(private val connection: GlassesConnec
 @Composable
 fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
     val context = LocalContext.current
+    val activity = LocalActivity.current
     var tick by remember { mutableIntStateOf(0) }
     var asked by remember { mutableStateOf<Need?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        // Refused for good, the system asks no more: its own page is the way left.
+        // Refused for good: only Android's own page can grant it now.
         val need = asked
-        if (need != null && !need.granted(context) && need.ask(context).isNotEmpty() && it.values.none { ok -> ok }) openAppPage(context)
+        if (need != null && !need.granted(context) && need.ask(context).isNotEmpty() && it.values.none { ok -> ok } &&
+            it.keys.all { p -> activity?.shouldShowRequestPermissionRationale(p) == false }
+        ) openAppPage(context)
         tick++
     }
     val companion = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { tick++ }
@@ -121,24 +128,24 @@ fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
         onPauseOrDispose { }
     }
 
-    SettingsPage(stringResource(R.string.topic_phone), stringResource(R.string.access_lede), light = 0.35f) {
+    SettingsPage(stringResource(R.string.topic_phone), light = 0.35f) {
         item(key = "needs") {
             Rows(
                 *Need.entries.map { need ->
                     @Composable {
                         val granted = remember(tick) { need.granted(context) }
-                        RowFrame(stringResource(need.title), onClick = null, sub = stringResource(need.why)) {
+                        RowFrame(stringResource(need.title), onClick = null, sub = if (granted) null else stringResource(need.why)) {
                             if (granted) {
-                                Text(stringResource(R.string.access_allowed), style = Visor.type.body, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 12.dp))
+                                Icon(VisorIcons.Check, stringResource(R.string.access_allowed), Modifier.padding(start = 12.dp).size(20.dp), tint = Visor.colors.textSecondary)
                             } else {
-                                ActionPill(stringResource(R.string.access_allow), {
+                                ActionPill(stringResource(R.string.allow), {
                                     asked = need
                                     val ask = need.ask(context)
                                     when {
                                         need == Need.COMPANION -> associateCompanion(
                                             context, model.address(), { companion.launch(IntentSenderRequest.Builder(it).build()) }, { tick++ },
                                         )
-                                        ask.isEmpty() -> openListenerPage(context)
+                                        need == Need.LISTENER -> openListenerPage(context)
                                         else -> launcher.launch(ask)
                                     }
                                 }, modifier = Modifier.padding(start = 12.dp))
@@ -148,7 +155,6 @@ fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
                 }.toTypedArray(),
             )
         }
-        item(key = "foot") { Footnote(stringResource(R.string.access_foot)) }
     }
 }
 

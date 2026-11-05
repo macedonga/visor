@@ -4,12 +4,10 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/**
- * The two sensor logs every capture carries, as lensbreak's sidecar.py reads them: a 4-byte header (two ASCII
- * magic bytes and a uint16 version) and fixed little-endian records. A file that does not divide into whole
- * records is refused, since then the layout is wrong for it.
- */
+// Sensor logs: 2 ASCII magic bytes, a uint16 version, then fixed little-endian records; a file that is not whole records is refused.
 private const val HEADER = 4
+private const val IMU_RECORD = 38
+private const val FRAME_RECORD = 18
 
 /** One IMU sample, ~960 Hz. Monotonic nanoseconds; m/s², rad/s, and the IMU die's own temperature in °C. */
 class ImuSample(
@@ -24,9 +22,9 @@ class FrameRecord(val frame: Int, val timeNs: Long, val exposureNs: Long)
 
 /** `SI`, asset kind 3: 38-byte records. */
 fun readImu(file: File): List<ImuSample>? {
-    val b = records(file, "SI", 38) ?: return null
-    return List((b.limit() - HEADER) / 38) { i ->
-        val o = HEADER + i * 38
+    val b = records(file, "SI", IMU_RECORD) ?: return null
+    return List((b.limit() - HEADER) / IMU_RECORD) { i ->
+        val o = HEADER + i * IMU_RECORD
         ImuSample(
             b.getLong(o + 2),
             b.getFloat(o + 10), b.getFloat(o + 14), b.getFloat(o + 18),
@@ -38,9 +36,9 @@ fun readImu(file: File): List<ImuSample>? {
 
 /** `SF`, asset kind 4: 18-byte records, one per frame. A still's log holds exactly one. */
 fun readFrames(file: File): List<FrameRecord>? {
-    val b = records(file, "SF", 18) ?: return null
-    return List((b.limit() - HEADER) / 18) { i ->
-        val o = HEADER + i * 18
+    val b = records(file, "SF", FRAME_RECORD) ?: return null
+    return List((b.limit() - HEADER) / FRAME_RECORD) { i ->
+        val o = HEADER + i * FRAME_RECORD
         FrameRecord(b.getShort(o).toInt() and 0xFFFF, b.getLong(o + 2), b.getLong(o + 10))
     }
 }
@@ -52,9 +50,3 @@ private fun records(file: File, magic: String, size: Int): ByteBuffer? {
     if ((data.size - HEADER) % size != 0) return null
     return ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
 }
-
-/** The first two bytes of a sensor log, which is how one is told from the other without the capture list. */
-fun sensorMagic(file: File): String? = runCatching {
-    val head = ByteArray(2)
-    if (file.inputStream().use { it.read(head) } == 2) String(head, Charsets.US_ASCII).takeIf { it == "SI" || it == "SF" } else null
-}.getOrNull()

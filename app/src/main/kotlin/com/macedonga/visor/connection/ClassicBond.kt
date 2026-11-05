@@ -11,7 +11,6 @@ import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.connection.Nexus
 import com.macedonga.visor.core.connection.isDisplayBuild
-import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
@@ -90,7 +89,7 @@ class ClassicBond @Inject constructor(
     private var guard: Job? = null
 
     // The LE address each pair had before its classic bond, by serial: what an undo bonds again.
-    private val before get() = context.getSharedPreferences("classic_bond", Context.MODE_PRIVATE)
+    private val leAddresses get() = context.getSharedPreferences("classic_bond", Context.MODE_PRIVATE)
 
     /** Whether the pair connected now has a classic bond made here, with its LE address kept from before it. */
     val undoable: StateFlow<Boolean> = combine(_status, connection.state.map { it.target }.distinctUntilChanged()) { _, target -> canUndo(target) }
@@ -133,7 +132,7 @@ class ClassicBond @Inject constructor(
     private fun canUndo(target: GlassesTarget?): Boolean {
         target ?: return false
         val address = (target.link as? GlassesLink.Bluetooth)?.address ?: return false
-        val le = before.getString(target.serial, null) ?: return false
+        val le = leAddresses.getString(target.serial, null) ?: return false
         return !le.equals(address, ignoreCase = true)
     }
 
@@ -151,7 +150,7 @@ class ClassicBond @Inject constructor(
         return Glasses(target.serial, address.uppercase(), classic)
     }
 
-    /** Stage A: the bonds as the phone holds them and the Display's HFP state. Changes nothing. */
+    /** The bonds as the phone holds them and the Display's HFP state; changes nothing. */
     @RequiresApi(37)
     private suspend fun verdict(g: Glasses): Verdict {
         note("classic address ${g.classic}, pair address ${g.address}, companion association ${companionId(context, g.address) ?: "none"}")
@@ -172,7 +171,7 @@ class ClassicBond @Inject constructor(
         }
     }
 
-    /** Stage B: the LE bond swapped for a BR/EDR one inside the Display's pairing window. */
+    /** The LE bond swapped for a BR/EDR one inside the Display's pairing window. */
     @RequiresApi(37)
     private suspend fun rebond(): Status {
         val g = glasses()
@@ -200,19 +199,13 @@ class ClassicBond @Inject constructor(
             }
             paired = true
             note("bonded over BR/EDR, type $type; bonded: ${bonded()}")
-            before.edit().putString(g.serial, g.address).apply()
+            leAddresses.edit().putString(g.serial, g.address).apply()
             // The old association names an address no longer bonded; Visor asks for the new one once connected.
-            note("companion association $id dropped: ${disassociateCompanion(context, id)}")
-            if (!comeBack(g.serial, g.classic)) return Status.Done(calls = false)
-            return Status.Done(calls())
+            return settle(g, id, g.classic)
         } catch (error: Exception) {
-            if (error is Stop || error is CancellationException) throw error
-            note("failed in the pairing window: $error")
-            if (guard != null) comeBack(g.serial, if (paired) g.classic else g.address)
-            if (!paired) closeWindow()
-            throw error
+            recover(error, g, if (paired) g.classic else g.address, paired)
         } finally {
-            hold(false)
+            keepLetGo(false)
         }
     }
 
@@ -221,7 +214,7 @@ class ClassicBond @Inject constructor(
     private suspend fun undo(): Status {
         val g = glasses()
         free()
-        val le = before.getString(g.serial, null)?.takeIf { !it.equals(g.address, ignoreCase = true) } ?: throw Stop(Reason.FAILED, "no LE address kept")
+        val le = leAddresses.getString(g.serial, null)?.takeIf { !it.equals(g.address, ignoreCase = true) } ?: throw Stop(Reason.FAILED, "no LE address kept")
         val id = companionId(context, g.address) ?: throw Stop(Reason.NO_COMPANION, g.address)
         note("back to the LE bond on $le")
         val opened = openWindow()
@@ -242,26 +235,36 @@ class ClassicBond @Inject constructor(
                 throw Stop(if (again) Reason.RESTORED else Reason.LOST)
             }
             paired = address
-            before.edit().remove(g.serial).apply()
-            note("companion association $id dropped: ${disassociateCompanion(context, id)}")
-            if (!comeBack(g.serial, address)) return Status.Done(calls = false)
-            return Status.Done(calls())
+            leAddresses.edit().remove(g.serial).apply()
+            return settle(g, id, address)
         } catch (error: Exception) {
-            if (error is Stop || error is CancellationException) throw error
-            note("failed in the pairing window: $error")
-            if (guard != null) comeBack(g.serial, paired ?: g.address)
-            if (paired == null) closeWindow()
-            throw error
+            recover(error, g, paired ?: g.address, paired != null)
         } finally {
-            hold(false)
+            keepLetGo(false)
         }
+    }
+
+    /** The old companion association dropped and the session opened on [address]; whether calls then work. */
+    @RequiresApi(37)
+    private suspend fun settle(g: Glasses, id: Int, address: String): Status {
+        note("companion association $id dropped: ${disassociateCompanion(context, id)}")
+        return Status.Done(comeBack(g.serial, address) && calls())
+    }
+
+    /** A failure inside the pairing window: the pair brought back on [address] while let go, the window closed while unpaired. */
+    private suspend fun recover(error: Exception, g: Glasses, address: String, paired: Boolean): Nothing {
+        if (error is Stop || error is CancellationException) throw error
+        note("failed in the pairing window: $error")
+        if (guard != null) comeBack(g.serial, address)
+        if (!paired) closeWindow()
+        throw error
     }
 
     /** Nothing else may have the glasses or the phone's audio while the bond goes. */
     private fun free() {
         val mode = context.getSystemService(AudioManager::class.java)?.mode
         val call = mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION || mode == AudioManager.MODE_CALL_SCREENING
-        if (call || live.running.value || media.importing.value || connection.onWifi) throw Stop(Reason.BUSY)
+        if (call || live.usingWifi || media.importing.value || connection.onWifi) throw Stop(Reason.BUSY)
     }
 
     /** ENTER_PAIRING_MODE: the Display takes a new bond from any phone for 120 s. Returns when the window opened. */
@@ -283,10 +286,10 @@ class ClassicBond @Inject constructor(
         connection.pause("re-pairing")
         keeper.release()
         note("link let go")
-        hold(true)
+        keepLetGo(true)
     }
 
-    private fun hold(on: Boolean) {
+    private fun keepLetGo(on: Boolean) {
         guard?.cancel()
         guard = if (!on) null else scope.launch {
             connection.state.map { it.link }.distinctUntilChanged().collect { link ->
@@ -335,12 +338,10 @@ class ClassicBond @Inject constructor(
 
     /** The pair kept under [address] from now on, the LE link held and the session opened on it; true once it is up. */
     private suspend fun comeBack(serial: String, address: String): Boolean {
-        hold(false)
+        keepLetGo(false)
         withContext(Dispatchers.IO) {
-            val stored = store.load(serial) ?: return@withContext
-            if (stored.glassesAddress.equals(address, ignoreCase = true)) return@withContext
-            store.save(IdentityBundle(stored.privateKeyPem, address, stored.serial, stored.createdAt, stored.provenance, stored.state))
-            note("pair address now $address")
+            val moved = store.update(serial) { if (it.glassesAddress.equals(address, ignoreCase = true)) it else it.copy(glassesAddress = address) }
+            if (moved) note("pair address now $address")
         }
         pairs.refresh()
         keeper.hold(address)

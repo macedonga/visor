@@ -2,8 +2,8 @@ package com.macedonga.visor.core.session
 
 import com.macedonga.visor.core.protocol.HandshakeBinding
 
-/** Which direction of the svc36 trust exchange succeeded. From `identity/trust.py`. */
-class TrustResult(
+/** Which direction of the svc36 trust exchange succeeded. */
+data class TrustResult(
     val txOk: Boolean,
     val rxOk: Boolean,
     /** The status the glasses answered our credential with, when it was not SUCCESS. Null when they said nothing. */
@@ -11,8 +11,6 @@ class TrustResult(
 ) {
 
     val complete: Boolean get() = txOk && rxOk
-
-    override fun toString(): String = "TrustResult(txOk=$txOk, rxOk=$rxOk, refusal=$refusal)"
 }
 
 /** The svc36 exchange the session runs between the handshake and EndLinkSetup. */

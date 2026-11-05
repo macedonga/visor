@@ -2,6 +2,7 @@ package com.macedonga.visor.gallery
 
 import android.content.Context
 import android.graphics.ImageDecoder
+import android.net.Uri
 import android.util.LruCache
 import android.util.Size
 import androidx.compose.runtime.Composable
@@ -15,10 +16,7 @@ import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * Images for the gallery, decoded once and kept while they fit: grid thumbnails from MediaStore's own cache or
- * the glasses' preview, and screen-sized pictures for the stage and the viewer.
- */
+/** Decoded thumbnails and screen-sized pictures in one LRU cache. */
 object Images {
     private val cache = object : LruCache<String, ImageBitmap>(CACHE_BYTES) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
@@ -26,33 +24,23 @@ object Images {
 
     fun cached(key: String): ImageBitmap? = cache.get(key)
 
-    /** A square-ish thumbnail at least [px] on its short side. */
-    suspend fun thumb(context: Context, item: GalleryItem, previews: Map<String, File>, px: Int = THUMB_PX): ImageBitmap? {
-        val key = thumbKey(item)
-        cache.get(key)?.let { return it }
-        val image = withContext(Dispatchers.IO) {
-            runCatching {
-                val phone = item.phone
-                if (phone != null) {
-                    context.contentResolver.loadThumbnail(phone.uri, Size(px, px), null).asImageBitmap()
-                } else {
-                    val file = item.capture?.preview?.let { previews[it.id] } ?: return@runCatching null
-                    ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)).asImageBitmap()
-                }
-            }.getOrNull()
-        } ?: return null
-        cache.put(key, image)
-        return image
+    /** A square-ish thumbnail at least [THUMB_PX] on its short side. */
+    suspend fun thumb(context: Context, item: GalleryItem, previews: Map<String, File>): ImageBitmap? = load(thumbKey(item)) {
+        val phone = item.phone
+        if (phone != null) {
+            context.contentResolver.loadThumbnail(phone.uri, Size(THUMB_PX, THUMB_PX), null).asImageBitmap()
+        } else {
+            item.capture?.preview?.let { previews[it.id] }?.let { ImageDecoder.decodeBitmap(ImageDecoder.createSource(it)).asImageBitmap() }
+        }
     }
 
     /** The phone copy decoded to fit within [maxSide] pixels on its long side, upright. */
     suspend fun picture(context: Context, item: GalleryItem, maxSide: Int): ImageBitmap? {
         val phone = item.phone ?: return null
-        if (phone.video) return thumb(context, item, emptyMap(), maxSide)
-        val key = pictureKey(item, maxSide)
-        cache.get(key)?.let { return it }
-        val image = withContext(Dispatchers.IO) {
-            runCatching {
+        return load(pictureKey(item, maxSide)) {
+            if (phone.video) {
+                context.contentResolver.loadThumbnail(phone.uri, Size(maxSide, maxSide), null).asImageBitmap()
+            } else {
                 ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, phone.uri)) { decoder, info, _ ->
                     val long = max(info.size.width, info.size.height)
                     if (long > maxSide) {
@@ -60,15 +48,33 @@ object Images {
                         decoder.setTargetSize((info.size.width * scale).toInt(), (info.size.height * scale).toInt())
                     }
                 }.asImageBitmap()
-            }.getOrNull()
-        } ?: return null
+            }
+        }
+    }
+
+    /** A gallery thumbnail by its uri, [px] square, video posters included. */
+    suspend fun thumb(context: Context, uri: Uri, px: Int): ImageBitmap? = load(thumbKey(uri, px)) {
+        context.contentResolver.loadThumbnail(uri, Size(px, px), null).asImageBitmap()
+    }
+
+    /** A preview file scaled to fit within [px] on its long side. */
+    suspend fun preview(file: File, px: Int): ImageBitmap? = load(previewKey(file, px)) {
+        ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
+            val scale = px.toFloat() / max(info.size.width, info.size.height)
+            if (scale < 1f) decoder.setTargetSize((info.size.width * scale).toInt(), (info.size.height * scale).toInt())
+        }.asImageBitmap()
+    }
+
+    private suspend fun load(key: String, decode: () -> ImageBitmap?): ImageBitmap? {
+        cache.get(key)?.let { return it }
+        val image = withContext(Dispatchers.IO) { runCatching { decode() }.getOrNull() } ?: return null
         cache.put(key, image)
         return image
     }
 
     fun forget(item: GalleryItem) {
         val uri = item.phone?.uri ?: return
-        for (key in cache.snapshot().keys) if (key.contains(uri.toString())) cache.remove(key)
+        for (key in cache.snapshot().keys) if (key.startsWith("t:$uri:") || key.startsWith("p:$uri:")) cache.remove(key)
     }
 
     /** A phone copy's keys carry its size, so an edited photo is decoded again. */
@@ -76,16 +82,20 @@ object Images {
 
     fun pictureKey(item: GalleryItem, maxSide: Int) = "p:${item.phone?.uri}:${item.phone?.size}:$maxSide"
 
+    fun thumbKey(uri: Uri, px: Int) = "t:$uri:${px}px"
+
+    fun previewKey(file: File, px: Int) = "f:${file.path}:${file.lastModified()}:$px"
+
     private const val CACHE_BYTES = 96 * 1024 * 1024
     const val THUMB_PX = 320
 }
 
 @Composable
-fun rememberThumb(item: GalleryItem?, previews: Map<String, File>, px: Int = Images.THUMB_PX): State<ImageBitmap?> {
+fun rememberThumb(item: GalleryItem?, previews: Map<String, File>): State<ImageBitmap?> {
     val context = LocalContext.current
     val key = item?.phone?.uri ?: item?.capture?.preview?.let { previews[it.id] }
     return produceState(item?.let { Images.cached(Images.thumbKey(it)) }, item?.key, key, item?.phone?.size) {
-        if (item != null) Images.thumb(context, item, previews, px)?.let { value = it }
+        if (item != null) Images.thumb(context, item, previews)?.let { value = it }
     }
 }
 

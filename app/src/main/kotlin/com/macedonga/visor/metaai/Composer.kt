@@ -1,7 +1,7 @@
 package com.macedonga.visor.metaai
 
 import android.Manifest
-import android.content.pm.PackageManager
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -58,20 +59,24 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
+import com.macedonga.visor.settings.openAppPage
 import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.allows
 import com.macedonga.visor.ui.rememberHaptics
 import kotlinx.coroutines.delay
 
-/**
- * Where the phone joins the conversation: a field, and a round button that is the mic while the field is empty
- * (hold to talk, slide away to cancel) and sends once there is something to send. Over it, the conversation a
- * question would continue, which a tap lets go of.
- */
+/** The phone's text field, and a hold-to-talk mic that turns into Send once there is text. */
 @Composable
 internal fun Composer(
     continuing: String?,
@@ -130,10 +135,20 @@ internal fun Composer(
         delay(HINT_MS)
         hint = null
     }
-    var allowed by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
+    val activity = LocalActivity.current
+    var allowed by remember { mutableStateOf(context.allows(Manifest.permission.RECORD_AUDIO)) }
+    var refused by remember { mutableStateOf(false) }
     val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         allowed = it
-        if (!it) say(R.string.meta_ai_mic)
+        if (!it) {
+            refused = activity?.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO) == false
+            say(R.string.meta_ai_mic)
+        }
+    }
+    // Refused for good: only Visor's app page can give it back.
+    fun askForMic() {
+        if (refused && !context.allows(Manifest.permission.RECORD_AUDIO)) openAppPage(context)
+        else askMic.launch(Manifest.permission.RECORD_AUDIO)
     }
     val cancelPx = with(LocalDensity.current) { CANCEL_DISTANCE.toPx() }
 
@@ -152,7 +167,12 @@ internal fun Composer(
         ) {
             Crossfade(hint ?: continuing, label = "over") { what ->
                 when (what) {
-                    is Int -> Text(stringResource(what), style = Visor.type.label, color = colors.textSecondary, modifier = Modifier.padding(start = 8.dp, bottom = 10.dp))
+                    is Int -> Text(
+                        stringResource(what),
+                        style = Visor.type.label,
+                        color = colors.textSecondary,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 10.dp).semantics { liveRegion = LiveRegionMode.Polite },
+                    )
                     is String -> Row(
                         Modifier.padding(bottom = 10.dp).clip(RoundedCornerShape(50)).background(colors.surface).clickable(onClick = onLetGo)
                             .padding(start = 14.dp, end = 10.dp, top = 7.dp, bottom = 7.dp),
@@ -166,34 +186,29 @@ internal fun Composer(
             }
         }
         Row(verticalAlignment = Alignment.Bottom) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp)
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(colors.raised)
-                    .padding(horizontal = 20.dp, vertical = 15.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                if (holding) {
+            if (holding) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .heightIn(min = 52.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(colors.raised)
+                        .padding(horizontal = 20.dp, vertical = 15.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
                     val words = when {
                         armed -> stringResource(R.string.meta_ai_release_cancel)
                         heard.isNotEmpty() -> heard
                         else -> stringResource(R.string.meta_ai_listening)
                     }
                     Text(words, style = Visor.type.body, color = if (armed || heard.isEmpty()) colors.textSecondary else colors.textPrimary, maxLines = 4)
-                } else {
-                    BasicTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        textStyle = Visor.type.body.copy(color = colors.textPrimary),
-                        cursorBrush = SolidColor(colors.textPrimary),
-                        maxLines = 6,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (text.isEmpty()) Text(stringResource(R.string.meta_ai_ask), style = Visor.type.body, color = colors.textSecondary)
                 }
+            } else {
+                InputField(
+                    text, { text = it }, stringResource(R.string.meta_ai_ask), 6,
+                    KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Default),
+                    Modifier.weight(1f),
+                )
             }
             Spacer(Modifier.width(10.dp))
             val canSend = text.isNotBlank() && !holding
@@ -207,6 +222,21 @@ internal fun Composer(
                     }
                     .clip(CircleShape)
                     .background(if (canSend || holding) colors.textPrimary else colors.control)
+                    .semantics(mergeDescendants = true) {
+                        role = Role.Button
+                        onClick {
+                            when {
+                                canSend -> {
+                                    haptics.toggle()
+                                    send(text.trim())
+                                    text = ""
+                                }
+                                !allowed -> askForMic()
+                                else -> say(R.string.meta_ai_hold)
+                            }
+                            true
+                        }
+                    }
                     .pointerInput(canSend, allowed) {
                         awaitEachGesture {
                             val down = awaitFirstDown()
@@ -221,7 +251,7 @@ internal fun Composer(
                             }
                             if (!allowed) {
                                 waitForUpOrCancellation()
-                                askMic.launch(Manifest.permission.RECORD_AUDIO)
+                                askForMic()
                                 return@awaitEachGesture
                             }
                             val pressedAt = down.uptimeMillis
@@ -273,6 +303,36 @@ internal fun Composer(
             }
         }
     }
+}
+
+/** The raised pill the diary's fields share; a tap anywhere on it takes the keyboard. */
+@Composable
+internal fun InputField(
+    value: String,
+    onValue: (String) -> Unit,
+    hint: String,
+    maxLines: Int,
+    keyboardOptions: KeyboardOptions,
+    modifier: Modifier = Modifier,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+) {
+    val colors = Visor.colors
+    BasicTextField(
+        value = value,
+        onValueChange = onValue,
+        textStyle = Visor.type.body.copy(color = colors.textPrimary),
+        cursorBrush = SolidColor(colors.textPrimary),
+        maxLines = maxLines,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        modifier = modifier.heightIn(min = 52.dp).clip(RoundedCornerShape(26.dp)).background(colors.raised),
+        decorationBox = { inner ->
+            Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 15.dp), contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) Text(hint, style = Visor.type.body, color = colors.textSecondary)
+                inner()
+            }
+        },
+    )
 }
 
 private val CANCEL_DISTANCE = 96.dp

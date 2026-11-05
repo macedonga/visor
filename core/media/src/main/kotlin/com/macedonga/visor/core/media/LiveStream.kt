@@ -1,49 +1,59 @@
 package com.macedonga.visor.core.media
 
-import java.security.SecureRandom
-import android.util.Log
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
+import android.util.Size
+import com.macedonga.visor.core.connection.DeviceState
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.connection.MT_PEER_DEVICE_INFO
 import com.macedonga.visor.core.connection.MT_PEER_GET_INFO
 import com.macedonga.visor.core.connection.SVC_PEER_BUILD_INFO
+import com.macedonga.visor.core.connection.SVC_STATUS
 import com.macedonga.visor.core.connection.SessionHost
 import com.macedonga.visor.core.connection.SessionHostFactory
-import com.macedonga.visor.core.connection.subscribeToDeviceStatus
-import com.macedonga.visor.core.connection.DeviceState
-import com.macedonga.visor.core.connection.decodeDeviceStateUpdate
-import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.SnApp
+import com.macedonga.visor.core.connection.decodeDeviceStatePush
 import com.macedonga.visor.core.connection.isDeviceStateType
-import com.macedonga.visor.core.connection.mergeDeviceState
+import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.connection.subscribeOn
+import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
-import com.macedonga.visor.core.transport.LinkMeter
+import com.macedonga.visor.core.protocol.SVC_AIRSHIP
+import com.macedonga.visor.core.protocol.SVC_MEDIA_STREAMING_CONTROL
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
+import com.macedonga.visor.core.session.DataXError
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.LinkStateChanged
 import com.macedonga.visor.core.session.ProtocolError
-import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.Responder
-import android.os.SystemClock
+import com.macedonga.visor.core.session.ServiceData
+import com.macedonga.visor.core.transport.LinkMeter
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import javax.net.SocketFactory
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -54,32 +64,24 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-
-// svc28 app manager. The Meta app starts the glasses-side app this way before it opens svc51350.
-private const val MT_START_APP = 2000
-private const val MT_START_APP_RESPONSE = 2001
-private const val MT_STOP_APP = 2002
 
 /** The glasses-side app a stream session runs in: the app manager's AppId. */
 enum class GlassesApp(val id: Int, val label: String) {
     LIVE_STREAMING(3, "Livestream"),
-    STREAMING_SDK(27, "Device toolkit"),
     MMAI_LIVE(28, "Live AI"),
-    WARP_LIVE_STREAMING(40, "WARP livestream"),
 }
 
 /** The SessionSettings ApplicationType. */
 enum class SessionApp(val id: Int, val label: String) {
-    UNKNOWN(0, "Unset"),
-    FACEBOOK(StreamApp.FACEBOOK, "Facebook"),
-    INSTAGRAM(StreamApp.INSTAGRAM, "Instagram"),
-    FAIR_DEMO(StreamApp.FAIR_DEMO, "Demo"),
-    MMAI_LIVE(StreamApp.MMAI_LIVE, "Live AI"),
+    FAIR_DEMO(3, "Demo"),
+    MMAI_LIVE(4, "Live AI"),
 }
 
-/** The Meta app's bitrate ladder tops out at 720p; 1080p is here to see whether the glasses take it. */
+/** The sizes a stream asks the glasses for. */
 enum class StreamQuality(val width: Int, val height: Int, val label: String) {
     VERY_LOW(360, 640, "360p"),
     LOW(432, 768, "432p"),
@@ -122,7 +124,7 @@ data class StreamStats(
 enum class LivePhase { IDLE, WIFI, GLASSES, CAMERA, RUNNING, RESTARTING, FAILED }
 
 /** Why it did not start, or stopped by itself. */
-enum class LiveProblem { NOT_CONNECTED, IN_CASE, WIFI_OFF, WIFI_DIRECT_DENIED, NO_KEY, JOIN_FAILED, SESSION_FAILED, NO_VIDEO, GAVE_UP, VPN }
+enum class LiveProblem { NOT_CONNECTED, IN_CASE, WIFI_OFF, WIFI_DIRECT_DENIED, NO_KEY, JOIN_FAILED, SESSION_FAILED, NO_VIDEO, GAVE_UP, VPN, WIFI_BUSY }
 
 data class LiveStatus(val phase: LivePhase = LivePhase.IDLE, val problem: LiveProblem? = null)
 
@@ -163,9 +165,6 @@ class StreamReceiver : Responder {
     // Everything that is not a media chunk, for LiveStream to read.
     private val _control = MutableSharedFlow<DataXMessage>(extraBufferCapacity = 64)
     val control: SharedFlow<DataXMessage> = _control.asSharedFlow()
-
-    @Volatile
-    var recording: FileOutputStream? = null
 
     /** When the latest frame arrived, by the wall clock; 0 before the first. */
     @Volatile
@@ -221,10 +220,9 @@ class StreamReceiver : Responder {
                 val config = f.bytes(3)
                 val type = f.varint(2)
                 // Field 2 says which; failing that, video parameter sets are Annex-B and an AudioSpecificConfig is not.
-                if (type == CodecType.VIDEO || (type != CodecType.AUDIO && nalTypes(config).isNotEmpty())) {
+                if (type == CodecType.VIDEO || (type != CodecType.AUDIO && annexBUnits(config).isNotEmpty())) {
                     _codecConfig.value = config
                     noteCodec(config)
-                    recording?.write(config)
                 } else {
                     aacFormatOf(config)?.let { _aac.value = it }
                 }
@@ -237,7 +235,7 @@ class StreamReceiver : Responder {
                 audioChunks.reset()
                 if (whole.size > 8) {
                     val pts = ByteBuffer.wrap(whole, 0, 8).order(ByteOrder.LITTLE_ENDIAN).long
-                    // Some glasses never send an AudioSpecificConfig (#31): the format asked for stands in until one comes.
+                    // Some glasses never send an AudioSpecificConfig: the format asked for stands in until one comes.
                     if (_aac.value == null) _aac.value = aacFormatFor(LIVE_AUDIO)
                     _audio.tryEmit(AudioPacket(pts, whole.copyOfRange(8, whole.size)))
                 }
@@ -247,7 +245,7 @@ class StreamReceiver : Responder {
                 photoChunks.write(payload)
                 val whole = photoChunks.toByteArray()
                 photoChunks.reset()
-                // The glasses send the HEIC bare; a reader that expects a pts first finds ftyp eight bytes later.
+                // A bare HEIC has ftyp at byte 4; anything else has an 8-byte pts in front.
                 val bare = whole.size > 12 && String(whole, 4, 4, Charsets.US_ASCII) == "ftyp"
                 _photos.tryEmit(if (bare || whole.size <= 16) whole else whole.copyOfRange(8, whole.size))
             }
@@ -272,7 +270,6 @@ class StreamReceiver : Responder {
         if (whole.size <= 8) return
         val pts = ByteBuffer.wrap(whole, 0, 8).order(ByteOrder.LITTLE_ENDIAN).long
         val data = whole.copyOfRange(8, whole.size)
-        recording?.write(data)
         lastFrameAt = System.currentTimeMillis()
 
         val now = SystemClock.elapsedRealtimeNanos() / 1000
@@ -306,10 +303,10 @@ class StreamReceiver : Responder {
 /**
  * Asks the glasses for their camera over svc51350, the way the Meta app's media stream client does:
  * start the glasses-side app on svc28, then SessionSettings, ConfigureVideoStreamRequest and a
- * ControlStreamRequest START on one channel. Every step and every answer goes to [log].
+ * ControlStreamRequest START on one channel. Every step and every answer goes to [notes].
  *
- * Over Wi-Fi the same messages run on a second session: the glasses join this phone's Wi-Fi Direct
- * group exactly as for media import, and Bluetooth is paused until the stream stops.
+ * Over Wi-Fi the same messages run on a second session, on the phone's Wi-Fi Direct group or the glasses' own
+ * network; Bluetooth is paused until the stream stops.
  */
 class LiveStream(
     private val context: Context,
@@ -318,22 +315,21 @@ class LiveStream(
     private val store: IdentityStore,
     private val hosts: SessionHostFactory,
     private val meter: LinkMeter,
-    private val spool: File,
     val outputs: LiveOutputs,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val _log = MutableStateFlow<List<String>>(emptyList())
-    val log: StateFlow<List<String>> = _log.asStateFlow()
-
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
+
+    /** The Live or [overWifi] has the glasses on Wi-Fi; another session would end it. */
+    val usingWifi: Boolean get() = _running.value || lent.get() || wifi != null
 
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
 
-    /** What the decoder says the frames are, e.g. "1280x720". */
-    val decodedSize = MutableStateFlow<String?>(null)
+    /** The size the decoder says the frames are. */
+    val decodedSize = MutableStateFlow<Size?>(null)
 
     /** Frames not shown because one before them was lost, counted by the decoder's feeder. */
     val skipped = MutableStateFlow(0)
@@ -345,7 +341,8 @@ class LiveStream(
     val waitMs = MutableStateFlow(0L)
 
     /** Bumped at every start and size change, so the decoder is rebuilt for the size asked for. */
-    val generation = MutableStateFlow(0)
+    private val _generation = MutableStateFlow(0)
+    val generation: StateFlow<Int> = _generation.asStateFlow()
 
     private val _status = MutableStateFlow(LiveStatus())
     val status: StateFlow<LiveStatus> = _status.asStateFlow()
@@ -379,8 +376,16 @@ class LiveStream(
     val wifiSession: StateFlow<DataXConnection?> = _wifiSession.asStateFlow()
 
     // What the glasses send on the Wi-Fi session, for work run there with overWifi.
-    private val _wifiData = kotlinx.coroutines.flow.MutableSharedFlow<ServiceData>(extraBufferCapacity = 256)
-    val wifiData: kotlinx.coroutines.flow.SharedFlow<ServiceData> = _wifiData
+    private val _wifiData = MutableSharedFlow<ServiceData>(extraBufferCapacity = 256)
+    val wifiData: SharedFlow<ServiceData> = _wifiData.asSharedFlow()
+
+    // The DataX error statuses the glasses answer on the Wi-Fi session.
+    private val _wifiErrors = MutableSharedFlow<DataXError>(extraBufferCapacity = 16)
+    val wifiErrors: SharedFlow<DataXError> = _wifiErrors.asSharedFlow()
+
+    /** The Wi-Fi session's link dropped, or the glasses stopped answering on it. */
+    private val _wifiLost = MutableStateFlow(false)
+    val wifiLost: StateFlow<Boolean> = _wifiLost.asStateFlow()
 
     /** The picture now as a JPEG, decoded from the replay ring; null when no Live runs. */
     suspend fun frameNow(): ByteArray? = if (_running.value) outputs.replay.lastPicture()?.let { grabJpeg(it, quality = 88) } else null
@@ -395,17 +400,18 @@ class LiveStream(
 
     private val answers = ConcurrentHashMap<Long, CompletableDeferred<StreamAnswer>>()
     private var startAnswer: CompletableDeferred<Long>? = null
-    private var joined: CompletableDeferred<JoinResult>? = null
-    // The answer to CreateSoftApNetwork, with the ssid and password it was asked for.
-    private var hosted: Pair<CompletableDeferred<SoftApInfo>, Pair<String, String>>? = null
+    private var hosted: SoftApAsk? = null
     private var onGlassesNetwork = false
     private var glassesNetwork: GlassesNetwork? = null
     // Restarts of this stream on the phone's group: two make the glasses' own network worth a try.
     private var groupStalls = 0
     private val _suggestGlassesHost = MutableStateFlow(false)
     val suggestGlassesHost: StateFlow<Boolean> = _suggestGlassesHost.asStateFlow()
-    private var nonce = 1
+    private val nonce = AtomicInteger(1)
     private var job: Job? = null
+    private val restartLock = Mutex()
+    // Held by one overWifi at a time.
+    private val lent = AtomicBoolean(false)
     private var lastConfig: VideoConfig? = null
     private var keyframeAskedAt = 0L
 
@@ -415,7 +421,6 @@ class LiveStream(
         val quality: StreamQuality,
         val bitrate: Int,
         val frameRate: Int,
-        val bypassDonCheck: Boolean,
         val overWifi: Boolean,
         val groupBand: Int,
         val auto: Boolean = false,
@@ -430,9 +435,6 @@ class LiveStream(
     private var wanted = false
     private var watchdog: Job? = null
     private var startedAt = 0L
-
-    @Volatile
-    private var linkDropped = false
 
     private var stopping: Job? = null
 
@@ -465,11 +467,12 @@ class LiveStream(
     private var group: PhoneGroup? = null
     private var groupBand = BAND_AUTO
 
-
-    /** The file the last stream was written to: raw Annex-B, playable with ffplay -f hevc. */
-    val recordingFile: File get() = File(spool, "live.hevc")
+    // Services heard on this Wi-Fi session outside the known ones, logged once each.
+    private val heard = ConcurrentHashMap.newKeySet<Int>()
 
     init {
+        // Nothing reads live.hevc; free its space.
+        scope.launch(Dispatchers.IO) { File(context.filesDir, "live.hevc").delete() }
         scope.launch { receiver.control.collect(::onControl) }
         scope.launch { receiver.frames.collect(outputs::onVideo) }
         scope.launch { receiver.codecConfig.collect { if (it != null) outputs.onConfig(it) } }
@@ -477,22 +480,23 @@ class LiveStream(
         scope.launch { receiver.audio.collect(outputs::onAudio) }
         scope.launch { receiver.aac.collect { if (it != null) outputs.onAudioFormat(it) } }
         scope.launch {
-            connection.serviceData.collect {
-                when {
-                    it.serviceId == 28 && it.messageType == MT_START_APP_RESPONSE -> startAnswer?.complete(Wire.parse(it.payload).varint(1))
-                    it.serviceId == SVC_ATC && it.messageType == MT_JOIN_ACCESS_POINT_RESULT -> joined?.complete(parseJoinResult(it.payload))
-                    it.serviceId == SVC_ATC && it.messageType == MT_SOFT_AP_INFO -> hosted?.let { (answer, asked) ->
-                        answer.complete(parseSoftApInfo(it.payload, asked.first, asked.second))
+            connection.serviceData.collect { data ->
+                runCatching<Unit> {
+                    when {
+                        data.serviceId == SVC_STATUS && data.messageType == SnApp.MT_START_APP_RESPONSE -> startAnswer?.complete(Wire.parse(data.payload).varint(1))
+                        data.serviceId == SVC_ATC && data.messageType == MT_SOFT_AP_INFO -> hosted?.let { ask ->
+                            ask.answer.complete(parseSoftApInfo(data.payload, ask.ssid, ask.password))
+                        }
                     }
-                }
+                }.onFailure { say("Could not read svc${data.serviceId} type ${data.messageType}: ${it.message}") }
             }
         }
         scope.launch {
-            connection.warnings.collect { if ("service 51350" in it || "service 28 " in it) say("Glasses: $it") }
+            connection.warnings.collect { if ("service $SVC_MEDIA_STREAMING_CONTROL" in it || "service $SVC_STATUS " in it) say("Glasses: $it") }
         }
     }
 
-    /** The Live view's start: over Wi-Fi Direct, automatic quality unless the settings fix one. */
+    /** The Live view's start: over Wi-Fi, automatic quality unless the settings fix one. */
     fun start(settings: LiveSettings) {
         val top = LADDER.first()
         start(
@@ -500,7 +504,7 @@ class LiveStream(
             if (settings.manual) settings.quality else top.quality,
             if (settings.manual) settings.bitrate else top.bitrate,
             if (settings.manual) settings.frameRate else top.frameRate,
-            bypassDonCheck = true, overWifi = true, groupBand = BAND_2GHZ, auto = !settings.manual,
+            overWifi = true, groupBand = BAND_2GHZ, auto = !settings.manual,
             glassesHost = settings.glassesHost,
         )
     }
@@ -510,10 +514,10 @@ class LiveStream(
      * session, 432x576 at 2 fps and 250 kbit/s, every frame a keyframe, OCR allowed, no audio (that is on svc15).
      */
     fun startLiveAi() {
-        if (job?.isActive == true || _running.value) return
+        if (job?.isActive == true || _running.value || lent.get()) return
         start(
             GlassesApp.MMAI_LIVE, SessionApp.MMAI_LIVE, StreamQuality.LIVE_AI, 250_000, 2,
-            bypassDonCheck = true, overWifi = false, liveAi = true,
+            overWifi = false, liveAi = true,
         )
     }
 
@@ -526,7 +530,6 @@ class LiveStream(
         quality: StreamQuality,
         bitrate: Int,
         frameRate: Int,
-        bypassDonCheck: Boolean,
         overWifi: Boolean,
         groupBand: Int = BAND_2GHZ,
         auto: Boolean = false,
@@ -534,7 +537,11 @@ class LiveStream(
         glassesHost: Boolean = false,
     ) {
         if (job?.isActive == true) return
-        val p = Params(app, session, quality, bitrate, frameRate, bypassDonCheck, overWifi, groupBand, auto, liveAi, glassesHost)
+        if (lent.get()) {
+            _status.value = LiveStatus(LivePhase.FAILED, LiveProblem.WIFI_BUSY)
+            return
+        }
+        val p = Params(app, session, quality, bitrate, frameRate, overWifi, groupBand, auto, liveAi, glassesHost)
         params = p
         groupStalls = 0
         _suggestGlassesHost.value = false
@@ -548,13 +555,17 @@ class LiveStream(
         supported = null
         outputs.onStreamStarted()
         wanted = true
-        job = scope.launch { run(p) }
+        // Before the run: a run that fails at once cancels this watchdog, not the last one.
         watchdog?.cancel()
+        recovering = false
+        attempts = 0
         watchdog = scope.launch { watch() }
+        job = scope.launch { run(p) }
     }
 
     private suspend fun run(p: Params) {
-        val reuse = p.overWifi && wifi != null && !linkDropped && groupBand == p.groupBand && onGlassesNetwork == p.glassesHost
+        startedAt = System.currentTimeMillis()
+        val reuse = p.overWifi && wifi != null && !_wifiLost.value && groupBand == p.groupBand && onGlassesNetwork == p.glassesHost
         if (!reuse && wifi != null) tearDownWifi()
         if (!reuse && connection.state.value.link != LinkState.READY) {
             say("Not connected.")
@@ -567,53 +578,44 @@ class LiveStream(
             fail(LiveProblem.IN_CASE)
             return
         }
-        if (reuse && _status.value.phase != LivePhase.RESTARTING) _status.value = LiveStatus(LivePhase.CAMERA)
         _running.value = true
         receiver.reset()
         decodedSize.value = null
         requested = _rung.value?.quality ?: p.quality
         skipped.value = 0
-        generation.value += 1
-        linkDropped = false
-        startedAt = System.currentTimeMillis()
-        spool.mkdirs()
-        receiver.recording?.close()
-        receiver.recording = FileOutputStream(recordingFile)
+        _generation.value += 1
+        _wifiLost.value = false
 
         if (reuse) {
             say("Still on Wi-Fi from the last stream")
-        } else if (p.overWifi && !(if (p.glassesHost) bringUpGlassesNetwork() else bringUpWifi(p.groupBand))) {
+        } else if (p.overWifi && !(if (p.glassesHost) bringUpGlassesNetwork() else bringUpWifi(p.groupBand, live = true))) {
             finish()
             return
         }
         // A Wi-Fi session has not subscribed to anything yet; the Meta app does this before it starts an app.
-        wifi?.submit(::subscribeToDeviceStatus)
-        if (_status.value.phase != LivePhase.RESTARTING) _status.value = LiveStatus(LivePhase.CAMERA)
+        wifi?.submit { subscribeOn(it, null) }
+        phase(LivePhase.CAMERA)
 
         say("Starting ${p.app.label} (app ${p.app.id}) on the glasses")
         val started = CompletableDeferred<Long>().also { startAnswer = it }
-        send { it.sendOnService(28, MT_START_APP, Wire.fieldVarint(1, p.app.id.toLong())) }
-        val code = withTimeoutOrNull(7_000) { started.await() }
-        say(if (code == null) "No answer from the app manager in 7 s, going on" else "App manager: ${snappWords(code)}")
+        send { it.sendOnService(SVC_STATUS, SnApp.MT_START_APP, SnApp.app(p.app.id.toLong())) }
+        val code = withTimeoutOrNull(APP_START_MS) { started.await() }
+        say(if (code == null) "No answer from the app manager in ${APP_START_MS / 1000} s, going on" else "App manager: ${SnApp.words(code)}")
 
-        say("Session settings: ${p.session.label}, don check ${if (p.bypassDonCheck) "bypassed" else "on"}")
-        send { it.sendOnService(SVC_MEDIA_STREAMING_CONTROL, StreamType.SESSION_SETTINGS, sessionSettings(p.session.id, 30, 600, p.bypassDonCheck, allowOcr = p.liveAi)) }
+        say("Session settings: ${p.session.label}")
+        send { it.sendOnService(SVC_MEDIA_STREAMING_CONTROL, StreamType.SESSION_SETTINGS, sessionSettings(p.session.id, 30, 600, bypassDonCheck = true, allowOcr = p.liveAi)) }
 
         // A restart asks for what the pilot had reached, not what the stream began with.
         val r = _rung.value ?: Rung(p.quality, p.bitrate, p.frameRate)
-        var config = VideoConfig(width = r.quality.width, height = r.quality.height, bitrate = r.bitrate, frameRate = r.frameRate, iFrameInterval = if (p.liveAi) 0 else 1)
-        lastConfig = config
-        var configured = ask(StreamType.CONFIGURE_VIDEO_STREAM_REQUEST) { configureVideo(it, config) }
-        say("Configure video ${r.quality.label}, ${r.bitrate / 1000} kbit/s, ${r.frameRate} fps: ${configured.words()}")
+        var configured = configure(r, if (p.liveAi) 0 else 1)
+        say("Configure video ${r.words}: ${configured.words()}")
         // Too much for these glasses: the pilot walks down until they take one.
         while (p.auto && configured != null && configured.code != 0L) {
             val next = pilot.refused(System.currentTimeMillis()) ?: break
             _rung.value = next
             requested = next.quality
-            config = VideoConfig(width = next.quality.width, height = next.quality.height, bitrate = next.bitrate, frameRate = next.frameRate, iFrameInterval = 1)
-            lastConfig = config
-            configured = ask(StreamType.CONFIGURE_VIDEO_STREAM_REQUEST) { configureVideo(it, config) }
-            say("Configure video ${next.quality.label}, ${next.bitrate / 1000} kbit/s, ${next.frameRate} fps: ${configured.words()}")
+            configured = configure(next)
+            say("Configure video ${next.words}: ${configured.words()}")
         }
 
         // The glasses' microphones, as the Meta app asks for them: 48 kHz stereo AAC-LC. Live AI hears on svc15 instead.
@@ -627,7 +629,7 @@ class LiveStream(
 
     /**
      * Starts the same stream again when video stops for 4 s or the Wi-Fi link drops, but only after
-     * it had worked: a stream that never produced a frame is left alone instead of retried forever.
+     * it had worked: a stream that never produced a frame stops with [LiveProblem.NO_VIDEO].
      */
     private suspend fun watch() {
         var tick = 0
@@ -654,16 +656,22 @@ class LiveStream(
                 recovering = false
                 attempts = 0
             }
+            if (!recovering && last <= startedAt && commandedAt > startedAt && now - commandedAt > NO_VIDEO_MS) {
+                say("No video ${NO_VIDEO_MS / 1000} s after the start")
+                stop()
+                fail(LiveProblem.NO_VIDEO)
+                return
+            }
             val why = when {
-                linkDropped -> "the Wi-Fi link dropped"
+                _wifiLost.value -> "the Wi-Fi link dropped"
                 last > startedAt && now - last > 4_000 -> "no video for ${(now - last) / 1000} s"
-                recovering && commandedAt > startedAt && now - commandedAt > 12_000 -> "the restart brought no video"
+                recovering && commandedAt > startedAt && now - commandedAt > NO_VIDEO_MS -> "the restart brought no video"
                 recovering && commandedAt < startedAt -> "the restart did not get the stream going"
                 else -> null
             } ?: continue
             say("Stalled: $why. ${stallWords(now)}")
-            if (++attempts > 5) {
-                say("Giving up after 5 restarts")
+            if (++attempts > MAX_RESTARTS) {
+                say("Giving up after $MAX_RESTARTS restarts")
                 stop()
                 fail(LiveProblem.GAVE_UP)
                 return
@@ -684,21 +692,37 @@ class LiveStream(
         _rung.value = next
         if (before?.quality != next.quality) {
             requested = next.quality
-            generation.value += 1
+            _generation.value += 1
         }
-        val config = VideoConfig(width = next.quality.width, height = next.quality.height, bitrate = next.bitrate, frameRate = next.frameRate, iFrameInterval = 1)
-        lastConfig = config
         scope.launch {
             // A stall can tear the session down first; the restart asks for the new rung itself.
             if (noSession) return@launch
-            val answer = ask(StreamType.CONFIGURE_VIDEO_STREAM_REQUEST) { configureVideo(it, config) }
-            say("Quality to ${next.quality.label}, ${next.bitrate / 1000} kbit/s, ${next.frameRate} fps: ${answer.words()}")
+            val answer = configure(next)
+            say("Quality to ${next.words}: ${answer.words()}")
         }
     }
 
+    private val Rung.words: String get() = "${quality.label}, ${bitrate / 1000} kbit/s, $frameRate fps"
+
+    private suspend fun configure(r: Rung, iFrameInterval: Int = 1): StreamAnswer? {
+        val config = VideoConfig(width = r.quality.width, height = r.quality.height, bitrate = r.bitrate, frameRate = r.frameRate, iFrameInterval = iFrameInterval)
+        lastConfig = config
+        return ask(StreamType.CONFIGURE_VIDEO_STREAM_REQUEST) { configureVideo(it, config) }
+    }
+
     private fun fail(problem: LiveProblem) {
+        // A start that fails outside a restart is not retried.
+        if (_status.value.phase != LivePhase.RESTARTING) watchdog?.cancel()
         // Whatever broke, glasses put in the case while it was starting will not go on.
         _status.value = LiveStatus(LivePhase.FAILED, if (inCase()) LiveProblem.IN_CASE else problem)
+    }
+
+    private fun phase(p: LivePhase) {
+        if (_status.value.phase != LivePhase.RESTARTING) _status.value = LiveStatus(p)
+    }
+
+    private fun failUnlessRestarting(problem: LiveProblem) {
+        if (_status.value.phase != LivePhase.RESTARTING) fail(problem)
     }
 
     private fun inCase() = connection.state.value.device?.let { it.battery?.charging == true && it.hinge != "OPEN" } == true
@@ -715,14 +739,17 @@ class LiveStream(
     }
 
     private suspend fun restart() {
-        val p = params ?: return
-        job?.cancel()
-        tearDownWifi()
-        if (connection.state.value.link != LinkState.READY) {
-            withTimeoutOrNull(30_000) { connection.state.first { it.link == LinkState.READY } }
-                ?: return say("Bluetooth did not come back; trying again shortly")
+        restartLock.withLock {
+            val p = params ?: return
+            job?.cancelAndJoin()
+            tearDownWifi()
+            if (connection.state.value.link != LinkState.READY) {
+                withTimeoutOrNull(30_000) { connection.state.first { it.link == LinkState.READY } }
+                    ?: return say("Bluetooth did not come back; trying again shortly")
+            }
+            if (!wanted) return
+            job = scope.launch { run(p) }
         }
-        if (wanted) job = scope.launch { run(p) }
     }
 
     fun stop() {
@@ -733,7 +760,7 @@ class LiveStream(
         _status.value = LiveStatus()
         outputs.onStreamEnded()
         stopping = scope.launch {
-            job?.cancel()
+            job?.cancelAndJoin()
             if (wifi != null || (!noSession && connection.state.value.link == LinkState.READY)) {
                 val answer = ask(StreamType.CONTROL_STREAM_REQUEST) { controlStream(it, StreamAction.STOP) }
                 say("Stop: ${answer.words()}")
@@ -744,23 +771,19 @@ class LiveStream(
 
     /** Wi-Fi goes at once, so the Bluetooth session is back as soon as the Live ends. */
     private suspend fun finish() {
-        receiver.recording?.close()
-        receiver.recording = null
         tearDownWifi()
         _running.value = false
         val stats = receiver.stats.value
-        say("Stopped after ${stats.frames} frames, ${sizeWords(stats.bytes)}. Raw stream in ${recordingFile.name}")
+        say("Stopped after ${stats.frames} frames, ${sizeWords(stats.bytes)}")
     }
 
-    /** Put the glasses on this phone's Wi-Fi Direct group and open a session there. False if it did not work. */
-    private suspend fun bringUpWifi(band: Int): Boolean {
+    /** Put the glasses on this phone's Wi-Fi Direct group and open a session there. False if it did not work; only [live] sets the status. */
+    private suspend fun bringUpWifi(band: Int, live: Boolean): Boolean {
         when {
-            !wifiIsOn(context) -> return false.also { say("Turn on Wi-Fi first"); fail(LiveProblem.WIFI_OFF) }
-            !wifiDirectAllowed(context) -> return false.also { say("Allow Wi-Fi Direct first"); fail(LiveProblem.WIFI_DIRECT_DENIED) }
+            !wifiIsOn(context) -> return false.also { say("Turn on Wi-Fi first"); if (live) fail(LiveProblem.WIFI_OFF) }
+            !wifiDirectAllowed(context) -> return false.also { say("Allow Wi-Fi Direct first"); if (live) fail(LiveProblem.WIFI_DIRECT_DENIED) }
         }
-        val target = connection.state.value.target ?: return false.also { fail(LiveProblem.NOT_CONNECTED) }
-        val bundle = withContext(Dispatchers.IO) { store.all().firstOrNull { it.serial == target.serial } }
-            ?: return false.also { say("These glasses have no key on this phone"); fail(LiveProblem.NO_KEY) }
+        val (target, bundle) = keyed(live) ?: return false
         return try {
             val g = PhoneGroup(context).also { group = it }
             say("Starting Wi-Fi Direct")
@@ -773,13 +796,11 @@ class LiveStream(
             // Fresh out of a group, or of a Wi-Fi firmware restart, they answer INTERNAL_ERROR for up to half a minute.
             for (attempt in 1..JOIN_TRIES) {
                 if (attempt > 1) delay(4_000)
-                val answer = CompletableDeferred<JoinResult>().also { joined = it }
-                connection.submit { joinAccessPoint(it, g.ssid, g.passphrase, BW_20MHZ) }
                 say("Asking the glasses to join ${g.ssid}" + if (attempt > 1) " (try $attempt)" else "")
-                val r = withTimeoutOrNull(45_000) { answer.await() }
+                val r = joinGlasses(connection, g.ssid, g.passphrase, BW_20MHZ, 45_000)
                 if (r == null) {
                     say("The glasses did not answer the Wi-Fi join")
-                    continue
+                    break
                 }
                 if (r.ok) {
                     result = r
@@ -787,17 +808,34 @@ class LiveStream(
                 }
                 say("The glasses could not join Wi-Fi Direct (${r.statusName})")
             }
-            if (result == null) return false.also { if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.JOIN_FAILED) }
+            if (result == null) {
+                if (live) failUnlessRestarting(LiveProblem.JOIN_FAILED)
+                return false
+            }
             say("The glasses joined at ${result.address}:${result.port}")
-            if (_status.value.phase != LivePhase.RESTARTING) _status.value = LiveStatus(LivePhase.GLASSES)
-            openWifiSession(target, bundle, checkNotNull(result.address), result.port)
+            if (live) phase(LivePhase.GLASSES)
+            openWifiSession(target, bundle, checkNotNull(result.address), result.port, live = live)
         } catch (unavailable: WifiUnavailable) {
             say("Wi-Fi Direct: ${unavailable.message}")
-            if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.JOIN_FAILED)
+            if (live) failUnlessRestarting(LiveProblem.JOIN_FAILED)
             false
-        } finally {
-            joined = null
         }
+    }
+
+    /** The glasses connected now and their key, or null once the reason is shown. */
+    private suspend fun keyed(live: Boolean): Pair<GlassesTarget, IdentityBundle>? {
+        val target = connection.state.value.target
+        if (target == null) {
+            if (live) fail(LiveProblem.NOT_CONNECTED)
+            return null
+        }
+        val bundle = withContext(Dispatchers.IO) { store.load(target.serial) }
+        if (bundle == null) {
+            say("These glasses have no key on this phone")
+            if (live) fail(LiveProblem.NO_KEY)
+            return null
+        }
+        return target to bundle
     }
 
     /**
@@ -806,19 +844,24 @@ class LiveStream(
      */
     private suspend fun bringUpGlassesNetwork(): Boolean {
         if (!wifiIsOn(context)) return false.also { say("Turn on Wi-Fi first"); fail(LiveProblem.WIFI_OFF) }
-        val target = connection.state.value.target ?: return false.also { fail(LiveProblem.NOT_CONNECTED) }
-        val bundle = withContext(Dispatchers.IO) { store.all().firstOrNull { it.serial == target.serial } }
-            ?: return false.also { say("These glasses have no key on this phone"); fail(LiveProblem.NO_KEY) }
-        val random = SecureRandom()
-        val ssid = "Visor-" + (1..4).joinToString("") { "%x".format(random.nextInt(16)) }
-        val password = (1..20).joinToString("") { NETWORK_ALPHABET[random.nextInt(NETWORK_ALPHABET.length)].toString() }
+        val (target, bundle) = keyed(live = true) ?: return false
+        val ssid = "Visor-%04x".format(SecureRandom().nextInt(0x10000))
+        val password = randomPassword()
         return try {
-            val answer = CompletableDeferred<SoftApInfo>().also { hosted = it to (ssid to password) }
+            val answer = CompletableDeferred<SoftApInfo>().also { hosted = SoftApAsk(it, ssid, password) }
             connection.submit { createSoftAp(it, ssid, password, countryCode(context)) }
             say("Asking the glasses to host a network")
             val info = withTimeoutOrNull(30_000) { answer.await() }
-                ?: return false.also { say("The glasses did not answer"); if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.JOIN_FAILED) }
-            if (!info.ok) return false.also { say("The glasses could not host a network (${info.statusName})"); if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.JOIN_FAILED) }
+            if (info == null) {
+                say("The glasses did not answer")
+                failUnlessRestarting(LiveProblem.JOIN_FAILED)
+                return false
+            }
+            if (!info.ok) {
+                say("The glasses could not host a network (${info.statusName})")
+                failUnlessRestarting(LiveProblem.JOIN_FAILED)
+                return false
+            }
             onGlassesNetwork = true
             say("The glasses host ${info.ssid} at ${info.address}:${info.port}; joining it")
             val net = GlassesNetwork(context).also { glassesNetwork = it }
@@ -830,11 +873,11 @@ class LiveStream(
                 return false
             }
             say("The phone is on the glasses' network")
-            if (_status.value.phase != LivePhase.RESTARTING) _status.value = LiveStatus(LivePhase.GLASSES)
-            openWifiSession(target, bundle, checkNotNull(info.address), info.port, network.socketFactory)
+            phase(LivePhase.GLASSES)
+            openWifiSession(target, bundle, checkNotNull(info.address), info.port, network.socketFactory, live = true)
         } catch (unavailable: WifiUnavailable) {
             say("Wi-Fi: ${unavailable.message}")
-            if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.JOIN_FAILED)
+            failUnlessRestarting(LiveProblem.JOIN_FAILED)
             false
         } finally {
             hosted = null
@@ -857,11 +900,13 @@ class LiveStream(
     /** A session with the glasses at [address]:[port] over Wi-Fi, its socket from [sockets] when given. */
     private suspend fun openWifiSession(
         target: GlassesTarget,
-        bundle: com.macedonga.visor.core.identity.IdentityBundle,
+        bundle: IdentityBundle,
         address: String,
         port: Int,
-        sockets: javax.net.SocketFactory? = null,
+        sockets: SocketFactory? = null,
+        live: Boolean,
     ): Boolean {
+        heard.clear()
         val host = hosts.create(GlassesTarget(GlassesLink.Wifi(address, port, sockets), target.serial), bundle)
         val ready = CompletableDeferred<Boolean>()
         // Connect first and let go of Bluetooth after: the window to connect is short.
@@ -873,7 +918,7 @@ class LiveStream(
                         LinkState.READY -> ready.complete(true)
                         LinkState.LOST, LinkState.DISCONNECTED -> if (ready.isCompleted && !tearingDown) {
                             say("The Wi-Fi link dropped" + if (event.reason.isNotBlank()) ": ${event.reason}" else "")
-                            linkDropped = true
+                            _wifiLost.value = true
                         }
                         else -> Unit
                     }
@@ -883,15 +928,16 @@ class LiveStream(
                         onWifiMessage(event)
                     }
                     is ProtocolError -> say("Wi-Fi: ${event.detail}")
+                    is DataXError -> _wifiErrors.tryEmit(event)
                     else -> Unit
                 }
             }
         }
         wifi = host
-        connection.pause("Paused while the live view runs over Wi-Fi")
+        connection.pause(if (live) "Paused while the live view runs over Wi-Fi" else "Paused while a transfer runs over Wi-Fi")
         return if (withTimeoutOrNull(45_000) { ready.await() } != true) {
             say("The glasses did not open a session over Wi-Fi")
-            if (_status.value.phase != LivePhase.RESTARTING) fail(LiveProblem.SESSION_FAILED)
+            if (live) failUnlessRestarting(LiveProblem.SESSION_FAILED)
             false
         } else {
             say("Connected over Wi-Fi")
@@ -906,20 +952,22 @@ class LiveStream(
             event.serviceId == SVC_MEDIA_STREAMING_CONTROL -> Unit
             event.serviceId == SVC_PEER_BUILD_INFO && event.messageType == MT_PEER_DEVICE_INFO ->
                 keepaliveAnsweredAt = System.currentTimeMillis()
-            event.serviceId == 28 && event.messageType == MT_START_APP_RESPONSE ->
+            event.serviceId == SVC_STATUS && event.messageType == SnApp.MT_START_APP_RESPONSE ->
                 startAnswer?.complete(Wire.parse(event.payload).varint(1))
-            event.serviceId == 28 && isDeviceStateType(event.messageType) -> runCatching {
-                val update = decodeDeviceStateUpdate(event.messageType, event.payload, display = isDisplayBuild(connection.state.value.info?.build)).state
-                _device.update { it?.let { base -> mergeDeviceState(base, update) } ?: update }
+            event.serviceId == SVC_STATUS && isDeviceStateType(event.messageType) -> runCatching {
+                val display = isDisplayBuild(connection.state.value.info?.build)
+                _device.update { decodeDeviceStatePush(event.payload, display, it ?: DeviceState()) }
             }
-            // Airship, whose receiver reports for itself; everything else goes in the log.
-            event.serviceId == 28 || event.serviceId == SVC_AIRSHIP -> Unit
+            // Airship, whose receiver reports for itself; everything else goes in the log, once per service.
+            event.serviceId == SVC_STATUS || event.serviceId == SVC_AIRSHIP -> Unit
             // The Display's screencast, which reads its own.
             event.serviceId == SVC_HN_SCREENCAST || event.serviceId == SVC_HN_SCREENCAST_MANAGER -> Unit
-            else -> say(
-                "Wi-Fi: service ${event.serviceId} type ${event.messageType}, ${event.payload.size} bytes " +
-                    event.payload.take(16).joinToString("") { "%02x".format(it) },
-            )
+            else -> if (heard.add(event.serviceId)) {
+                say(
+                    "Wi-Fi: service ${event.serviceId} type ${event.messageType}, ${event.payload.size} bytes " +
+                        event.payload.toHexString(0, minOf(16, event.payload.size)),
+                )
+            }
         }
     }
 
@@ -938,9 +986,9 @@ class LiveStream(
             val now = System.currentTimeMillis()
             when {
                 // Only an answer that stops counts; a session that never answered may simply not host svc100.
-                answered > 0 && now - answered > 8_000 && !linkDropped && wifi === host -> {
+                answered > 0 && now - answered > 8_000 && !_wifiLost.value && wifi === host -> {
                     say("The glasses stopped answering over Wi-Fi (${(now - answered) / 1000} s)")
-                    linkDropped = true
+                    _wifiLost.value = true
                 }
                 answered == 0L && now - since > 8_000 && !told -> {
                     say("svc100 does not answer over Wi-Fi; the keepalive only sends")
@@ -950,7 +998,8 @@ class LiveStream(
         }
     }
 
-    private suspend fun tearDownWifi() {
+    // Not cancellable: stopped halfway, it would leave Bluetooth paused.
+    private suspend fun tearDownWifi() = withContext(NonCancellable) {
         keepalive?.cancel()
         keepalive = null
         tearingDown = true
@@ -958,9 +1007,8 @@ class LiveStream(
         val host = wifi
         wifi = null
         if (host != null) {
-            // Leave the group before it goes, as the Meta app does, so the next join finds their Wi-Fi free; their own
-            // network they are asked to close instead.
-            if (!linkDropped) {
+            // Leave their group, or close their own network, so the next join finds their Wi-Fi free.
+            if (!_wifiLost.value) {
                 val leave = if (onGlassesNetwork) MT_DESTROY_SOFT_AP else MT_LEAVE_ACCESS_POINT
                 host.submit { runCatching { it.sendOnService(SVC_ATC, leave, ByteArray(0)) } }
                 delay(300)
@@ -1020,14 +1068,18 @@ class LiveStream(
      * meanwhile. Null when it ran, else why not.
      */
     suspend fun overWifi(work: suspend (DataXConnection) -> String?): String? {
-        if (_running.value || wifi != null) return "the live view is using Wi-Fi"
-        if (!bringUpWifi(BAND_2GHZ)) return "Wi-Fi Direct did not come up"
+        // A Live still starting or restarting counts too: it would tear this session down.
+        if (_running.value || job?.isActive == true || watchdog?.isActive == true || wifi != null || !lent.compareAndSet(false, true)) {
+            return "Wi-Fi to the glasses is in use"
+        }
         return try {
+            _wifiLost.value = false
+            if (!bringUpWifi(BAND_2GHZ, live = false)) return "Wi-Fi Direct did not come up"
             val mux = withTimeoutOrNull(10_000) { wifiSession.first { it != null } } ?: return "no session over Wi-Fi"
             work(mux)
         } finally {
             tearDownWifi()
-            _status.value = LiveStatus()
+            lent.set(false)
         }
     }
 
@@ -1041,10 +1093,10 @@ class LiveStream(
     }
 
     private suspend fun ask(type: Int, body: (Int) -> ByteArray): StreamAnswer? {
-        val n = nonce++
+        val n = nonce.getAndIncrement()
         val answer = CompletableDeferred<StreamAnswer>().also { answers[n.toLong()] = it }
         send { it.sendOnService(SVC_MEDIA_STREAMING_CONTROL, type, body(n)) }
-        return withTimeoutOrNull(5_000) { answer.await() }.also { answers.remove(n.toLong()) }
+        return withTimeoutOrNull(ANSWER_MS) { answer.await() }.also { answers.remove(n.toLong()) }
     }
 
     private fun onControl(message: DataXMessage) {
@@ -1078,18 +1130,17 @@ class LiveStream(
                 val f = Wire.parse(message.payload)
                 say("Codec config, type ${f.varint(2)}, ${f.bytes(3).size} bytes, NAL types ${nalTypes(f.bytes(3))}")
             }
-            else -> say("Type $type, ${message.payload.size} bytes: ${message.payload.take(24).joinToString("") { "%02x".format(it) }}")
+            else -> say("Type $type, ${message.payload.size} bytes: ${message.payload.toHexString(0, minOf(24, message.payload.size))}")
         }
     }
 
     private fun StreamAnswer?.words(): String = when {
-        this == null -> "no answer in 5 s"
+        this == null -> "no answer in ${ANSWER_MS / 1000} s"
         code == 0L -> "ok"
         else -> streamErrorWords(code) + if (reason.isNotEmpty()) " ($reason)" else ""
     }
 
     private fun say(text: String) {
-        _log.update { (it + text).takeLast(200) }
         _notes.tryEmit(text)
     }
 }
@@ -1097,43 +1148,15 @@ class LiveStream(
 /** Heat and battery from the stream's SystemHealthEvents; null until one says. */
 data class StreamHealth(val thermal: String? = null, val battery: Int? = null)
 
+// The answer to CreateSoftApNetwork, with the ssid and password it was asked for.
+private class SoftApAsk(val answer: CompletableDeferred<SoftApInfo>, val ssid: String, val password: String)
+
 private const val JOIN_TRIES = 8
+private const val NO_VIDEO_MS = 12_000L
+private const val APP_START_MS = 7_000L
+private const val ANSWER_MS = 5_000L
+private const val MAX_RESTARTS = 5
 private const val PHOTO_WAIT_MS = 8_000L
 
 // The audio every Live asks for: AAC-LC at 48 kHz, stereo.
 private val LIVE_AUDIO = AudioConfig()
-
-/** The Wi-Fi Direct group's band, as [PhoneGroup.create] takes it. */
-const val BAND_AUTO = 0
-const val BAND_2GHZ = 2
-const val BAND_5GHZ = 5
-
-private fun snappWords(code: Long): String = when (code) {
-    1L -> "started"
-    12L -> "already running"
-    5L -> "unsupported app"
-    6L -> "not enough battery"
-    7L -> "thermal throttling"
-    9L -> "start failed"
-    13L -> "not enough priority"
-    15L -> "denied by peak power"
-    else -> "error $code"
-}
-
-/** The HEVC NAL unit types in an Annex-B buffer. */
-fun nalTypes(data: ByteArray): List<Int> {
-    val out = ArrayList<Int>()
-    var i = 0
-    while (i + 3 < data.size) {
-        if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() && data[i + 2] == 1.toByte()) {
-            out += (data[i + 3].toInt() shr 1) and 0x3F
-            i += 3
-        } else {
-            i++
-        }
-    }
-    return out
-}
-
-// For the glasses' network's password: letters and digits only, as Android takes any.
-private const val NETWORK_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"

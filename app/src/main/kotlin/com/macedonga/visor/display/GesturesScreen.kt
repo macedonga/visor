@@ -1,9 +1,12 @@
 package com.macedonga.visor.display
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -19,19 +22,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.R
+import com.macedonga.visor.TopicKey
 import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.Bands
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.protocol.Band
+import com.macedonga.visor.settings.Footnote
 import com.macedonga.visor.settings.RowFrame
 import com.macedonga.visor.settings.Rows
 import com.macedonga.visor.settings.SettingsPage
+import com.macedonga.visor.settings.Topic
+import com.macedonga.visor.settings.ValueRow
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.rememberHaptics
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -52,17 +62,12 @@ enum class Lesson(val title: Int, val how: Int) {
     APPS(R.string.lesson_apps, R.string.lesson_apps_how);
 
     companion object {
-        /**
-         * The band's gestures as lessons, as the Display's input filter takes them: an index tap selects, a middle tap goes
-         * back, a thumb swipe scrolls, the thumb's double tap is Meta AI, the middle's wakes, holding the middle opens the
-         * apps. Each tap comes as press, release, button release and single tap; the second tap of a double adds a double
-         * tap right after its single tap. So a single tap waits a moment for a double, and only the final events count.
-         */
+        /** Band events to lessons; a single tap waits DOUBLE_WINDOW_MS for a double. */
         suspend fun judge(gestures: Flow<Band.Gesture>, onLesson: suspend (Lesson) -> Unit) = coroutineScope {
             var pending: Job? = null
             var quietUntil = 0L
             gestures.collect { g ->
-                val now = System.currentTimeMillis()
+                val now = SystemClock.uptimeMillis()
                 when {
                     g.derived == DERIVED_SINGLE_TAP -> {
                         pending?.cancel()
@@ -109,7 +114,7 @@ enum class Lesson(val title: Int, val how: Int) {
         private const val DERIVED_HOLD = 3
         private const val DERIVED_UP = 5
         private const val DERIVED_RIGHT = 8
-        // The second tap of a double came about 200 ms after the first on the user's band.
+        // Longer than the gap between a double tap's two taps.
         private const val DOUBLE_WINDOW_MS = 420L
         private const val QUIET_MS = 600L
     }
@@ -118,12 +123,9 @@ enum class Lesson(val title: Int, val how: Int) {
 @HiltViewModel
 class GesturesModel @Inject constructor(val band: BandLink, val bands: Bands, val connection: GlassesConnection) : ViewModel()
 
-/**
- * The band's gestures in a list: what each does and how it is made, three dots that fill as the band hears it and a
- * check once it has three times. The band is the phone's while the page is open.
- */
+/** Each band gesture with three dots that fill as the band hears it; the band is the phone's while open. */
 @Composable
-fun GesturesScreen(model: GesturesModel = hiltViewModel()) {
+fun GesturesScreen(open: (NavKey) -> Unit, model: GesturesModel = hiltViewModel()) {
     val band by model.band.state.collectAsStateWithLifecycle()
     val all by model.bands.all.collectAsStateWithLifecycle()
     val pair by model.connection.pair.collectAsStateWithLifecycle()
@@ -139,23 +141,28 @@ fun GesturesScreen(model: GesturesModel = hiltViewModel()) {
             val i = lesson.ordinal
             if (counts[i] >= GOAL) return@judge
             counts[i]++
-            if (counts[i] < GOAL) haptics.tick(0.7f) else haptics.done()
+            if (counts[i] < GOAL) haptics.tick(0.7f, touch = false) else haptics.done()
         }
     }
-    SettingsPage(
-        stringResource(R.string.gestures_title),
-        // A line only while practice cannot happen.
-        lede = when {
-            !setUp -> stringResource(R.string.gestures_no_band)
-            !band.gestures -> stringResource(R.string.gestures_waiting)
-            else -> null
-        },
-    ) {
+    SettingsPage(stringResource(R.string.gestures_title)) {
+        if (setUp && !band.gestures) {
+            item(key = "state") {
+                Footnote(stringResource(R.string.gestures_waiting))
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+        if (!setUp) {
+            item(key = "band") {
+                Rows({ ValueRow(stringResource(R.string.onboard_band_pair), null, onClick = { open(TopicKey(Topic.BAND.name)) }) })
+                Spacer(Modifier.height(16.dp))
+            }
+        }
         item(key = "lessons") {
+            val idle = !setUp || !band.gestures
             Rows(
                 *Lesson.entries.map { lesson ->
                     @Composable {
-                        RowFrame(stringResource(lesson.title), onClick = null, sub = stringResource(lesson.how)) { Progress(counts[lesson.ordinal]) }
+                        RowFrame(stringResource(lesson.title), onClick = null, sub = stringResource(lesson.how), dim = idle) { Progress(counts[lesson.ordinal]) }
                     }
                 }.toTypedArray(),
             )
@@ -167,10 +174,11 @@ fun GesturesScreen(model: GesturesModel = hiltViewModel()) {
 @Composable
 private fun Progress(count: Int) {
     if (count >= GOAL) {
-        Icon(VisorIcons.Check, null, Modifier.padding(start = 12.dp).size(20.dp), tint = Color.White)
+        Icon(VisorIcons.Check, stringResource(R.string.done), Modifier.padding(start = 12.dp).size(20.dp), tint = Color.White)
         return
     }
-    Row(Modifier.padding(start = 12.dp), horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+    val heard = stringResource(R.string.lesson_progress, count, GOAL)
+    Row(Modifier.padding(start = 12.dp).clearAndSetSemantics { contentDescription = heard }, horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
         repeat(GOAL) { i ->
             Box(Modifier.size(7.dp).clip(CircleShape).background(if (i < count) Color.White else Visor.colors.control))
         }

@@ -1,9 +1,6 @@
 package com.macedonga.visor.core.media
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.media.MediaExtractor
-import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.opengl.GLES20
@@ -32,18 +29,6 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/**
- * Landscape captures. The glasses always take the full portrait frame and mark the capture landscape; the phone keeps
- * its middle 4:3 band, the whole width across, as the Meta app's landscape crop does when it has nothing to follow.
- */
-internal object Landscape {
-    fun crop(bitmap: Bitmap): Bitmap {
-        if (bitmap.width >= bitmap.height) return bitmap
-        val band = bitmap.width * 3 / 4
-        return Bitmap.createBitmap(bitmap, 0, (bitmap.height - band) / 2, bitmap.width, band)
-    }
-}
-
 /** What [finishVideo] did to a video. */
 internal class Finished(val steadied: Boolean, val landscape: Boolean)
 
@@ -59,7 +44,7 @@ internal fun finishVideo(
     output: File,
     imu: File,
     frames: File,
-    strength: Int,
+    steadiness: Int,
     landscape: Boolean,
     steadiedOnGlasses: (Int, Int) -> Boolean,
 ): Finished? {
@@ -77,7 +62,7 @@ internal fun finishVideo(
     val cut = landscape && width < height
     val steady = !steadiedOnGlasses(width, height)
     if (!cut && !steady) return null
-    val warps = Steady.plan(width, height, frameTimes(input), readImu(imu), readFrames(frames), strength, steady, cut) ?: return null
+    val warps = Steady.plan(width, height, frameTimesUs(input).toLongArray(), readImu(imu), readFrames(frames), steadiness, steady, cut) ?: return null
     val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(input)))
         .setEffects(Effects(emptyList(), listOf(WarpEffect(warps))))
         .build()
@@ -120,27 +105,6 @@ internal fun finishVideo(
 }
 
 private const val EXPORT_MINUTES = 15L
-
-/** The video track's frame times, in order. */
-private fun frameTimes(file: File): LongArray {
-    val extractor = MediaExtractor()
-    try {
-        extractor.setDataSource(file.path)
-        val track = (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }
-            ?: return LongArray(0)
-        extractor.selectTrack(track)
-        val times = ArrayList<Long>()
-        while (true) {
-            val t = extractor.sampleTime
-            if (t < 0) break
-            times += t
-            if (!extractor.advance()) break
-        }
-        return times.sorted().toLongArray()
-    } finally {
-        extractor.release()
-    }
-}
 
 /** Each frame drawn through its own warp. */
 @OptIn(UnstableApi::class)

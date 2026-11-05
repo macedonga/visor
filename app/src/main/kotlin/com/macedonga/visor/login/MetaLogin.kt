@@ -1,9 +1,7 @@
 package com.macedonga.visor.login
 
 import android.content.Context
-import android.net.Uri
 import android.os.Build
-import android.webkit.CookieManager
 import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.core.identity.HttpPost
 import com.macedonga.visor.core.identity.KeystoreSealer
@@ -33,7 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-/** The Meta login, for as long as the process lives. */
+/** The Meta login, sealed on disk. */
 @Singleton
 class MetaLogin @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -48,7 +46,7 @@ class MetaLogin @Inject constructor(
         data object LoggedOut : Status
         data object Working : Status
         data object LoggedIn : Status
-        data class Failed(val reason: String) : Status
+        data object Failed : Status
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,12 +59,14 @@ class MetaLogin @Inject constructor(
         private set
 
     init {
-        scope.launch { refresh() }
+        refresh()
     }
 
+    /** Reads the sealed login off the main thread; a login under way is left as it is. */
     fun refresh() {
-        if (_status.value is Status.Working) return
-        _status.value = if (source.hasCachedLogin) Status.LoggedIn else Status.LoggedOut
+        scope.launch {
+            if (_status.value !is Status.Working) _status.value = if (source.hasCachedLogin) Status.LoggedIn else Status.LoggedOut
+        }
     }
 
     fun begin(): AuthorizeRequest = source.begin().also {
@@ -93,34 +93,7 @@ class MetaLogin @Inject constructor(
     private fun post(token: Token, body: ByteArray): String =
         String(UrlConnectionPost.post(GRAPH_URL, mapOf("Authorization" to "OAuth ${token.value}", "Content-Type" to "application/x-www-form-urlencoded"), body).body)
 
-    /** What the login page saw: hosts, paths and statuses, never a query string. */
-    fun note(text: String) = log.add("Login page: $text")
-
-    /** The WebView caught the redirect. Exchange its code and cache the FRLA. */
-    fun finish(redirect: String) {
-        val request = pending
-        if (request == null) {
-            log.add("Login: a redirect arrived with no login under way; ignored")
-            return
-        }
-        pending = null
-        _status.value = Status.Working
-        val carried = Uri.parse(redirect).queryParameterNames.sorted().joinToString(", ").ifEmpty { "nothing" }
-        log.add("Login: Meta redirected back carrying $carried; exchanging the code")
-        scope.launch {
-            _status.value = try {
-                source.finish(redirect, request)
-                log.add("Login: code exchanged, Meta login cached")
-                log.add("Login: logged in to Meta")
-                Status.LoggedIn
-            } catch (error: Exception) {
-                log.add("Login failed: ${error.message}")
-                Status.Failed(error.message ?: error.javaClass.simpleName)
-            }
-        }
-    }
-
-    /** The native login (Meta's Bloks screens, as the Meta AI app runs them) for the request [begin] made. */
+    /** A native login session (Meta's Bloks screens) for the request [begin] made. */
     fun nativeSession(darkMode: Boolean, host: BloksHost): BloksSession {
         // Debug builds keep every answer, so a screen that misbehaves on a phone can be read afterwards.
         val dump = File(context.filesDir, "bloks").takeIf { BuildConfig.DEBUG }?.apply {
@@ -160,7 +133,7 @@ class MetaLogin @Inject constructor(
         )
     }
 
-    /** How the native login ended. A code goes through the same exchange as the web login's; a token is the FRLA. */
+    /** How the native login ended: a code is exchanged for the FRLA, a token is the FRLA. */
     fun finishNative(outcome: BloksSession.Outcome) {
         pending = null
         when (outcome) {
@@ -170,26 +143,24 @@ class MetaLogin @Inject constructor(
             }
             is BloksSession.Outcome.Failed -> {
                 log.add("Login failed: ${outcome.reason}")
-                _status.value = Status.Failed(outcome.reason)
+                _status.value = Status.Failed
             }
-            is BloksSession.Outcome.Code, is BloksSession.Outcome.Token -> {
-                _status.value = Status.Working
-                scope.launch {
-                    _status.value = try {
-                        if (outcome is BloksSession.Outcome.Code) {
-                            log.add("Login: Meta handed a code; exchanging it")
-                            source.finishCode(outcome.code)
-                        } else {
-                            log.add("Login: Meta handed the account token")
-                            source.finishToken((outcome as BloksSession.Outcome.Token).accessToken)
-                        }
-                        log.add("Login: logged in to Meta")
-                        Status.LoggedIn
-                    } catch (error: Exception) {
-                        log.add("Login failed: ${error.message}")
-                        Status.Failed(error.message ?: error.javaClass.simpleName)
-                    }
-                }
+            is BloksSession.Outcome.Code -> complete("Login: Meta handed a code; exchanging it") { source.finishCode(outcome.code) }
+            is BloksSession.Outcome.Token -> complete("Login: Meta handed the account token") { source.finishToken(outcome.accessToken) }
+        }
+    }
+
+    private fun complete(note: String, work: () -> Unit) {
+        _status.value = Status.Working
+        scope.launch {
+            _status.value = try {
+                log.add(note)
+                work()
+                log.add("Login: logged in to Meta")
+                Status.LoggedIn
+            } catch (error: Exception) {
+                log.add("Login failed: ${error.message}")
+                Status.Failed
             }
         }
     }
@@ -208,11 +179,9 @@ class MetaLogin @Inject constructor(
         prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("device_id", it).apply() }
     }
 
-    /** Forget the cached login and the page's session, so the next login starts clean. */
+    /** Forget the cached login. */
     fun logOut() {
         source.logOut()
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
         _status.value = Status.LoggedOut
         log.add("Login: logged out of Meta")
     }

@@ -14,7 +14,6 @@ import com.macedonga.visor.core.transport.LeKeeper
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.log.EventLog
-import com.macedonga.visor.stage.Looks
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,11 +36,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** A pair set up on this phone. [demo] is one a debug build shows to try the home with: never connected or looked at. */
 data class KnownPair(val serial: String, val address: String, val demo: Boolean = false)
 
-/**
- * The pairs set up on this phone, in the order they were set up. One is connected at a time; the home shows the others
- * as they were last heard from, and a pair it shows that is not connected gets a quick look: its own LE link and a
- * session that only reads the batteries, the case and the hinge, then lets go.
- */
+/** The pairs set up on this phone, in setup order; one is connected, and one shown but not connected gets a quick look. */
 @Singleton
 class Pairs @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -54,9 +49,12 @@ class Pairs @Inject constructor(
     private val log: EventLog,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val stored = MutableStateFlow<List<KnownPair>>(emptyList())
+    private val _stored = MutableStateFlow<List<KnownPair>?>(null)
+
+    /** The pairs in the identity store; null until it has been read. */
+    val stored: StateFlow<List<KnownPair>?> = _stored.asStateFlow()
     private val demoPair = MutableStateFlow<KnownPair?>(null)
-    val all: StateFlow<List<KnownPair>> = combine(stored, demoPair) { pairs, extra -> pairs + listOfNotNull(extra) }
+    val all: StateFlow<List<KnownPair>> = combine(_stored, demoPair) { pairs, extra -> pairs.orEmpty() + listOfNotNull(extra) }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     private val _peeking = MutableStateFlow<String?>(null)
@@ -70,26 +68,25 @@ class Pairs @Inject constructor(
     fun refresh() {
         scope.launch {
             val bundles = withContext(Dispatchers.IO) { runCatching { store.all() }.getOrDefault(emptyList()) }
-            stored.value = bundles.sortedBy { it.createdAt }.map { KnownPair(it.serial, it.glassesAddress) }
+            _stored.value = bundles.sortedBy { it.createdAt }.map { KnownPair(it.serial, it.glassesAddress) }
             bundles.forEach { looks.want(it.serial) }
-            // Kept in memory and small: the stage needs one for every pair but a Wayfarer, and to tell pairs apart.
+            // Meta's picture of each pair: pairs not connected and frames without a 3D model show it.
             looks.wantPictures(bundles.map { it.serial })
         }
     }
 
-    /** Connect to [serial] instead of the pair connected now. False while the Live or an import has the glasses. */
-    fun connect(serial: String): Boolean {
-        if (live.running.value || media.importing.value) return false
-        val pair = all.value.firstOrNull { it.serial == serial }?.takeIf { !it.demo } ?: return false
+    /** Connect to [serial] instead of the pair connected now; not while the Live or an import has the glasses. */
+    fun connect(serial: String) {
+        if (live.usingWifi || media.importing.value) return
+        val pair = all.value.firstOrNull { it.serial == serial }?.takeIf { !it.demo } ?: return
         stopPeek()
         GlassesService.start(context, GlassesTarget(GlassesLink.Bluetooth(pair.address), pair.serial))
-        return true
     }
 
     /** A quick look at [serial], a pair that is not connected: at most once a minute, never during a Live or an import. */
     fun peek(serial: String) {
-        if (serial == connection.state.value.target?.serial || serial == connection.pair.value && connection.running.value) return
-        if (live.running.value || media.importing.value) return
+        if (serial == connection.state.value.target?.serial || (serial == connection.pair.value && connection.running.value)) return
+        if (live.usingWifi || media.importing.value) return
         val now = System.currentTimeMillis()
         if (now - (peekedAt[serial] ?: 0) < PEEK_EVERY_MS) return
         val pair = all.value.firstOrNull { it.serial == serial }?.takeIf { !it.demo } ?: return
@@ -114,7 +111,7 @@ class Pairs @Inject constructor(
                 // Let go of the socket even when the look was called off: the glasses hold one session.
                 withContext(NonCancellable) { look.stop() }
                 keeper.release()
-                _peeking.value = null
+                _peeking.compareAndSet(serial, null)
             }
         }
     }

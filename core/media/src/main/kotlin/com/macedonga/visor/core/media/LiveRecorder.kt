@@ -6,15 +6,10 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
-
-/** An encoded audio packet, AAC-LC, on the glasses' clock like the video. */
-class AudioPacket(val ptsUs: Long, val data: ByteArray)
-
-/** AAC-LC as the recorder and RTMP take it: [asc] is the AudioSpecificConfig. */
-class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
 
 /**
  * One MP4 in the videos album, written as the frames come: the glasses' video as it is (HEVC or H.264), the audio as AAC. The file
@@ -22,9 +17,9 @@ class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
  * and everything is timed from that frame.
  */
 class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFormat?, name: String, takenAt: Long, val album: String) {
-    val uri: Uri
+    private val uri: Uri
     private val muxer: MediaMuxer
-    private val fd: android.os.ParcelFileDescriptor
+    private val fd: ParcelFileDescriptor
     private val videoTrack: Int
     private val audioTrack: Int
     private var firstPts = -1L
@@ -41,23 +36,31 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         uri = checkNotNull(context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)) { "MediaStore refused the file" }
-        fd = checkNotNull(context.contentResolver.openFileDescriptor(uri, "rw")) { "no file to write" }
-        muxer = MediaMuxer(fd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val codec = configCodec(config)
-        val (width, height) = videoSize(config) ?: (1080 to 1920)
-        val video = MediaFormat.createVideoFormat(codec.mime, width, height)
-        video.setByteBuffer("csd-0", ByteBuffer.wrap(onlyParameterSets(codec, config)))
-        videoTrack = muxer.addTrack(video)
-        audioTrack = if (audio != null) {
-            val a = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, audio.sampleRate, audio.channels)
-            a.setByteBuffer("csd-0", ByteBuffer.wrap(audio.asc))
-            muxer.addTrack(a)
-        } else -1
-        muxer.start()
+        var f: ParcelFileDescriptor? = null
+        var m: MediaMuxer? = null
+        try {
+            f = checkNotNull(context.contentResolver.openFileDescriptor(uri, "rw")) { "no file to write" }
+            m = MediaMuxer(f.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val codec = configCodec(config)
+            val (width, height) = videoSize(config) ?: (1080 to 1920)
+            val video = MediaFormat.createVideoFormat(codec.mime, width, height)
+            video.setByteBuffer("csd-0", ByteBuffer.wrap(onlyParameterSets(codec, config)))
+            videoTrack = m.addTrack(video)
+            audioTrack = if (audio != null) {
+                val a = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, audio.sampleRate, audio.channels)
+                a.setByteBuffer("csd-0", ByteBuffer.wrap(audio.asc))
+                m.addTrack(a)
+            } else -1
+            m.start()
+            fd = f
+            muxer = m
+        } catch (e: Throwable) {
+            m?.let { runCatching { it.release() } }
+            f?.let { runCatching { it.close() } }
+            runCatching { context.contentResolver.delete(uri, null, null) }
+            throw e
+        }
     }
-
-    /** How long it runs so far. */
-    val durationUs: Long get() = if (firstPts < 0) 0 else lastPts - firstPts
 
     fun video(frame: VideoFrame) {
         if (firstPts < 0) {
@@ -81,14 +84,14 @@ class Mp4Recording(private val context: Context, config: ByteArray, audio: AacFo
     /** Closes the file and shows it in the gallery; a recording with no frame in it is deleted instead. */
     fun finish(): Uri? {
         val any = firstPts >= 0
-        runCatching { muxer.stop() }
+        val stopped = runCatching { muxer.stop() }.isSuccess
         runCatching { muxer.release() }
         runCatching { fd.close() }
-        if (!any) {
-            context.contentResolver.delete(uri, null, null)
+        if (!any || !stopped) {
+            runCatching { context.contentResolver.delete(uri, null, null) }
             return null
         }
-        context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        runCatching { context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) }
         return uri
     }
 }

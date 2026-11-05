@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.transport
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -30,21 +31,20 @@ class LeKeeper(private val context: Context) {
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
 
-    @Volatile var device: BluetoothDevice? = null
-        private set
+    @Volatile private var device: BluetoothDevice? = null
 
     @Volatile var psm: Int? = null
         private set
 
     @Volatile private var gatt: BluetoothGatt? = null
-    @Volatile private var fast = false
+    @Volatile private var highPriority = false
 
     fun note(text: String) {
         _notes.tryEmit("LE: $text")
     }
 
     /** Hold the bonded glasses at [address]; does nothing while they are already held. */
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     fun hold(address: String) {
         if (gatt != null && device?.address == address) return
         release()
@@ -62,25 +62,27 @@ class LeKeeper(private val context: Context) {
      * relaxed one while they sleep, to spare both batteries.
      */
     fun fast(on: Boolean) {
-        fast = on
+        highPriority = on
         if (_connected.value) gatt?.let { prioritise(it) }
     }
 
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     private fun prioritise(g: BluetoothGatt) {
-        val asked = g.requestConnectionPriority(if (fast) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
-        note("connection priority ${if (fast) "high" else "balanced"}${if (asked) "" else " refused"}")
+        val asked = g.requestConnectionPriority(if (highPriority) BluetoothGatt.CONNECTION_PRIORITY_HIGH else BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+        note("connection priority ${if (highPriority) "high" else "balanced"}${if (asked) "" else " refused"}")
     }
 
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     fun release() {
         gatt?.let { runCatching { it.close() } }
         gatt = null
+        device = null
+        psm = null
         _connected.value = false
     }
 
     private val callback = object : BluetoothGattCallback() {
-        @android.annotation.SuppressLint("MissingPermission")
+        @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             val up = newState == BluetoothProfile.STATE_CONNECTED
             _connected.value = up
@@ -96,7 +98,7 @@ class LeKeeper(private val context: Context) {
             note("phy tx $txPhy rx $rxPhy (status $status)")
         }
 
-        @android.annotation.SuppressLint("MissingPermission")
+        @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             val characteristic = g.getService(META_LE_SERVICE)?.getCharacteristic(META_PSM_CHARACTERISTIC)
             if (characteristic == null) note("no PSM characteristic (status $status)") else g.readCharacteristic(characteristic)

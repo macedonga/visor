@@ -16,6 +16,8 @@
     <string name="webapps_not_opened">Gli occhiali non l\'hanno aperta</string>
     <string name="webapps_not_https">Usa un indirizzo https</string>
     <string name="webapps_full">Massimo 20 app web</string>
-    <string name="webapps_not_connected">Collega prima gli occhiali</string>
     <string name="webapps_unreadable">Impossibile leggere le app web degli occhiali</string>
+    <string name="webapps_err_missing">App web non trovata</string>
+    <string name="webapps_err_open">Le app web si aprono dal telefono</string>
+    <string name="webapps_err_unknown">Azione sconosciuta</string>
 </resources>

@@ -1,7 +1,6 @@
 package com.macedonga.visor.gallery
 
 import android.graphics.Bitmap
-import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -13,7 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
@@ -29,13 +28,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import java.util.WeakHashMap
 import kotlin.math.max
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-/**
- * A photo's colours spilled as light around it: the picture shrunk to a few pixels, drawn large and soft, breathing
- * slowly and falling off to nothing at the edges. [center] and [radius] place the pool, as fractions of the width
- * and height; [level] is how bright it is.
- */
+/** A photo's colours as a soft pool of light; [center] and [radius] are fractions of the size. */
 @Composable
 fun PhotoLight(
     image: ImageBitmap?,
@@ -44,7 +42,9 @@ fun PhotoLight(
     center: Offset = Offset(0.5f, 0.5f),
     radius: Float = 0.75f,
 ) {
-    val glow = remember(image) { image?.let(::glowOf) }
+    val glow by produceState<ImageBitmap?>(image?.let { glows[it] }, image) {
+        value = image?.let { glows[it] ?: withContext(Dispatchers.Default) { glowOf(it) }.also { g -> glows[it] = g } }
+    }
     val breath = rememberInfiniteTransition(label = "light")
     val swell by breath.animateFloat(1f, 1.07f, infiniteRepeatable(tween(BREATH_MS, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "swell")
     Crossfade(glow, modifier, animationSpec = tween(CROSSFADE_MS), label = "glow") { field ->
@@ -55,7 +55,7 @@ fun PhotoLight(
                 .graphicsLayer {
                     compositingStrategy = CompositingStrategy.Offscreen
                     alpha = level
-                    if (Build.VERSION.SDK_INT >= 31) renderEffect = BlurEffect(size.minDimension * 0.16f, size.minDimension * 0.16f, TileMode.Clamp)
+                    renderEffect = BlurEffect(size.minDimension * 0.16f, size.minDimension * 0.16f, TileMode.Clamp)
                 },
         ) {
             val w = size.width * swell * 1.15f
@@ -78,6 +78,9 @@ fun PhotoLight(
         }
     }
 }
+
+/** Glows already worked out, so a picture seen before is lit from its first frame; main thread only. */
+private val glows = WeakHashMap<ImageBitmap, ImageBitmap>()
 
 /** The picture at 6×8 pixels: only its colours and where they sit are left. */
 private fun glowOf(image: ImageBitmap): ImageBitmap {

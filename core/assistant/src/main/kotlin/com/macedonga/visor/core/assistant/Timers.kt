@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.assistant
 
 import android.util.Base64
+import com.macedonga.visor.core.connection.objects
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -8,11 +9,8 @@ import com.macedonga.visor.core.session.Responder
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,7 +26,6 @@ class Tar(val raw: ByteArray) {
     val id: String = f.bytes(1).decodeToString()
     val type: TarType = TarType.of(f.varint(2))
     val title: String = f.bytes(6).decodeToString()
-    val disabled: Boolean = f.varint(7) != 0L
     val completed: Boolean = f.varint(8) != 0L
 
     /** When it goes off, by the wall clock; null for a paused timer or a weekly alarm. */
@@ -47,7 +44,7 @@ class Tar(val raw: ByteArray) {
     val repeats: Boolean get() = f.has(TRIGGER_DAYS)
 
     /** The same TAR under [id]: a later field wins in protobuf, so the id is added at the end. */
-    fun withId(id: String): Tar = Tar(raw + Wire.fieldBytes(1, id.encodeToByteArray()))
+    fun withId(id: String): Tar = Tar(raw + Wire.fieldString(1, id))
 
     private companion object {
         const val TRIGGER_DATE = 100
@@ -71,10 +68,9 @@ enum class TarType(val number: Long) {
  * them the whole list (TARSyncRequest, type 1100), and they ring each one themselves when its time comes.
  */
 class Timers(private val file: File) : Responder {
-    private val _all = MutableStateFlow(load())
-
-    /** Everything kept, oldest first. */
-    val all: StateFlow<List<Tar>> = _all.asStateFlow()
+    // Everything kept, oldest first.
+    @Volatile
+    private var kept: List<Tar> = load()
 
     private val _notes = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val notes: SharedFlow<String> = _notes.asSharedFlow()
@@ -86,23 +82,23 @@ class Timers(private val file: File) : Responder {
             MT_CREATE -> {
                 val sent = Tar(f.bytes(1))
                 val tar = if (sent.id.isEmpty()) sent.withId(UUID.randomUUID().toString()) else sent
-                keep(_all.value.filterNot { it.id == tar.id } + tar)
+                keep(kept.filterNot { it.id == tar.id } + tar)
                 connection.send(reply, result() + Wire.fieldBytes(2, tar.raw), messageType = MT_CREATE + 1)
                 note("Glasses created ${words(tar)}")
                 sync(connection)
             }
             MT_UPDATE -> {
                 val tar = Tar(f.bytes(1))
-                val known = _all.value.any { it.id == tar.id }
-                if (known) keep(_all.value.map { if (it.id == tar.id) tar else it })
-                connection.send(reply, if (known) result() else error(ERROR_UPDATE, "no such id"), messageType = MT_UPDATE + 1)
+                val known = kept.any { it.id == tar.id }
+                if (known) keep(kept.map { if (it.id == tar.id) tar else it })
+                connection.send(reply, if (known) result() else failure(ERROR_UPDATE, "no such id"), messageType = MT_UPDATE + 1)
                 note("Glasses updated ${words(tar)}")
                 if (known) sync(connection)
             }
             MT_DELETE -> {
                 val gone = matching(Wire.parse(f.bytes(1)))
-                keep(_all.value - gone.toSet())
-                connection.send(reply, if (gone.isEmpty()) error(ERROR_NO_MATCHES, "nothing matches") else result(), messageType = MT_DELETE + 1)
+                keep(kept - gone.toSet())
+                connection.send(reply, if (gone.isEmpty()) failure(ERROR_NO_MATCHES, "nothing matches") else result(), messageType = MT_DELETE + 1)
                 note("Glasses deleted ${gone.size}: ${gone.joinToString { words(it) }}")
                 if (gone.isNotEmpty()) sync(connection)
             }
@@ -114,9 +110,9 @@ class Timers(private val file: File) : Responder {
             MT_ALERT -> {
                 // It rang: a timer or a one-off alarm is done with; a weekly alarm stays.
                 val id = f.bytes(3).decodeToString()
-                val done = _all.value.filter { it.id == id && !it.repeats }
+                val done = kept.filter { it.id == id && !it.repeats }
                 if (done.isNotEmpty()) {
-                    keep(_all.value - done.toSet())
+                    keep(kept - done.toSet())
                     sync(connection)
                 }
                 note("Rang on the glasses: ${done.joinToString { words(it) }.ifEmpty { id }}")
@@ -125,35 +121,35 @@ class Timers(private val file: File) : Responder {
                 connection.send(reply, result(), messageType = MT_SYNC_ON_DEMAND + 1)
                 sync(connection)
             }
-            else -> note("Timers: message type ${message.info.messageType} not handled")
+            else -> note("message type ${message.info.messageType} not handled")
         }
     }
 
     /** The whole list to the glasses, without what has long rung. */
     private suspend fun sync(connection: DataXConnection) {
         val now = System.currentTimeMillis()
-        keep(_all.value.filterNot { t -> t.completed || (t.fireAt != null && !t.repeats && t.fireAt < now - STALE_MS) })
-        val body = _all.value.fold(ByteArray(0)) { acc, t -> acc + Wire.fieldBytes(1, t.raw) } +
-            Wire.fieldBytes(2, UUID.randomUUID().toString().encodeToByteArray())
+        keep(kept.filterNot { t -> t.completed || (t.fireAt != null && !t.repeats && t.fireAt < now - STALE_MS) })
+        val body = kept.fold(ByteArray(0)) { acc, t -> acc + Wire.fieldBytes(1, t.raw) } +
+            Wire.fieldString(2, UUID.randomUUID().toString())
         connection.sendOnService(SVC_TAR, MT_SYNC_TO_GLASSES, body)
     }
 
     /** What a TARQuery picks out: by ids, else by type and title. */
     private fun matching(q: Wire.Fields): List<Tar> {
         val ids = q.repeatedBytes(1).map { it.decodeToString() }.toSet()
-        if (ids.isNotEmpty()) return _all.value.filter { it.id in ids }
+        if (ids.isNotEmpty()) return kept.filter { it.id in ids }
         val type = if (q.has(2)) TarType.of(q.varint(2)) else null
         val title = if (q.has(101)) Wire.parse(q.bytes(101)).bytes(1).decodeToString().trim().lowercase() else ""
-        return _all.value.filter { t -> (type == null || t.type == type) && (title.isEmpty() || title in t.title.lowercase()) }
+        return kept.filter { t -> (type == null || t.type == type) && (title.isEmpty() || title in t.title.lowercase()) }
     }
 
     private fun result(): ByteArray = Wire.fieldBytes(1, Wire.fieldBytes(1, ByteArray(0)))
 
-    private fun error(code: Long, why: String): ByteArray =
-        Wire.fieldBytes(1, Wire.fieldBytes(2, Wire.fieldVarint(1, code) + Wire.fieldBytes(2, why.encodeToByteArray())))
+    private fun failure(code: Long, why: String): ByteArray =
+        Wire.fieldBytes(1, Wire.fieldBytes(2, Wire.fieldVarint(1, code) + Wire.fieldString(2, why)))
 
     private fun keep(list: List<Tar>) {
-        _all.value = list
+        kept = list
         runCatching {
             file.parentFile?.mkdirs()
             file.writeText(JSONArray(list.map { JSONObject().put("raw", Base64.encodeToString(it.raw, Base64.NO_WRAP)) }).toString())
@@ -161,8 +157,7 @@ class Timers(private val file: File) : Responder {
     }
 
     private fun load(): List<Tar> = runCatching {
-        val a = JSONArray(file.readText())
-        List(a.length()) { Tar(Base64.decode(a.getJSONObject(it).getString("raw"), Base64.NO_WRAP)) }
+        JSONArray(file.readText()).objects().map { Tar(Base64.decode(it.getString("raw"), Base64.NO_WRAP)) }
     }.getOrDefault(emptyList())
 
     private fun words(t: Tar): String = listOfNotNull(

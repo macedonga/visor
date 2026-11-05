@@ -15,7 +15,6 @@ import com.macedonga.visor.R
 import com.macedonga.visor.update.NEW_DISCUSSION_URL
 import com.macedonga.visor.update.NEW_ISSUE_URL
 import com.macedonga.visor.update.REPO_URL
-import com.macedonga.visor.update.downloadIntent
 import com.macedonga.visor.update.openLink
 
 /** What this is: Visor's version, the glasses' firmware, and the work it stands on. */
@@ -25,25 +24,28 @@ fun AboutScreen(model: SettingsViewModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val newer by model.updates.newer.collectAsStateWithLifecycle()
     val looking by model.updates.enabled.collectAsStateWithLifecycle()
-    SettingsPage(stringResource(R.string.about_title), stringResource(R.string.about_lede), light = 0.35f) {
+    SettingsPage(stringResource(R.string.about_title), light = 0.35f) {
         item(key = "versions") {
             Rows(
                 { ValueRow("Visor", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", onClick = null, sub = if (BuildConfig.DEBUG) stringResource(R.string.about_debug) else null) },
                 newer?.let { release ->
                     {
-                        ValueRow(
-                            stringResource(R.string.update_ready, release.version), null,
-                            onClick = { runCatching { context.startActivity(downloadIntent(release)) } },
-                            sub = stringResource(R.string.update_ready_text),
-                        )
+                        RowFrame(stringResource(R.string.update_ready, release.version), onClick = null) {
+                            ActionPill(
+                                stringResource(R.string.language_download), { openLink(context, release.url) },
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
                     }
                 },
                 { ValueRow(stringResource(R.string.glasses_firmware), glasses.info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown), onClick = null) },
             )
         }
-        item(key = "updates") {
-            Column(Modifier.padding(top = 14.dp)) {
-                Rows({ ToggleRow(stringResource(R.string.update_look), looking, model.updates::setEnabled, sub = stringResource(R.string.update_look_sub)) })
+        if (BuildConfig.TAGGED) {
+            item(key = "updates") {
+                Column(Modifier.padding(top = 14.dp)) {
+                    Rows({ ToggleRow(stringResource(R.string.update_look), looking, model.updates::setEnabled) })
+                }
             }
         }
         item(key = "github") {
@@ -62,7 +64,6 @@ fun AboutScreen(model: SettingsViewModel = hiltViewModel()) {
                 Rows(
                     *CREDITS.map { (name, licence) -> @Composable { ValueRow(name, licence, onClick = null) } }.toTypedArray(),
                 )
-                Footnote(stringResource(R.string.about_foot))
             }
         }
     }
@@ -75,5 +76,8 @@ private val CREDITS = listOf(
     "Kotlin, kotlinx" to "Apache 2.0",
     "Dagger Hilt" to "Apache 2.0",
     "FlatBuffers" to "Apache 2.0",
+    "OkHttp, Okio" to "Apache 2.0",
+    "Guava" to "Apache 2.0",
+    "zstd-jni" to "BSD 2-Clause",
     "Bouncy Castle" to "MIT",
 )

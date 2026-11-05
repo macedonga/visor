@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.session
 
+import com.macedonga.visor.core.protocol.AirShieldCipher
 import com.macedonga.visor.core.protocol.Header
 import com.macedonga.visor.core.protocol.MessageInfo
 import kotlinx.coroutines.CancellationException
@@ -9,23 +10,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
-/** What the mux needs from the link below it: plaintext in, plaintext out. */
-interface PlaintextLink {
-
-    suspend fun send(plaintext: ByteArray)
-
-    suspend fun receive(): ByteArray
-}
-
 /** One decoded DataX message: its header and its application payload. On a close, [closedService] is the channel's service. */
 class DataXMessage(val info: MessageInfo, val payload: ByteArray, val closedService: Int = 0)
 
 /** A send on a channel this connection has not opened, or under another service's tag. Nothing went out. */
 class ChannelRefused(message: String) : IllegalStateException(message)
 
-/** The channel mux riding on one [PlaintextLink]. */
+/** The channel mux riding on one [SecureLink]. */
 class DataXConnection(
-    private val link: PlaintextLink,
+    private val link: SecureLink,
     private val registry: ChannelRegistry,
 ) {
 
@@ -35,14 +28,8 @@ class DataXConnection(
     // Filled by the reader coroutine when one is running, and by nothing otherwise.
     private val fromReader = Channel<DataXMessage>(
         capacity = Channel.UNLIMITED,
-        onUndeliveredElement = { message ->
-            queued.decrementAndGet()
-            inbox.addFirst(message)
-        },
+        onUndeliveredElement = { inbox.addFirst(it) },
     )
-
-    // How many messages are sitting in fromReader.
-    private val queued = java.util.concurrent.atomic.AtomicInteger()
 
     @Volatile
     private var reader: Job? = null
@@ -56,9 +43,6 @@ class DataXConnection(
     // The DataX stream after the last whole message: the start of the next one, cut wherever the frame ended.
     private var carry = ByteArray(0)
 
-    /** True when [receive] can return a message without waiting on the peer. */
-    val buffered: Boolean get() = inbox.isNotEmpty() || queued.get() > 0
-
     /** True once [startReader] has run. */
     val hasReader: Boolean get() = reader != null
 
@@ -68,10 +52,7 @@ class DataXConnection(
         val job = scope.launch {
             try {
                 while (true) {
-                    for (message in decode(link.receive())) {
-                        queued.incrementAndGet()
-                        fromReader.send(message)
-                    }
+                    for (message in decode(link.receive())) fromReader.send(message)
                 }
             } catch (cancellation: CancellationException) {
                 fromReader.close()
@@ -106,7 +87,7 @@ class DataXConnection(
         messageType: Int? = null,
         serviceId: Int? = null,
     ) {
-        val opened = (channelId and 0x8000) != 0
+        val opened = hasOriginatorBit(channelId)
         val bound = if (opened) registry.localService(channelId) else 0
         if (opened && (bound == 0 || (serviceId != null && serviceId != bound))) {
             val why = "refused a send on channel 0x%04x: tag %s, open for %d".format(channelId, serviceId ?: "none", bound)
@@ -121,14 +102,14 @@ class DataXConnection(
         )
         write(header + payload)
         val t = trace ?: return
-        val service = serviceId ?: if (opened) bound else registry.serviceForInbound(channelId or 0x8000)
+        val service = serviceId ?: if (opened) bound else registry.serviceForInbound(channelId or ORIGINATOR_BIT)
         if (service in TRACED_SENDS) t(sentLine(channelId, service, messageType, serviceId, payload))
     }
 
     private fun sentLine(channelId: Int, service: Int, messageType: Int?, tag: Int?, payload: ByteArray): String =
         "TX %08x ch=0x%04x svc=%d tag=%s mt=%s payload=%d".format(
             System.identityHashCode(this), channelId, service, tag ?: "-", messageType?.let { "0x%04x".format(it) } ?: "-", payload.size,
-        ) + (if (payload.size <= TRACE_PAYLOAD) " data=" + payload.joinToString("") { "%02x".format(it) } else "")
+        ) + (if (payload.size <= TRACE_PAYLOAD) " data=" + payload.toHexString() else "")
 
     // The transport under a gone link may already be open again for the next one, under other keys.
     private suspend fun write(plaintext: ByteArray) {
@@ -162,7 +143,7 @@ class DataXConnection(
 
     private suspend fun nextMessage(): DataXMessage {
         inbox.removeFirstOrNull()?.let { return it }
-        if (reader != null) return fromReader.receive().also { queued.decrementAndGet() }
+        if (reader != null) return fromReader.receive()
         while (inbox.isEmpty()) {
             inbox.addAll(decode(link.receive()))
         }
@@ -170,7 +151,8 @@ class DataXConnection(
     }
 
     private fun deliver(message: DataXMessage): DataXMessage {
-        if (!message.info.flags.isClosed) return message
+        // A close pushed back keeps the service its first delivery found.
+        if (!message.info.flags.isClosed || message.closedService != 0) return message
         return DataXMessage(message.info, message.payload, registry.closeInbound(message.info.channelId))
     }
 
@@ -184,9 +166,7 @@ class DataXConnection(
     /** Read whatever is already decoded, without waiting on the peer at all. */
     fun poll(): DataXMessage? {
         inbox.removeFirstOrNull()?.let { return deliver(it) }
-        return fromReader.tryReceive().getOrNull()
-            ?.also { queued.decrementAndGet() }
-            ?.let { deliver(it) }
+        return fromReader.tryReceive().getOrNull()?.let { deliver(it) }
     }
 
     private fun decode(plaintext: ByteArray): List<DataXMessage> {
@@ -196,17 +176,16 @@ class DataXConnection(
     }
 
     private fun traceLines(plaintext: ByteArray, messages: List<DataXMessage>): String = buildString {
-        fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
         append("FRAME %08x %d pad=%d head=%s tail=%s".format(
-            System.identityHashCode(this@DataXConnection), plaintext.size, plaintext.size - withoutPad(plaintext).size,
-            hex(plaintext.copyOfRange(0, minOf(16, plaintext.size))), hex(plaintext.copyOfRange(maxOf(0, plaintext.size - 8), plaintext.size)),
+            System.identityHashCode(this@DataXConnection), plaintext.size, plaintext.size - AirShieldCipher.stripPad(plaintext).size,
+            plaintext.toHexString(0, minOf(16, plaintext.size)), plaintext.toHexString(maxOf(0, plaintext.size - 8), plaintext.size),
         ))
         for (m in messages) {
             append("\n   msg ch=0x%04x svc=%d mt=0x%04x len=%d hdr=%d payload=%d".format(
                 m.info.channelId, m.info.serviceId, m.info.messageType, m.info.length, m.info.headerLen, m.payload.size,
             ))
             // Small ones whole: what a new service says is read from here.
-            if (m.payload.size <= TRACE_PAYLOAD) append(" data=").append(hex(m.payload))
+            if (m.payload.size <= TRACE_PAYLOAD) append(" data=").append(m.payload.toHexString())
         }
         if (carry.isNotEmpty()) append("\n   CARRY %d".format(carry.size))
     }
@@ -226,14 +205,9 @@ class DataXConnection(
         return info
     }
 
-    /**
-     * Walk [plaintext] into DataX messages by `wireTotal = 4 + length`. The frames' data concatenates into one stream
-     * and a message runs on wherever a frame cuts it, header included. The pad comes off first: walking it as data let a
-     * message one byte short of the frame's end take the pad for its last byte, and the byte it was owed, at the head of
-     * the next frame, was then read as a header. The glasses never end a frame's data in bytes that read as pad.
-     */
+    /** Pad off first (the glasses never end a frame's data in pad-like bytes), then messages of `4 + length`, which may run across frames. */
     private fun splitMessages(plaintext: ByteArray): List<DataXMessage> {
-        val stream = carry + withoutPad(plaintext)
+        val stream = carry + AirShieldCipher.stripPad(plaintext)
         val messages = mutableListOf<DataXMessage>()
         var pos = 0
         while (stream.size - pos >= 4) {
@@ -249,7 +223,7 @@ class DataXConnection(
     }
 
     companion object {
-        /** Debug builds: each decrypted frame and the messages walked out of it, as lensbreak's LENSBREAK_DATAX_TRACE. */
+        /** Debug builds: each decrypted frame and the messages walked out of it. */
         @Volatile
         var trace: ((String) -> Unit)? = null
 
@@ -258,22 +232,14 @@ class DataXConnection(
         // What [trace] logs of what Visor sends: svc28, where a type the Display does not know kills its system process.
         private val TRACED_SENDS = setOf(28)
 
-        /** The ack channel for a peer-originated channel: clear the secure bit, 0x8000. */
-        fun mirror(channelId: Int): Int = channelId and 0x7FFF
-    }
-}
+        const val ORIGINATOR_BIT = 0x8000
 
-/** A frame's plaintext without its modified PKCS#7 tail. */
-internal fun withoutPad(plaintext: ByteArray): ByteArray {
-    if (plaintext.isEmpty()) return plaintext
-    val last = plaintext[plaintext.size - 1].toInt() and 0xFF
-    val padLen = (last + 0x40) and 0xFF
-    if (padLen in 1..16 && plaintext.size >= padLen &&
-        (plaintext.size - padLen until plaintext.size).all {
-            (plaintext[it].toInt() and 0xFF) == last
-        }
-    ) {
-        return plaintext.copyOfRange(0, plaintext.size - padLen)
+        fun hasOriginatorBit(channelId: Int): Boolean = (channelId and ORIGINATOR_BIT) != 0
+
+        /** The ack channel for a peer-opened channel: the originator bit cleared. */
+        fun mirror(channelId: Int): Int = channelId and (ORIGINATOR_BIT - 1)
+
+        /** The reply channel for a message: the originator bit flipped, so Visor's own channels get it back and the glasses' channels get their mirror. */
+        fun own(channelId: Int): Int = channelId xor ORIGINATOR_BIT
     }
-    return plaintext
 }

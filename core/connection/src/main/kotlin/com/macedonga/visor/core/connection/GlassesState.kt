@@ -22,10 +22,12 @@ data class GlassesTarget(val link: GlassesLink, val serial: String)
 
 /** Everything the app knows about the connection, in one value. */
 data class GlassesState(
-    /** Null when no glasses are claimed on this phone. Not a failure, and [reason] says so. */
+    /** Null when no glasses are claimed on this phone, or before the store is read. */
     val target: GlassesTarget? = null,
+    /** True once the store was read and holds no glasses. */
+    val noGlasses: Boolean = false,
     val link: LinkState = LinkState.DISCONNECTED,
-    /** Plain words about why, for a person to read. */
+    /** Why the link last dropped, or why it paused: the session's own words. */
     val reason: String = "",
     /** What a person could do about a connect that failed. Null when none has. */
     val failure: ConnectFailure? = null,

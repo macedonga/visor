@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Pairs the Neural Band with a Display set up here, over svc41109 on both links; [BandSetup] runs first when it has no band. */
@@ -44,7 +43,7 @@ class BandPair @Inject constructor(
         data object Idle : Status
         data class Running(val step: Step) : Status
         data object Done : Status
-        data class Failed(val reason: Reason, val detail: String = "") : Status
+        data class Failed(val reason: Reason) : Status
     }
 
     enum class Step { SETUP, BAND, PAIRING, CONNECTING }
@@ -66,26 +65,24 @@ class BandPair @Inject constructor(
         if (_status.value !is Status.Running) _status.value = Status.Idle
     }
 
-    /** Runs the pairing and returns how it ended; a second caller waits for the one running. */
-    suspend fun pair(): Status {
-        if (!lock.tryLock()) return lock.withLock { _status.value }
+    /** Runs the pairing; a call while one runs does nothing. */
+    private suspend fun pair() {
+        if (!lock.tryLock()) return
         try {
-            _status.value = Status.Running(Step.BAND)
             _status.value = try {
                 run()
                 log.add("Band pairing: done")
                 Status.Done
             } catch (stop: Stop) {
                 log.add("Band pairing failed: ${stop.reason} ${stop.detail}")
-                Status.Failed(stop.reason, stop.detail)
+                Status.Failed(stop.reason)
             } catch (cancelled: CancellationException) {
                 _status.value = Status.Idle
                 throw cancelled
             } catch (error: Exception) {
                 log.add("Band pairing failed: $error")
-                Status.Failed(Reason.FAILED, error.message ?: error.javaClass.simpleName)
+                Status.Failed(Reason.FAILED)
             }
-            return _status.value
         } finally {
             lock.unlock()
         }
@@ -194,7 +191,8 @@ class BandPair @Inject constructor(
             BandSetup.Reason.NO_ANSWER -> Stop(Reason.NO_ANSWER, "band")
             BandSetup.Reason.REFUSED -> Stop(Reason.BAND_REFUSED)
             BandSetup.Reason.WRONG_OWNER -> Stop(Reason.WRONG_OWNER)
-            else -> Stop(Reason.FAILED, done.detail.ifEmpty { done.reason.name })
+            BandSetup.Reason.NO_GLASSES -> Stop(Reason.NOT_CONNECTED)
+            BandSetup.Reason.BLUETOOTH_OFF, BandSetup.Reason.FAILED -> Stop(Reason.FAILED, done.reason.name)
         }
     }
 

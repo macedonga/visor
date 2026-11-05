@@ -6,12 +6,12 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.util.Base64
-import org.json.JSONObject
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -20,19 +20,19 @@ import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.DeflaterOutputStream
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import org.json.JSONObject
 
 /**
  * svc9000, the data fetcher: the Display's apps (Instagram, messaging, the prompter) ask the phone for a URL and get
@@ -46,10 +46,10 @@ import kotlinx.coroutines.sync.withPermit
 @Singleton
 class DataFetcher @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
     private val requests: RequestLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Fetch: failed: $e") })
+    private val scope = responderScope(log, "Fetch")
     private val running = ConcurrentHashMap<Int, Job>()
     private val slots = Semaphore(PARALLEL)
 
@@ -63,27 +63,30 @@ class DataFetcher @Inject constructor(
         val query = runCatching { Query.decode(message.payload) }.getOrNull() ?: return
         val reply = DataXConnection.mirror(channel)
         // Off the reader: a download must not hold up everything else on the link.
-        running[channel] = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 slots.withPermit { serve(query, reply, connection) }
             } finally {
-                running.remove(channel)
+                running.remove(channel, coroutineContext.job)
             }
         }
+        running[channel] = job
+        job.start()
     }
 
     private suspend fun serve(q: Query, reply: Int, mux: DataXConnection) {
         val id = requests.start(q.url, q.source, q.options())
+        suspend fun refuse(why: String, failed: Boolean = true, code: Int = INTERNAL_ERROR) {
+            requests.finish(id, why, failed)
+            mux.sendStatus(reply, code)
+        }
         var sent = 0L
+        var resized = false
         val scheme = q.url.substringBefore(':').lowercase()
         val target = when (scheme) {
             "http", "https" -> Target(q.url, emptyMap(), 0)
-            "instagram" -> instagramTarget(q.url) ?: run {
-                // Instagram's bare check, every few seconds; the Meta app turns it down the same way.
-                requests.finish(id, "no target_url, turned down", failed = false)
-                mux.sendStatus(reply, INTERNAL_ERROR)
-                return
-            }
+            // Instagram's bare check, every few seconds; the Meta app turns it down the same way.
+            "instagram" -> instagramTarget(q.url) ?: return refuse("no target_url, turned down", failed = false)
             "sgmessaging" -> {
                 val link = Uri.parse(q.url)
                 val inner = link.getQueryParameter("uri")
@@ -91,50 +94,31 @@ class DataFetcher @Inject constructor(
                     "whatsapp" -> {
                         val host = inner?.let { runCatching { Uri.parse(it) }.getOrNull() }
                         if (link.getQueryParameter("encrypted") != "true" || host?.scheme != "https" || host.host?.endsWith(".whatsapp.net") != true) {
-                            requests.finish(id, "not served: needs WhatsApp's own login", failed = true)
-                            mux.sendStatus(reply, INTERNAL_ERROR)
-                            return
+                            return refuse("not served: needs WhatsApp's own login")
                         }
                         Target(inner, emptyMap(), 0)
                     }
                     "phone" -> {
-                        if (inner == null) {
-                            requests.finish(id, "no uri in the link", failed = true)
-                            mux.sendStatus(reply, INTERNAL_ERROR)
-                        } else {
-                            requests.rename(id, inner)
-                            servePhone(Uri.parse(inner), link.getQueryParameter("mimeType").orEmpty(), id, reply, mux)
-                        }
-                        return
+                        if (inner == null) return refuse("no uri in the link")
+                        requests.rename(id, inner)
+                        return servePhone(Uri.parse(inner), link.getQueryParameter("mimeType").orEmpty(), id, reply, mux)
                     }
-                    else -> {
-                        requests.finish(id, "not served: needs ${link.authority}'s own login", failed = true)
-                        mux.sendStatus(reply, INTERNAL_ERROR)
-                        return
-                    }
+                    else -> return refuse("not served: needs ${link.authority}'s own login")
                 }
             }
-            else -> {
-                requests.finish(id, "not served: $scheme links", failed = true)
-                mux.sendStatus(reply, UNKNOWN_TYPE)
-                return
-            }
+            else -> return refuse("not served: $scheme links", code = UNKNOWN_TYPE)
         }
         if (target.url != q.url) requests.rename(id, target.url)
         val chunk = (if (q.chunkSize > 0) q.chunkSize else DEFAULT_CHUNK).coerceAtMost(MAX_CHUNK)
         val c = runCatching { open(target) }.getOrElse {
-            log.get().add("Fetch: ${host(q.url)} failed: ${it.message}")
-            requests.finish(id, "failed: ${it.message}", failed = true)
-            mux.sendStatus(reply, INTERNAL_ERROR)
-            return
+            log.add("Fetch: ${host(target.url)} failed: ${it.message}")
+            return refuse("failed: ${it.message}")
         }
         try {
             val code = c.responseCode
             if (code !in 200..299) {
-                log.get().add("Fetch: ${host(q.url)} answered $code")
-                requests.finish(id, "HTTP $code", failed = true)
-                mux.sendStatus(reply, INTERNAL_ERROR)
-                return
+                log.add("Fetch: ${host(target.url)} answered $code")
+                return refuse("HTTP $code")
             }
             if (q.scale == null) {
                 // From a byte on: a ranged answer says the whole length after its slash; a full one is skipped through.
@@ -143,21 +127,19 @@ class DataFetcher @Inject constructor(
                 sent = stream(c.inputStream, total, chunk, reply, mux, skip = if (ranged) 0 else target.skip)
             } else {
                 var body = c.inputStream.use { it.readBytes() }
-                body = scaled(body, q.scale) ?: body
+                scaled(body, q.scale)?.let { body = it; resized = true }
                 val compressed = q.compress
                 if (compressed) body = ByteArrayOutputStream().also { out -> DeflaterOutputStream(out).use { it.write(body) } }.toByteArray()
-                for (at in body.indices step chunk) {
-                    send(mux, reply, body.copyOfRange(at, minOf(body.size, at + chunk)), body.size.toLong(), compressed)
-                }
+                sendAll(mux, reply, body, chunk, compressed)
                 sent = body.size.toLong()
             }
             mux.sendStatus(reply, OK)
-            requests.finish(id, "HTTP $code" + (if (q.scale != null) ", scaled" else "") + (if (scheme == "instagram") ", for instagram://" else ""), failed = false, bytes = sent)
-        } catch (error: kotlinx.coroutines.CancellationException) {
+            requests.finish(id, "HTTP $code" + (if (resized) ", scaled" else "") + (if (scheme == "instagram") ", for instagram://" else ""), failed = false, bytes = sent)
+        } catch (error: CancellationException) {
             requests.finish(id, "cancelled", failed = false, bytes = sent)
             throw error
         } catch (error: Exception) {
-            log.get().add("Fetch: ${host(q.url)} broke off: ${error.message}")
+            log.add("Fetch: ${host(target.url)} broke off: ${error.message}")
             requests.finish(id, "broke off: ${error.message}", failed = true, bytes = sent)
             runCatching { mux.sendStatus(reply, INTERNAL_ERROR) }
         } finally {
@@ -178,7 +160,7 @@ class DataFetcher @Inject constructor(
                     }
                 } ?: error("no frame in the video")
                 val jpeg = ByteArrayOutputStream().also { frame.compress(Bitmap.CompressFormat.JPEG, DEFAULT_QUALITY, it) }.toByteArray()
-                for (at in jpeg.indices step DEFAULT_CHUNK) send(mux, reply, jpeg.copyOfRange(at, minOf(jpeg.size, at + DEFAULT_CHUNK)), jpeg.size.toLong(), false)
+                sendAll(mux, reply, jpeg, DEFAULT_CHUNK, false)
                 jpeg.size.toLong()
             } else {
                 val input = context.contentResolver.openInputStream(uri) ?: error("it could not be opened")
@@ -186,7 +168,8 @@ class DataFetcher @Inject constructor(
             }
             mux.sendStatus(reply, OK)
             requests.finish(id, if (mime.startsWith("video/")) "first frame" else "read", failed = false, bytes = sent)
-        } catch (error: kotlinx.coroutines.CancellationException) {
+        } catch (error: CancellationException) {
+            requests.finish(id, "cancelled", failed = false)
             throw error
         } catch (error: Exception) {
             requests.finish(id, "failed: ${error.message}", failed = true)
@@ -206,7 +189,7 @@ class DataFetcher @Inject constructor(
             }
             val buffer = ByteArray(chunk)
             while (true) {
-                kotlin.coroutines.coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val n = it.read(buffer)
                 if (n < 0) break
                 if (n > 0) {
@@ -224,7 +207,9 @@ class DataFetcher @Inject constructor(
         mux.send(reply, body, messageType = MT_REQUEST)
     }
 
-    private fun open(url: String): HttpURLConnection = open(Target(url, emptyMap(), 0))
+    private suspend fun sendAll(mux: DataXConnection, reply: Int, body: ByteArray, chunk: Int, compressed: Boolean) {
+        for (at in body.indices step chunk) send(mux, reply, body.copyOfRange(at, minOf(body.size, at + chunk)), body.size.toLong(), compressed)
+    }
 
     private fun open(t: Target): HttpURLConnection = (URL(t.url).openConnection() as HttpURLConnection).apply {
         for ((k, v) in t.headers) setRequestProperty(k, v)

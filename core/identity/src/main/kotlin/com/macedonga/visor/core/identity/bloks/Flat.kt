@@ -1,9 +1,6 @@
 package com.macedonga.visor.core.identity.bloks
 
-/**
- * A Meta screen reduced to what it asks of the user, in reading order: Meta's own layout (floating labels, fields of
- * zero height until focused, animated boxes) is left out, so the screen can be drawn in Visor's own look.
- */
+/** A Meta screen reduced to what it asks of the user, in reading order, to draw in Visor's own look. */
 sealed interface Item
 
 class Heading(val text: String) : Item
@@ -14,16 +11,17 @@ class Paragraph(val spans: List<Span>, val error: Boolean) : Item {
 
 class Field(val input: Input, val label: String) : Item
 
-class Action(val label: String, val event: Event, val primary: Boolean, val enabled: Boolean) : Item
+class Button(val label: String, val event: Event, val primary: Boolean, val enabled: Boolean) : Item
 
-class Screen(val back: Event?, val items: List<Item>, val loading: Boolean)
+class Page(val back: Event?, val items: List<Item>)
 
 object Flat {
-    fun of(ui: Ui?): Screen {
+    /** [title] is a bottom sheet's header, which sits outside its tree. */
+    fun of(ui: Ui?, title: String? = null): Page {
         var primaryTaken = false
         val out = ArrayList<Item>()
         var back: Event? = null
-        var spinners = 0
+        if (ui != null) title?.trim()?.takeIf { it.isNotEmpty() }?.let { out += Heading(it) }
 
         fun visible(u: Ui) = !u.style.invisible && u.style.alpha > 0.05f
 
@@ -31,7 +29,7 @@ object Flat {
         fun texts(u: Ui, into: MutableList<String>) {
             if (u.style.invisible) return
             when (u) {
-                is Text -> u.spans.joinToString("") { it.text }.trim().takeIf { it.isNotEmpty() }?.let(into::add)
+                is Text -> u.text.trim().takeIf { it.isNotEmpty() }?.let(into::add)
                 is Box -> u.children.forEach { texts(it, into) }
                 else -> {}
             }
@@ -46,35 +44,28 @@ object Flat {
         fun filled(u: Ui): Boolean = u.style.background != null || (u is Box && u.children.any(::filled))
 
         fun walk(u: Ui) {
+            val fields = inputs(u)
             // Code fields are a transparent input over drawn boxes: an input counts even when it is not seen.
-            if (u is Input) {
-                if (!u.style.invisible) out += Field(u, u.label)
-                return
-            }
-            if (!visible(u) && inputs(u).isEmpty()) return
+            if (!visible(u) && fields.isEmpty()) return
             when (u) {
                 is Box -> {
                     val click = u.onClick
-                    val fields = inputs(u)
-                    if (fields.isNotEmpty() && click != null) {
-                        val words = ArrayList<String>()
-                        texts(u, words)
-                        fields.forEach { f -> out += Field(f, f.label.ifEmpty { words.firstOrNull().orEmpty() }) }
-                        return
-                    }
                     if (click != null) {
-                        val words = ArrayList<String>()
-                        texts(u, words)
+                        val words = ArrayList<String>().also { texts(u, it) }
+                        if (fields.isNotEmpty()) {
+                            fields.forEach { f -> out += Field(f, f.label.ifEmpty { words.firstOrNull().orEmpty() }) }
+                            return
+                        }
                         val label = words.distinct().joinToString(" ")
                         // A code field's drawn boxes, one character each, only focus the field.
                         if (words.isNotEmpty() && words.all { it.length <= 1 }) return
                         if (label.isEmpty()) {
-                            if (back == null && out.none { it is Field || it is Action }) back = click
+                            if (back == null && out.none { it is Field || it is Button }) back = click
                         } else {
                             // The first filled button is the screen's main one; later filled ones are secondary.
                             val primary = filled(u) && !primaryTaken
                             if (primary) primaryTaken = true
-                            out += Action(label, click, primary, enabled = u.enabled)
+                            out += Button(label, click, primary, enabled = u.enabled)
                         }
                         return
                     }
@@ -85,16 +76,14 @@ object Flat {
                     if (spans.all { it.text.isBlank() }) return
                     val whole = u.onClick ?: spans.singleOrNull()?.onClick
                     if (whole != null) {
-                        out += Action(spans.joinToString("") { it.text }.trim(), whole, primary = false, enabled = true)
+                        out += Button(u.text.trim(), whole, primary = false, enabled = true)
                         return
                     }
                     val size = spans.mapNotNull { it.sizeSp }.maxOrNull() ?: 0f
                     val error = spans.any { s -> s.color?.let(::reddish) == true }
-                    if (size >= 20f && !error) out += Heading(spans.joinToString("") { it.text }.trim()) else out += Paragraph(spans, error)
+                    if (size >= 20f && !error) out += Heading(u.text.trim()) else out += Paragraph(spans, error)
                 }
-                is Input -> out += Field(u, u.label)
-                is Spinner -> spinners++
-                is Image -> {}
+                is Input -> if (!u.style.invisible) out += Field(u, u.label)
             }
         }
 
@@ -109,7 +98,7 @@ object Flat {
             val field = kept.indexOfFirst { it is Field }
             if (first >= 0 && (field < 0 || first < field)) kept.toMutableList().apply { set(first, Heading((kept[first] as Paragraph).text)) } else kept
         }
-        return Screen(back, items, loading = items.isEmpty() && (spinners > 0 || ui == null))
+        return Page(back, items)
     }
 
     private fun reddish(argb: Long): Boolean {

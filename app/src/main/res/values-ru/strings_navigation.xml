@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_start">Начните движение</string>
+    <string name="nav_start_on">Начните движение: %1$s</string>
+    <string name="nav_left">Поверните налево</string>
+    <string name="nav_left_onto">Поверните налево: %1$s</string>
+    <string name="nav_right">Поверните направо</string>
+    <string name="nav_right_onto">Поверните направо: %1$s</string>
+    <string name="nav_slight_left">Плавно поверните налево</string>
+    <string name="nav_slight_left_onto">Плавно поверните налево: %1$s</string>
+    <string name="nav_slight_right">Плавно поверните направо</string>
+    <string name="nav_slight_right_onto">Плавно поверните направо: %1$s</string>
+    <string name="nav_sharp_left">Резко поверните налево</string>
+    <string name="nav_sharp_left_onto">Резко поверните налево: %1$s</string>
+    <string name="nav_sharp_right">Резко поверните направо</string>
+    <string name="nav_sharp_right_onto">Резко поверните направо: %1$s</string>
+    <string name="nav_keep_left">Держитесь левее</string>
+    <string name="nav_keep_left_onto">Держитесь левее: %1$s</string>
+    <string name="nav_keep_right">Держитесь правее</string>
+    <string name="nav_keep_right_onto">Держитесь правее: %1$s</string>
+    <string name="nav_u_turn">Развернитесь</string>
+    <string name="nav_junction">Двигайтесь через перекрёсток</string>
+    <string name="nav_junction_onto">Двигайтесь через перекрёсток: %1$s</string>
+    <string name="nav_continue">Продолжайте движение прямо</string>
+    <string name="nav_continue_on">Продолжайте движение: %1$s</string>
+    <string name="nav_arrived">Вы прибыли</string>
+    <string name="nav_arrived_left">Вы прибыли, цель слева</string>
+    <string name="nav_arrived_right">Вы прибыли, цель справа</string>
+    <string name="nav_err_no_position">Нет местоположения телефона или пункта назначения</string>
+    <string name="nav_err_no_route">Маршрут не найден</string>
+</resources>

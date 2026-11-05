@@ -21,15 +21,19 @@ import kotlinx.coroutines.withContext
 /** A recording in progress: when it began, by the wall clock. */
 data class RecordingState(val since: Long)
 
+/** How asking for a recording went: [NOT_READY] before the stream has said what it is. */
+enum class RecordStart { STARTED, NOT_READY, FAILED }
+
 /**
  * Where the stream goes besides the screen: the replay ring always, an MP4 while recording, an RTMP server while
  * broadcasting. Fed by [LiveStream] with every frame and audio packet as it arrives.
  */
 class LiveOutputs(private val context: Context, private val albums: Albums) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lock = Mutex()
+    private val replayLock = Mutex()
+    private val recordLock = Mutex()
 
-    val replay = ReplayRing(DEFAULT_REPLAY_US)
+    val replay = ReplayRing(LiveSettings().replaySeconds * 1_000_000L)
     val broadcast = Broadcast(scope)
 
     private val _recording = MutableStateFlow<RecordingState?>(null)
@@ -96,37 +100,44 @@ class LiveOutputs(private val context: Context, private val albums: Albums) {
         return lastOut
     }
 
-    /** Starts writing an MP4 from the next keyframe. False if the stream has not said what it is yet. */
-    fun startRecording(): Boolean {
-        val c = config ?: return false
-        if (mp4 != null) return true
-        val now = System.currentTimeMillis()
-        mp4 = runCatching { Mp4Recording(context, c, aac, "Visor_${stamp(now)}.mp4", now, albums.videosPath()) }.getOrNull() ?: return false
-        _recording.value = RecordingState(now)
-        return true
+    /** Starts writing an MP4 from the next keyframe. */
+    suspend fun startRecording(): RecordStart = recordLock.withLock {
+        withContext(Dispatchers.IO) {
+            val c = config ?: return@withContext RecordStart.NOT_READY
+            if (mp4 != null) return@withContext RecordStart.STARTED
+            val now = System.currentTimeMillis()
+            mp4 = runCatching { Mp4Recording(context, c, aac, "Visor_${stamp(now)}.mp4", now, albums.videosPath()) }.getOrNull()
+                ?: return@withContext RecordStart.FAILED
+            _recording.value = RecordingState(now)
+            RecordStart.STARTED
+        }
     }
 
-    suspend fun stopRecording(): Uri? = withContext(Dispatchers.IO) {
-        val r = mp4 ?: return@withContext null
-        mp4 = null
-        _recording.value = null
-        synchronized(r) { r.finish() }?.also { albums.follow(it, r.album, video = true) }.also { _saved.value = it }
+    suspend fun stopRecording(): Uri? = recordLock.withLock {
+        withContext(Dispatchers.IO) {
+            val r = mp4 ?: return@withContext null
+            mp4 = null
+            _recording.value = null
+            synchronized(r) { r.finish() }?.also { albums.follow(it, r.album, video = true) }.also { _saved.value = it }
+        }
     }
 
-    /** What the replay ring holds, written out as its own video. Null if there was nothing to save. */
-    suspend fun saveReplay(): Uri? = lock.withLock {
+    /** What the replay ring holds, written out as its own video. Null if there was nothing to save; throws if the phone refused the file. */
+    suspend fun saveReplay(): Uri? = replayLock.withLock {
         withContext(Dispatchers.IO) {
             val held = replay.take() ?: return@withContext null
             val duration = (held.video.last().ptsUs - held.video.first().ptsUs) / 1000
             val takenAt = System.currentTimeMillis() - duration
             val r = Mp4Recording(context, held.config, aac.takeIf { held.audio.isNotEmpty() }, "Visor_${stamp(takenAt)}_replay.mp4", takenAt, albums.videosPath())
-            // Interleaved by time, as the muxer prefers.
-            var a = 0
-            for (frame in held.video) {
-                while (a < held.audio.size && held.audio[a].ptsUs <= frame.ptsUs) r.audio(held.audio[a++])
-                r.video(frame)
+            // Interleaved by time, as the muxer prefers. A failed write keeps what came before it.
+            runCatching {
+                var a = 0
+                for (frame in held.video) {
+                    while (a < held.audio.size && held.audio[a].ptsUs <= frame.ptsUs) r.audio(held.audio[a++])
+                    r.video(frame)
+                }
             }
-            r.finish().also { _saved.value = it }
+            r.finish()?.also { albums.follow(it, r.album, video = true) }.also { _saved.value = it }
         }
     }
 
@@ -137,17 +148,26 @@ class LiveOutputs(private val context: Context, private val albums: Albums) {
     }
 
     /** A photo into the photos album, as the gallery lists it: a JPEG from the screen, or the glasses' own HEIC. */
-    fun savePhoto(bytes: ByteArray, takenAt: Long, heic: Boolean = false): Uri? {
+    suspend fun savePhoto(bytes: ByteArray, takenAt: Long, heic: Boolean = false): Uri? = withContext(Dispatchers.IO) {
+        val path = albums.photosPath()
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "Visor_${stamp(takenAt)}" + if (heic) ".heic" else ".jpg")
             put(MediaStore.MediaColumns.MIME_TYPE, if (heic) "image/heic" else "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, albums.photosPath())
+            put(MediaStore.MediaColumns.RELATIVE_PATH, path)
             put(MediaStore.MediaColumns.DATE_TAKEN, takenAt)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
-        val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
-        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return null
+        val resolver = context.contentResolver
+        val uri = runCatching { resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) }.getOrNull() ?: return@withContext null
+        val written = runCatching { resolver.openOutputStream(uri)?.use { it.write(bytes) } != null }.getOrDefault(false)
+        if (!written) {
+            runCatching { resolver.delete(uri, null, null) }
+            return@withContext null
+        }
+        runCatching { resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) }
+        albums.follow(uri, path, video = false)
         _saved.value = uri
-        return uri
+        uri
     }
 
     /** The person stopped the stream: a recording in progress is closed and kept, a broadcast ends. */
@@ -164,7 +184,6 @@ class LiveOutputs(private val context: Context, private val albums: Albums) {
     private fun stamp(at: Long) = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(at))
 
     companion object {
-        const val DEFAULT_REPLAY_US = 120_000_000L
         private const val JUMP_US = 3_000_000L
         private const val FRAME_US = 33_000L
     }

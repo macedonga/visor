@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** What a link attempt came to, for the Accounts page to say. */
-enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED, NOT_LINKED, NEEDS_INTERNET }
+enum class LinkOutcome { LINKED, LOGGED_OUT, UNREACHABLE, NO_ANSWER, REFUSED, META_REFUSED, NOT_LINKED, NEEDS_INTERNET }
 
 /**
  * svc89, wearables_whatsapp_linking: the Meta account linking the Meta app runs with the Display. Visor opens the
@@ -47,7 +47,7 @@ class AccountLinking @Inject constructor(
 
     /** Whether the glasses hold a Meta account; null when they do not answer. */
     suspend fun metaPresent(): Boolean? {
-        val f = ask(MT_PRESENT_REQUEST, MT_PRESENT_RESPONSE, Wire.fieldBytes(1, str(uuid())), ANSWER_MS) ?: return null
+        val f = ask(MT_PRESENT_REQUEST, MT_PRESENT_RESPONSE, Wire.fieldString(1, uuid()), ANSWER_MS) ?: return null
         return f.varint(2) == 1L
     }
 
@@ -58,20 +58,20 @@ class AccountLinking @Inject constructor(
             withContext(Dispatchers.IO) { login.source.withToken { exchangeAccountToken(it) } }
         } catch (error: TokenError) {
             log.add("Accounts: ${error.message}")
-            return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.REFUSED
+            return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.META_REFUSED
         }
-        val request = Wire.fieldBytes(1, str(uuid())) +
-            Wire.fieldBytes(2, str(identity.accessToken)) +
-            Wire.fieldBytes(3, str(identity.appId)) +
-            Wire.fieldBytes(4, str(identity.userId)) +
-            Wire.fieldBytes(5, str(identity.analyticsClaim)) +
-            Wire.fieldBytes(6, str(SOURCE)) +
-            Wire.fieldBytes(7, str(identity.accountId)) +
-            Wire.fieldBytes(8, str(identity.profilePictureUrl)) +
+        val request = Wire.fieldString(1, uuid()) +
+            Wire.fieldString(2, identity.accessToken) +
+            Wire.fieldString(3, identity.appId) +
+            Wire.fieldString(4, identity.userId) +
+            Wire.fieldString(5, identity.analyticsClaim) +
+            Wire.fieldString(6, SOURCE) +
+            Wire.fieldString(7, identity.accountId) +
+            Wire.fieldString(8, identity.profilePictureUrl) +
             Wire.fieldVarint(9, flag(identity.isEmployee)) +
             Wire.fieldVarint(10, flag(identity.isTestUser)) +
-            Wire.fieldBytes(11, str(identity.name)) +
-            Wire.fieldBytes(12, str(uuid()))
+            Wire.fieldString(11, identity.name) +
+            Wire.fieldString(12, uuid())
         val f = ask(MT_META_SYNC_REQUEST, MT_META_SYNC_RESPONSE, request, ANSWER_MS)
         if (f == null) {
             log.add("Accounts: the glasses did not answer the Meta account")
@@ -98,50 +98,51 @@ class AccountLinking @Inject constructor(
 
     /** Sends a provider account to the glasses: with its ids they set it up from the tokens, without them they look it up. */
     suspend fun syncLinked(type: LinkedAccountType): LinkOutcome {
+        val name = type.name.lowercase()
         if (!login.source.hasCachedLogin) return LinkOutcome.LOGGED_OUT
         val found = try {
             withContext(Dispatchers.IO) {
                 val accountsToken = login.source.withToken { exchangeAccountToken(it) }.accessToken
                 val account = fetchLinkedAccounts(accountsToken).firstOrNull { it.type == type } ?: return@withContext null
-                val tokens = fetchLinkedTokens(accountsToken, account, login.deviceId) ?: return@withContext null
+                val tokens = fetchLinkedTokens(accountsToken, account, login.deviceId) ?: throw TokenError("Meta gave no $name token")
                 val metadata = try {
                     fetchLinkedMetadata(type, tokens)
                 } catch (error: TokenError) {
-                    log.add("Accounts: no ${type.name.lowercase()} ids: ${error.message}")
+                    log.add("Accounts: no $name ids: ${error.message}")
                     null
                 }
                 Triple(account, tokens, metadata)
             }
         } catch (error: TokenError) {
             log.add("Accounts: ${error.message}")
-            return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.REFUSED
+            return if (error.unreachable) LinkOutcome.UNREACHABLE else LinkOutcome.META_REFUSED
         }
         if (found == null) {
-            log.add("Accounts: ${type.name.lowercase()} is not linked to this Meta account")
+            log.add("Accounts: $name is not linked to this Meta account")
             return LinkOutcome.NOT_LINKED
         }
         val (account, tokens, metadata) = found
         val credentials = metadata?.let {
-            Wire.fieldBytes(1, str(tokens.accessToken)) +
-                (tokens.firstPartyToken?.let { t -> Wire.fieldBytes(2, str(t)) } ?: ByteArray(0)) +
-                Wire.fieldBytes(3, str(it))
+            Wire.fieldString(1, tokens.accessToken) +
+                (tokens.firstPartyToken?.let { t -> Wire.fieldString(2, t) } ?: ByteArray(0)) +
+                Wire.fieldString(3, it)
         }
-        val request = Wire.fieldBytes(1, str(uuid())) +
+        val request = Wire.fieldString(1, uuid()) +
             Wire.fieldVarint(2, type.wire.toLong()) +
-            Wire.fieldBytes(4, str(account.obfuscatedId)) +
+            Wire.fieldString(4, account.obfuscatedId) +
             Wire.fieldVarint(5, flag(true)) +
             (credentials?.let { Wire.fieldBytes(7, it) } ?: ByteArray(0))
-        if (credentials == null) log.add("Accounts: sending ${type.name.lowercase()} without its ids; the glasses look it up")
+        if (credentials == null) log.add("Accounts: sending $name without its ids; the glasses look it up")
         val f = ask(MT_LINKED_SYNC_REQUEST, MT_LINKED_SYNC_RESPONSE, request, LINKED_MS)
         if (f == null) {
-            log.add("Accounts: the glasses did not answer the ${type.name.lowercase()} account")
+            log.add("Accounts: the glasses did not answer the $name account")
             return LinkOutcome.NO_ANSWER
         }
         if (f.varint(2) != 1L) {
-            log.add("Accounts: the glasses refused the ${type.name.lowercase()} account, code ${f.varint(3)}")
+            log.add("Accounts: the glasses refused the $name account, code ${f.varint(3)}")
             return if (f.varint(3) == CODE_NO_INTERNET) LinkOutcome.NEEDS_INTERNET else LinkOutcome.REFUSED
         }
-        log.add("Accounts: ${type.name.lowercase()} account sent to the glasses")
+        log.add("Accounts: $name account sent to the glasses")
         return LinkOutcome.LINKED
     }
 
@@ -155,7 +156,7 @@ class AccountLinking @Inject constructor(
             }
             try {
                 connection.submit { it.sendOnService(SVC, type, payload) }
-                withTimeoutOrNull(waitMs) { runCatching { Wire.parse(fromGlasses.receive().payload) }.getOrNull() }
+                withTimeoutOrNull(waitMs) { fromGlasses.receive() }?.let { runCatching { Wire.parse(it.payload) }.getOrNull() }
             } finally {
                 listening.cancel()
                 fromGlasses.close()
@@ -165,14 +166,12 @@ class AccountLinking @Inject constructor(
 
     private fun uuid() = UUID.randomUUID().toString()
 
-    private fun str(s: String) = s.encodeToByteArray()
-
     private fun flag(on: Boolean) = if (on) 1L else 0L
 
     companion object {
         const val SVC = 89
 
-        // The phone's default for its account waits.
+        // As long as the Meta app waits for an account answer.
         private const val ANSWER_MS = 20_000L
 
         // Past the glasses' own 32 s deadline for a provider account, so their answer is heard.

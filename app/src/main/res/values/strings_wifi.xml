@@ -6,6 +6,8 @@
     <string name="wifi_remove">Remove</string>
     <string name="wifi_network_name">Network name</string>
     <string name="wifi_password">Password</string>
+    <string name="wifi_password_hint">Password (8+ characters)</string>
+    <string name="wifi_open">Open network</string>
     <string name="wifi_none">No saved networks</string>
     <string name="wifi_unread">Could not read the networks</string>
     <string name="wifi_saved">Saved</string>

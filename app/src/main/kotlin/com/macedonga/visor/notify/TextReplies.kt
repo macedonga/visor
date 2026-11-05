@@ -9,10 +9,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * The Messages app's reply actions, by the SMS store's thread each conversation is, while its notification is up. A
- * text sent through one goes the way the app sends it, RCS included, which no API offers other apps.
- */
+/** Each chat's reply action, by the thread the glasses answer with, while its notification is up. */
 @Singleton
 class TextReplies @Inject constructor() {
     private val byThread = ConcurrentHashMap<String, Pair<String, Notification.Action>>()
@@ -28,9 +25,17 @@ class TextReplies @Inject constructor() {
 
     fun has(thread: String) = byThread.containsKey(thread)
 
+    /** The reply action of the notification [key], while it is up. */
+    fun byKey(key: String): Notification.Action? = byThread.values.firstOrNull { it.first == key }?.second
+
     /** Sends [text] in [thread] through the app's reply; null when it went, else why not. */
     fun reply(context: Context, thread: String, text: String): String? {
         val action = byThread[thread]?.second ?: return "No reply in that conversation"
+        return send(context, action, text)
+    }
+
+    /** Sends [text] through [action]; null when it went, else why not. */
+    fun send(context: Context, action: Notification.Action, text: String): String? {
         val inputs = action.remoteInputs ?: return "The app gives no reply field"
         val results = Bundle().apply { inputs.forEach { putCharSequence(it.resultKey, text) } }
         val fill = Intent()

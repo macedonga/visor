@@ -1,6 +1,5 @@
 package com.macedonga.visor.core.protocol
 
-import java.nio.ByteBuffer
 import java.util.UUID
 
 /** svc41109, bt_peer_connection, on a channel the phone opens on the Display and on the band; a BleAddr is {1 type, 2 addr}. */
@@ -22,7 +21,6 @@ object BtPeer {
 
     const val JUST_WORKS = 0
     const val TOPOLOGY_SWITCHING = 0
-    const val LINK_DIRECT = 2
     const val PAIRED = 0
     const val CONNECTED = 3
     const val TOPOLOGY_START = 1
@@ -76,7 +74,7 @@ object BtPeer {
 
     /** TOPOLOGY_EVENT {1 peerIdentityAddr, 2 peerKeyHint, 3 uuid, 4 event, 5 type}; an empty address or hint is left out. */
     fun topologyEvent(peerIdentity: ByteArray, keyHint: ByteArray, uuid: UUID, event: Int, type: Int): ByteArray {
-        val id = ByteBuffer.allocate(16).putLong(uuid.mostSignificantBits).putLong(uuid.leastSignificantBits).array()
+        val id = uuid.toBytes()
         return (if (peerIdentity.isNotEmpty()) Wire.fieldBytes(1, peerIdentity) else ByteArray(0)) +
             (if (keyHint.isNotEmpty()) Wire.fieldBytes(2, keyHint) else ByteArray(0)) +
             Wire.fieldBytes(3, id) + Wire.fieldVarint(4, event.toLong()) + Wire.fieldVarint(5, type.toLong())

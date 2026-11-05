@@ -1,5 +1,8 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
+import com.macedonga.visor.R
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -9,6 +12,7 @@ import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
@@ -17,7 +21,7 @@ import org.json.JSONObject
 
 data class LatLng(val lat: Double, val lng: Double)
 
-/** The Display's maneuver directions (the phone's D42 enum). */
+/** The Display's maneuver directions. */
 object Dir {
     const val DEPART = 0
     const val ARRIVE = 1
@@ -52,7 +56,9 @@ class Step(
 )
 
 /** A snapped point on the line: where it is, the index of its segment, and metres from the start. */
-class Snap(val at: LatLng, val index: Int, val along: Double, val off: Double)
+class Snap(val at: LatLng, val index: Int, val along: Double, val off: Double) {
+    val offRoute: Boolean get() = off > OFF_ROUTE_M
+}
 
 /** A route from OSRM. [encoded] is the polyline as OSRM gives it (precision 5), passed on unchanged. */
 class Route(val encoded: String, val line: List<LatLng>, val steps: List<Step>, val metres: Double, val seconds: Double) {
@@ -64,6 +70,13 @@ class Route(val encoded: String, val line: List<LatLng>, val steps: List<Step>, 
     }
 
     val secondsPerMetre: Double get() = if (metres > 0) seconds / metres else 0.0
+
+    val km: Double get() = (metres / 100).roundToLong() / 10.0
+
+    fun arrived(at: Double): Boolean = metres - at < ARRIVE_M
+
+    /** The maneuver ahead of [at] metres along, else the last. */
+    fun nextStep(at: Double): Int = steps.indexOfFirst { at < it.along + PASSED_M }.takeIf { it >= 0 } ?: steps.lastIndex
 
     /** The point of the line nearest [p], on a flat map around [p], which is exact enough at route scale. */
     fun snap(p: LatLng): Snap {
@@ -100,24 +113,15 @@ enum class Mode(val path: String, val profile: String) {
 
 /** Routes from the OpenStreetMap community's public OSRM server. */
 @Singleton
-class OsrmRouter @Inject constructor() {
+class OsrmRouter @Inject constructor(@ApplicationContext private val context: Context) {
     /** Throws when the network fails or the server finds no route. */
-    suspend fun route(from: LatLng, to: LatLng, mode: Mode = Mode.WALK): Route = withContext(Dispatchers.IO) {
-        val url = URL(
+    suspend fun route(from: LatLng, to: LatLng, mode: Mode = Mode.WALK): Route = parse(
+        httpGet(
             "https://routing.openstreetmap.de/routed-${mode.path}/route/v1/${mode.profile}/" +
                 "${from.lng},${from.lat};${to.lng},${to.lat}?steps=true&overview=full&geometries=polyline",
-        )
-        val conn = url.openConnection() as HttpURLConnection
-        try {
-            conn.setRequestProperty("User-Agent", "Visor")
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
-            if (conn.responseCode != 200) throw IOException("routing server answered ${conn.responseCode}")
-            parse(conn.inputStream.bufferedReader().use { it.readText() })
-        } finally {
-            conn.disconnect()
-        }
-    }
+            TIMEOUT_MS,
+        ),
+    )
 
     private fun parse(body: String): Route {
         val json = JSONObject(body)
@@ -199,24 +203,24 @@ class OsrmRouter @Inject constructor() {
     }
 
     private fun words(dir: Int, street: String): String {
-        val onto = if (street.isBlank()) "" else " onto $street"
-        return when (dir) {
-            Dir.DEPART -> if (street.isBlank()) "Start" else "Start on $street"
-            Dir.ARRIVE -> "You have arrived"
-            Dir.ARRIVE_LEFT -> "You have arrived, on the left"
-            Dir.ARRIVE_RIGHT -> "You have arrived, on the right"
-            Dir.SHARP_LEFT -> "Turn sharp left$onto"
-            Dir.LEFT -> "Turn left$onto"
-            Dir.SLIGHT_LEFT -> "Bear left$onto"
-            Dir.SLIGHT_RIGHT -> "Bear right$onto"
-            Dir.RIGHT -> "Turn right$onto"
-            Dir.SHARP_RIGHT -> "Turn sharp right$onto"
-            Dir.U_TURN -> "Make a U-turn"
-            Dir.LEFT_FORK -> "Keep left$onto"
-            Dir.RIGHT_FORK -> "Keep right$onto"
-            Dir.MIDDLE_FORK -> "Go through the junction$onto"
-            else -> if (street.isBlank()) "Continue straight" else "Continue on $street"
+        val (bare, named) = when (dir) {
+            Dir.DEPART -> R.string.nav_start to R.string.nav_start_on
+            Dir.ARRIVE -> return context.getString(R.string.nav_arrived)
+            Dir.ARRIVE_LEFT -> return context.getString(R.string.nav_arrived_left)
+            Dir.ARRIVE_RIGHT -> return context.getString(R.string.nav_arrived_right)
+            Dir.SHARP_LEFT -> R.string.nav_sharp_left to R.string.nav_sharp_left_onto
+            Dir.LEFT -> R.string.nav_left to R.string.nav_left_onto
+            Dir.SLIGHT_LEFT -> R.string.nav_slight_left to R.string.nav_slight_left_onto
+            Dir.SLIGHT_RIGHT -> R.string.nav_slight_right to R.string.nav_slight_right_onto
+            Dir.RIGHT -> R.string.nav_right to R.string.nav_right_onto
+            Dir.SHARP_RIGHT -> R.string.nav_sharp_right to R.string.nav_sharp_right_onto
+            Dir.U_TURN -> return context.getString(R.string.nav_u_turn)
+            Dir.LEFT_FORK -> R.string.nav_keep_left to R.string.nav_keep_left_onto
+            Dir.RIGHT_FORK -> R.string.nav_keep_right to R.string.nav_keep_right_onto
+            Dir.MIDDLE_FORK -> R.string.nav_junction to R.string.nav_junction_onto
+            else -> R.string.nav_continue to R.string.nav_continue_on
         }
+        return if (street.isBlank()) context.getString(bare) else context.getString(named, street)
     }
 
     private companion object {
@@ -280,5 +284,25 @@ fun haversine(a: LatLng, b: LatLng): Double {
     return 2 * EARTH_RADIUS_M * asin(sqrt(h))
 }
 
+// Nominatim's policy asks for a user agent that names the app.
+private const val USER_AGENT = "Visor (https://github.com/macedonga/visor)"
+
+/** The body of a 200 answer to a GET of [url]; throws on any other. */
+internal suspend fun httpGet(url: String, timeoutMs: Int): String = withContext(Dispatchers.IO) {
+    val conn = URL(url).openConnection() as HttpURLConnection
+    try {
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        conn.connectTimeout = timeoutMs
+        conn.readTimeout = timeoutMs
+        if (conn.responseCode != 200) throw IOException("${conn.url.host} answered ${conn.responseCode}")
+        conn.inputStream.bufferedReader().use { it.readText() }
+    } finally {
+        conn.disconnect()
+    }
+}
+
+private const val OFF_ROUTE_M = 50.0
+private const val PASSED_M = 15.0
+private const val ARRIVE_M = 25.0
 private const val EARTH_RADIUS_M = 6_371_000.0
-private const val METRES_PER_DEGREE = 111_320.0
+internal const val METRES_PER_DEGREE = 111_320.0

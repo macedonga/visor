@@ -1,8 +1,8 @@
 package com.macedonga.visor.core.connection
 
 import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.protocol.toBytes
 import com.macedonga.visor.core.session.DataXConnection
-import java.nio.ByteBuffer
 import java.util.TimeZone
 import java.util.UUID
 
@@ -16,10 +16,10 @@ const val MT_DEVICE_INFO_REQUEST: Int = 1
  * Set the glasses' clock and time zone to the phone's, as the Meta app does on every connect. Nothing else sets it,
  * and every capture is stamped with it: a pair whose clock fell back after a reboot files new photos weeks ago.
  */
-suspend fun syncClock(connection: DataXConnection, nowMillis: Long = System.currentTimeMillis(), zone: String = TimeZone.getDefault().id) {
-    val uuid = UUID.randomUUID()
-    val requestId = ByteBuffer.allocate(16).putLong(uuid.mostSignificantBits).putLong(uuid.leastSignificantBits).array()
+suspend fun syncClock(connection: DataXConnection) {
+    val nowMillis = System.currentTimeMillis()
+    val requestId = UUID.randomUUID().toBytes()
     val timestamp = Wire.fieldVarint(1, Math.floorDiv(nowMillis, 1000L)) + Wire.fieldVarint(2, Math.floorMod(nowMillis, 1000L) * 1_000_000L)
-    val payload = Wire.fieldBytes(1, timestamp) + Wire.fieldBytes(2, zone.toByteArray()) + Wire.fieldBytes(3, requestId)
+    val payload = Wire.fieldBytes(1, timestamp) + Wire.fieldString(2, TimeZone.getDefault().id) + Wire.fieldBytes(3, requestId)
     connection.send(connection.openChannel(SVC_DEVICE_INFO), payload, messageType = MT_DEVICE_INFO_REQUEST, serviceId = SVC_DEVICE_INFO)
 }

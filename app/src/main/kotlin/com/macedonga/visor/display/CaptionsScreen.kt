@@ -1,19 +1,13 @@
 package com.macedonga.visor.display
 
 import android.content.Context
-import android.content.Intent
-import androidx.compose.foundation.background
+import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -24,10 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -43,25 +34,29 @@ import com.macedonga.visor.core.connection.CaptionsPhase
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.session.LinkState
-import com.macedonga.visor.gallery.RoundIcon
 import com.macedonga.visor.settings.ChoiceSheet
 import com.macedonga.visor.settings.PillsRow
+import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.Rows
 import com.macedonga.visor.settings.SectionLabel
 import com.macedonga.visor.settings.SettingsPage
-import com.macedonga.visor.settings.Spinner
 import com.macedonga.visor.settings.ValueRow
+import com.macedonga.visor.settings.WidePill
 import com.macedonga.visor.settings.row
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.rememberHaptics
+import com.macedonga.visor.ui.shareText
+import com.macedonga.visor.ui.sizeWords
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.text.DateFormat
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,8 +64,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** Captions or translation, and the languages, as last chosen. */
-data class CaptionsChoice(val mode: CaptionsMode = CaptionsMode.CAPTIONS, val self: String = "en", val other: String = "en") {
-    /** The other side's language: for captions there is one. */
+data class CaptionsChoice(val mode: CaptionsMode = CaptionsMode.CAPTIONS, val self: String = "en", val other: String = "es") {
+    /** What the others speak; in captions, the wearer's own language. */
     val heard: String get() = if (mode == CaptionsMode.CAPTIONS) self else other
 }
 
@@ -81,7 +76,7 @@ class CaptionsChoices @Inject constructor(@ApplicationContext context: Context) 
         CaptionsChoice(
             runCatching { CaptionsMode.valueOf(prefs.getString(MODE, null).orEmpty()) }.getOrDefault(CaptionsMode.CAPTIONS),
             prefs.getString(SELF, null) ?: "en",
-            prefs.getString(OTHER, null) ?: "en",
+            prefs.getString(OTHER, null) ?: "es",
         ),
     )
     val choice: StateFlow<CaptionsChoice> = _choice.asStateFlow()
@@ -106,14 +101,17 @@ class CaptionsModel @Inject constructor(
     val packs: CaptionPacks,
     val transcripts: CaptionTranscripts,
 ) : ViewModel() {
-    /** Keep [choice]; while the glasses caption, they stop and start again with it. */
+    private var restart: Job? = null
+
+    /** Keep [choice]; while the glasses caption, they stop and start again with the latest one. */
     fun choose(choice: CaptionsChoice) {
         choices.choose(choice)
-        if (captions.state.value.phase != CaptionsPhase.LIVE) return
-        viewModelScope.launch {
+        if (restart?.isActive == true || captions.state.value.phase != CaptionsPhase.LIVE) return
+        restart = viewModelScope.launch {
             captions.stop()
             captions.state.first { it.phase == CaptionsPhase.IDLE }
-            captions.start(choice.mode, choice.self, choice.heard)
+            val now = choices.choice.value
+            captions.start(now.mode, now.self, now.heard)
         }
     }
 }
@@ -135,8 +133,8 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
     val context = LocalContext.current
     val list = rememberLazyListState()
     val saved by model.transcripts.saved.collectAsStateWithLifecycle()
-    // This session and the one before, which after a restart comes from the phone's files.
-    val transcript = (saved.lastOrNull { it.session != state.session }?.lines ?: state.earlier) + state.lines
+    // The session before, which after a restart comes from the phone's files.
+    val before = saved.lastOrNull { it.session != state.session }?.lines ?: state.earlier
     val last = state.lines.lastOrNull()
     // Follow the newest turn, unless the transcript was scrolled back to read.
     LaunchedEffect(state.lines.size, last?.text) {
@@ -148,23 +146,25 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
         stringResource(R.string.captions_title),
         list = list,
         actions = {
-            if (transcript.isNotEmpty()) RoundIcon(VisorIcons.Share, stringResource(R.string.transcript_share), { share(context, transcript) })
+            if (before.isNotEmpty() || state.lines.isNotEmpty()) RoundIcon(VisorIcons.Share, stringResource(R.string.captions_share), { share(context, before, state.lines) })
         },
         sheet = {
             CaptionsBar(
                 ready = ready,
                 phase = state.phase,
                 refusal = state.refusal,
-                pack = PackView(feature in installed, offers[feature]?.size, work.takeIf { it !is PackWork.Idle }),
+                pack = PackView(feature in installed, offers[feature]?.size, work.takeIf { it is PackWork.Working || (it is PackWork.Failed && it.feature == feature) }),
                 onGet = { haptics.done(); model.packs.install(feature) },
                 onCancel = { model.packs.cancel() },
                 onStart = { haptics.done(); model.captions.start(choice.mode, choice.self, choice.heard) },
                 onStop = { haptics.toggle(); model.captions.stop() },
             )
             picking?.let { side ->
+                // A translation is between two languages: the other side's is not offered.
+                val taken = if (side == Side.SELF) choice.other else choice.self
                 ChoiceSheet(
-                    stringResource(if (side == Side.SELF) if (choice.mode == CaptionsMode.CAPTIONS) R.string.captions_language else R.string.captions_self else R.string.captions_other),
-                    languageOptions(),
+                    stringResource(side.title(choice.mode)),
+                    languageOptions().filter { choice.mode == CaptionsMode.CAPTIONS || it.first != taken },
                     if (side == Side.SELF) choice.self else choice.other,
                     { model.choose(if (side == Side.SELF) choice.copy(self = it) else choice.copy(other = it)) },
                     { picking = null },
@@ -178,19 +178,24 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
                     PillsRow(
                         stringResource(R.string.captions_mode),
                         listOf(CaptionsMode.CAPTIONS to stringResource(R.string.captions_mode_captions), CaptionsMode.TRANSLATION to stringResource(R.string.captions_mode_translation)),
-                        choice.mode, { model.choose(choice.copy(mode = it)) },
+                        choice.mode,
+                        { m ->
+                            val other = if (m == CaptionsMode.TRANSLATION && choice.other == choice.self) LANGUAGES.first { it != choice.self } else choice.other
+                            model.choose(choice.copy(mode = m, other = other))
+                        },
                     )
                 },
-                row {
-                    ValueRow(
-                        stringResource(if (choice.mode == CaptionsMode.CAPTIONS) R.string.captions_language else R.string.captions_self),
-                        languageName(choice.self), { picking = Side.SELF },
-                    )
-                },
+                row { ValueRow(stringResource(Side.SELF.title(choice.mode)), languageName(choice.self), { picking = Side.SELF }) },
                 if (choice.mode == CaptionsMode.TRANSLATION) row {
                     ValueRow(stringResource(R.string.captions_other), languageName(choice.other), { picking = Side.OTHER })
                 } else null,
             )
+        }
+        if (before.isNotEmpty()) {
+            item(key = "earlier-label") {
+                SectionLabel(DateUtils.formatSameDayTime(before.first().time, System.currentTimeMillis(), DateFormat.MEDIUM, DateFormat.SHORT).toString())
+            }
+            items(before, key = { "earlier-" + it.id }) { line -> Turn(line.text, line.source, current = false) }
         }
         if (state.lines.isNotEmpty() || state.phase == CaptionsPhase.LIVE) {
             item(key = "heard") { SectionLabel(stringResource(R.string.captions_heard)) }
@@ -205,16 +210,23 @@ fun CaptionsScreen(model: CaptionsModel = hiltViewModel()) {
 
 private enum class Side { SELF, OTHER }
 
+private fun Side.title(mode: CaptionsMode): Int = when {
+    this == Side.OTHER -> R.string.captions_other
+    mode == CaptionsMode.CAPTIONS -> R.string.captions_language
+    else -> R.string.captions_self
+}
+
 private val CLOCK = DateTimeFormatter.ofPattern("HH:mm")
 
-/** Plain text, one turn per line as `HH:mm  said`; a translation goes on the line under it. */
-private fun share(context: Context, lines: List<CaptionLine>) {
-    val text = lines.joinToString("\n") { line ->
-        val time = CLOCK.format(Instant.ofEpochMilli(line.time).atZone(ZoneId.systemDefault()))
-        if (line.source == null) "$time  ${line.text}" else "$time  ${line.source}\n${line.text}"
+/** Plain text, one turn per line as `HH:mm  said`, a translation on the line under it; a blank line between the sessions. */
+private fun share(context: Context, before: List<CaptionLine>, now: List<CaptionLine>) {
+    val text = listOf(before, now).filter { it.isNotEmpty() }.joinToString("\n\n") { lines ->
+        lines.joinToString("\n") { line ->
+            val time = CLOCK.format(Instant.ofEpochMilli(line.time).atZone(ZoneId.systemDefault()))
+            if (line.source == null) "$time  ${line.text}" else "$time  ${line.source}\n${line.text}"
+        }
     }
-    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-    context.startActivity(Intent.createChooser(send, null))
+    shareText(context, text)
 }
 
 /** One turn: the newest one bright while the glasses listen, what was said under a translation. */
@@ -239,58 +251,47 @@ private fun CaptionsBar(
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
-    val colors = Visor.colors
-    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(Brush.verticalGradient(0f to Color.Transparent, 0.3f to colors.canvas))
-                .padding(start = 16.dp, end = 16.dp, top = 28.dp, bottom = bottom + 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            val work = pack.work
-            val line = when {
-                work is PackWork.Working -> stringResource(
-                    when (work.step) {
-                        PackStep.DOWNLOADING -> R.string.language_downloading
-                        PackStep.SENDING -> R.string.language_sending
-                        PackStep.INSTALLING -> R.string.captions_installing
-                    },
-                ) + if (work.total > 0) " · ${megabytes(work.done)} / ${megabytes(work.total)}" else ""
-                work is PackWork.Failed -> stringResource(R.string.captions_pack_failed, work.reason)
-                !ready -> stringResource(R.string.captions_not_connected)
-                refusal != null && phase == CaptionsPhase.IDLE -> refusalWords(refusal)
-                phase == CaptionsPhase.LIVE -> stringResource(R.string.captions_live)
-                else -> null
+    val work = pack.work
+    val context = LocalContext.current
+    val (line, bad) = when {
+        work is PackWork.Working -> stringResource(
+            when (work.step) {
+                PackStep.DOWNLOADING -> R.string.language_downloading
+                PackStep.SENDING -> R.string.language_sending
+                PackStep.INSTALLING -> R.string.captions_installing
+            },
+        ) + (if (work.total > 0) " · ${sizeWords(context, work.done)} / ${sizeWords(context, work.total)}" else "") to false
+        !ready -> stringResource(R.string.connect_first) to false
+        phase == CaptionsPhase.LIVE -> stringResource(R.string.captions_live) to false
+        work is PackWork.Failed -> when (work.trouble) {
+            PackTrouble.NO_PACK -> stringResource(R.string.captions_no_pack)
+            PackTrouble.NO_SPACE -> stringResource(R.string.captions_no_space, sizeWords(context, work.bytes))
+            PackTrouble.DOWNLOAD -> stringResource(R.string.captions_download_stopped)
+            PackTrouble.GLASSES -> stringResource(R.string.captions_not_installed)
+        } to true
+        refusal != null && phase == CaptionsPhase.IDLE -> refusalWords(refusal) to true
+        else -> null to false
+    }
+    val busy = ready && work !is PackWork.Working && (phase == CaptionsPhase.STARTING || phase == CaptionsPhase.STOPPING)
+    ToolBar(line, bad, busy) {
+        when {
+            work is PackWork.Working -> WidePill(stringResource(R.string.cancel), onCancel, Modifier.fillMaxWidth(), quiet = true)
+            !ready -> Unit
+            phase == CaptionsPhase.IDLE && !pack.installed -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                WidePill(stringResource(R.string.captions_start_anyway), onStart, Modifier.weight(1f), quiet = true)
+                WidePill(
+                    pack.size?.let { stringResource(R.string.captions_get_size, sizeWords(context, it)) } ?: stringResource(R.string.language_download),
+                    onGet, Modifier.weight(1f),
+                )
             }
-            if (line != null) {
-                val bad = work is PackWork.Failed || refusal != null && ready && phase == CaptionsPhase.IDLE
-                Text(line, style = Visor.type.label, color = if (bad) colors.signal else colors.textSecondary, modifier = Modifier.padding(bottom = 12.dp))
-            }
-            when {
-                work is PackWork.Working -> WidePill(stringResource(R.string.language_cancel), onCancel, Modifier.fillMaxWidth(), quiet = true)
-                !ready -> Unit
-                phase == CaptionsPhase.IDLE && !pack.installed -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    WidePill(stringResource(R.string.captions_start_anyway), onStart, Modifier.weight(1f), quiet = true)
-                    WidePill(
-                        pack.size?.let { stringResource(R.string.captions_get_size, megabytes(it)) } ?: stringResource(R.string.language_download),
-                        onGet, Modifier.weight(1f),
-                    )
-                }
-                phase == CaptionsPhase.STARTING || phase == CaptionsPhase.STOPPING -> Box(Modifier.height(52.dp), contentAlignment = Alignment.Center) { Spinner() }
-                phase == CaptionsPhase.LIVE -> WidePill(stringResource(R.string.captions_stop), onStop, Modifier.fillMaxWidth(), quiet = true)
-                else -> WidePill(stringResource(R.string.captions_start), onStart, Modifier.fillMaxWidth())
-            }
+            phase == CaptionsPhase.LIVE -> WidePill(stringResource(R.string.captions_stop), onStop, Modifier.fillMaxWidth(), quiet = true)
+            else -> WidePill(stringResource(R.string.captions_start), onStart, Modifier.fillMaxWidth())
         }
     }
 }
 
 /** Whether this phone sent the choice's pack, how big Meta's is, and a download or send under way. */
 private data class PackView(val installed: Boolean, val size: Long?, val work: PackWork?)
-
-private fun megabytes(bytes: Long) = "${(bytes + 500_000) / 1_000_000} MB"
 
 /** The card's line: the language, or the two of a translation. */
 @Composable
@@ -304,9 +305,8 @@ private fun languageName(code: String): String =
 private fun languageOptions(): List<Triple<String, String, String?>> =
     LANGUAGES.map { Triple(it, languageName(it), null) }.sortedBy { it.second }
 
-// The Display's own list, from its Captions app; packs beyond English come from Meta.
+// The languages the Display's Captions app lists.
 private val LANGUAGES = listOf(
     "en", "es", "it", "fr", "de", "pt", "zh", "ja", "ko", "hi", "te", "bn", "nl", "tl", "gu", "pa", "kn", "ml", "da",
     "fi", "sv", "ru", "vi", "tr", "he", "pl", "hu", "cs", "hr", "el", "ms", "ta", "mr", "ar", "id", "th", "ur",
 )
-private val BAR_ROOM = 120.dp

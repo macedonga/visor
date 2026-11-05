@@ -2,7 +2,6 @@ package com.macedonga.visor.metaai
 
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -11,10 +10,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import java.util.Locale
 
-/**
- * The phone's microphone while the mic is held: the phone's recogniser, on the phone when it holds the language,
- * with the words so far as they come and the final text when the mic is let go. Main thread only.
- */
+/** The phone's speech recogniser while the mic is held, on the phone when it has the language. Main thread only. */
 class PhoneEars(private val context: Context, private val listener: Listener) {
 
     interface Listener {
@@ -29,12 +25,14 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
     private var recognizer: SpeechRecognizer? = null
     private var stopping = false
     private var last = ""
+    // The words of the sessions a pause ended while the mic was still held.
+    private var kept = ""
+    private var resumed = false
     private val giveUp = Runnable { finish(last.ifBlank { null }) }
 
     fun start(locale: Locale) {
         cancel()
-        val onDevice = Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
-        listen(locale.toLanguageTag(), onDevice)
+        listen(locale.toLanguageTag(), SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
     }
 
     /** The mic was let go: the last words come back through [Listener.done]. */
@@ -52,6 +50,8 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
         recognizer = null
         stopping = false
         last = ""
+        kept = ""
+        resumed = false
     }
 
     private fun finish(text: String?) {
@@ -60,11 +60,22 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
         listener.done(text)
     }
 
+    /** The recogniser stopped on its own with the mic still held: a new one goes on from [words]. */
+    private fun resume(r: SpeechRecognizer, tag: String, onDevice: Boolean, words: String) {
+        kept = words
+        last = words
+        resumed = true
+        r.destroy()
+        if (recognizer === r) listen(tag, onDevice)
+    }
+
     private fun listen(tag: String, onDevice: Boolean) {
-        val r = if (onDevice && Build.VERSION.SDK_INT >= 31) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
+        val r = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = listener.ready()
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (!resumed) listener.ready()
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = listener.level(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
             override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -74,14 +85,16 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
             override fun onPartialResults(partialResults: Bundle?) {
                 val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
                 if (text.isNotBlank()) {
-                    last = text
-                    listener.heard(text)
+                    last = join(kept, text)
+                    listener.heard(last)
                 }
             }
 
             override fun onResults(results: Bundle?) {
-                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() } ?: last
-                finish(text.ifBlank { null })
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }
+                val words = text?.let { join(kept, it) } ?: last
+                if (!stopping) return resume(r, tag, onDevice, words)
+                finish(words.ifBlank { null })
             }
 
             override fun onError(error: Int) {
@@ -91,6 +104,7 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
                     if (recognizer === r) listen(tag, onDevice = false)
                     return
                 }
+                if (!stopping && error in PAUSED) return resume(r, tag, onDevice, last)
                 finish(last.ifBlank { null })
             }
         })
@@ -101,15 +115,18 @@ class PhoneEars(private val context: Context, private val listener: Listener) {
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 // Held down, a pause is not the end.
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10_000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, HELD_SILENCE_MS)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, HELD_SILENCE_MS)
             },
         )
     }
 
     private companion object {
         const val GIVE_UP_MS = 3_000L
-        // ERROR_LANGUAGE_NOT_SUPPORTED, ERROR_LANGUAGE_UNAVAILABLE.
-        val LANGUAGE_MISSING = setOf(12, 13)
+        const val HELD_SILENCE_MS = 10_000L
+        val LANGUAGE_MISSING = setOf(SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
+        val PAUSED = setOf(SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+
+        fun join(a: String, b: String) = listOf(a, b).filter { it.isNotBlank() }.joinToString(" ")
     }
 }

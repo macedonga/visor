@@ -35,7 +35,7 @@ Visor should work for everyone who wears Meta glasses, including people who use 
 
 ## Supported environments
 
-- Android 10 or later, on a phone.
+- Android 12 or later, on a phone.
 - TalkBack, the phone's font size and its display size. Visor follows all three.
 - Not tried: Switch Access, Voice Access, Select to Speak, external keyboards and braille displays. Reports about them are welcome.
 
@@ -45,7 +45,7 @@ For a pull request that changes what a screen shows:
 
 1. Turn on TalkBack and go through the change. Every control reads a label, and its state if it has one.
 2. Set the largest font size and display size. Nothing important is cut off or overlaps.
-3. Give each icon or image that is the only content of a control a `contentDescription` from the strings, in `values/` and `values-it/`. Pass `null` only for a decorative one.
+3. Give each icon or image that is the only content of a control a `contentDescription` from the strings, in `values/`, `values-it/` and `values-ru/`. Pass `null` only for a decorative one.
 4. Use `sp` for text and the colours in `Visor.colors`. New text stays at 4.5:1 or more against its background.
 5. Keep touch targets at 48 dp or more.
 

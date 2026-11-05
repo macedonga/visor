@@ -15,17 +15,13 @@ import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.scale
 
-/**
- * Where the glasses' light lands: a soft pool on an unseen floor, wider than it is deep, with a darker
- * patch where the frame sits on it. Its edge drifts slowly, the way light through a diffuser does.
- * [center] and [radius] are fractions of the canvas width, so the pool scales with the stage.
- */
+/** The glasses' light on an unseen floor, darker where the frame sits; [center], [radius] and [contact] in canvas widths. */
 @Composable
 fun LightPool(light: LightFrame, center: Offset, radius: Size, contact: Size, modifier: Modifier = Modifier) {
     val shader = remember { if (Build.VERSION.SDK_INT >= 33) PoolShader() else null }
     Canvas(modifier) {
         light.tick.longValue
-        if (shader != null) shader.draw(this, light, center, radius, contact) else fallback(light, center, radius)
+        if (Build.VERSION.SDK_INT >= 33 && shader != null) shader.draw(this, light, center, radius, contact) else fallback(light, center, radius)
     }
 }
 
@@ -43,26 +39,24 @@ private class PoolShader {
         shader.setFloatUniform("contact", contact.width * w, contact.height * w)
         // The drift's offsets wrap where the noise repeats, so they stay small however long the light has run.
         shader.setFloatUniform("shift", ((light.time * 0.07) % PERIOD).toFloat(), ((light.time * 0.05) % PERIOD).toFloat())
-        shader.setFloatUniform("level", light.level + light.flash * 0.6f + light.swell)
+        shader.setFloatUniform("level", light.poolLevel)
         shader.setFloatUniform("warp", light.warp)
-        shader.setFloatUniform("core", mix(light.core, light.flash))
+        shader.setFloatUniform("core", light.flashedCore())
         shader.setFloatUniform("rim", light.rim)
         drawRect(brush)
     }
-
-    private fun mix(c: FloatArray, white: Float) =
-        floatArrayOf(c[0] + (1 - c[0]) * white, c[1] + (1 - c[1]) * white, c[2] + (1 - c[2]) * white)
 }
 
-/** Before Android 13: the same pool as two radial gradients, without the drift. */
+/** Before Android 13: the same pool as one radial gradient, without the drift. */
 private fun DrawScope.fallback(light: LightFrame, center: Offset, radius: Size) {
     val w = size.width
     val c = Offset(center.x * w, center.y * w)
-    val color = Color(light.core[0], light.core[1], light.core[2])
+    val core = light.flashedCore()
+    val color = Color(core[0], core[1], core[2])
     val r = radius.width * w * light.spread
     scale(1f, radius.height / radius.width, pivot = c) {
         drawCircle(
-            Brush.radialGradient(listOf(color.copy(alpha = light.level.coerceIn(0f, 1f)), Color.Transparent), c, r),
+            Brush.radialGradient(listOf(color.copy(alpha = light.poolLevel.coerceIn(0f, 1f)), Color.Transparent), c, r),
             radius = r,
             center = c,
         )
@@ -71,8 +65,8 @@ private fun DrawScope.fallback(light: LightFrame, center: Offset, radius: Size) 
 
 private const val PERIOD = 64.0
 
-private const val SOURCE = """
-const float PERIOD = 64.0;
+private val SOURCE = """
+const float PERIOD = $PERIOD;
 uniform float2 center;
 uniform float2 radius;
 uniform float2 contact;
@@ -82,8 +76,7 @@ uniform float warp;
 uniform float3 core;
 uniform float3 rim;
 
-// A hash without sine: a sine hash blew the GPU's rounding up into seams between the noise's cells, lines that
-// crossed the pool as it drifted.
+// Sine-free hash: no seams between noise cells.
 float hash(float2 p) {
     float3 p3 = fract(float3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);

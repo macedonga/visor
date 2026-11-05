@@ -8,25 +8,44 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.view.View
 import android.widget.RemoteViews
-import androidx.annotation.RequiresApi
+import androidx.annotation.StringRes
 import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
+import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.core.assistant.Assistant
+import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
-import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.connection.GlassesState
+import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.identity.Diagnosis
+import com.macedonga.visor.core.media.BroadcastPhase
+import com.macedonga.visor.core.media.GlassesConfig
+import com.macedonga.visor.core.media.LivePhase
+import com.macedonga.visor.core.media.LiveStream
+import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.transport.LeKeeper
+import com.macedonga.visor.display.CaptionTranscripts
+import com.macedonga.visor.gallery.ImportChoice
+import com.macedonga.visor.gallery.importOnItsOwn
+import com.macedonga.visor.gallery.notePlaces
 import com.macedonga.visor.home.moodWords
-import com.macedonga.visor.outside.Glimpse
-import dagger.hilt.android.AndroidEntryPoint
+import com.macedonga.visor.language.keepAssistantConfig
+import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.notify.PhoneContacts
+import com.macedonga.visor.outside.DeveloperMode
+import com.macedonga.visor.outside.Glimpse
+import com.macedonga.visor.outside.Outside
+import com.macedonga.visor.settings.keepMuseWithWakeWord
+import com.macedonga.visor.ui.allows
+import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,15 +53,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import com.macedonga.visor.core.transport.LeKeeper
-import kotlinx.coroutines.flow.map
-import com.macedonga.visor.core.session.LinkState
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.combine
 
-/** The foreground service the design asks for: one session, for the life of the connection. */
+/** The foreground service holding the one session with the glasses. */
 @AndroidEntryPoint
 class GlassesService : Service() {
 
@@ -69,43 +86,40 @@ class GlassesService : Service() {
     lateinit var keeper: LeKeeper
 
     @Inject
-    lateinit var media: com.macedonga.visor.core.media.MediaImport
+    lateinit var media: MediaImport
 
     @Inject
-    lateinit var importChoice: com.macedonga.visor.gallery.ImportChoice
+    lateinit var importChoice: ImportChoice
 
     @Inject
-    lateinit var albums: com.macedonga.visor.core.media.Albums
+    lateinit var live: LiveStream
 
     @Inject
-    lateinit var live: com.macedonga.visor.core.media.LiveStream
+    lateinit var glassesConfig: GlassesConfig
 
     @Inject
-    lateinit var glassesConfig: com.macedonga.visor.core.media.GlassesConfig
+    lateinit var assistantConfig: AssistantConfigStore
 
     @Inject
-    lateinit var assistantConfig: com.macedonga.visor.core.assistant.AssistantConfigStore
+    lateinit var log: EventLog
 
     @Inject
-    lateinit var log: com.macedonga.visor.log.EventLog
+    lateinit var developer: DeveloperMode
 
     @Inject
-    lateinit var developer: com.macedonga.visor.outside.DeveloperMode
-
-    @Inject
-    lateinit var glassesSettings: com.macedonga.visor.core.settings.GlassesSettings
+    lateinit var glassesSettings: GlassesSettings
 
     // Injected so the widget and the Quick Settings tile follow the glasses while no screen is open.
     @Inject
-    lateinit var outside: com.macedonga.visor.outside.Outside
+    lateinit var outside: Outside
 
     // Injected so a Display's band is linked while the service runs.
     @Inject
-    lateinit var band: com.macedonga.visor.band.BandLink
+    lateinit var band: BandLink
 
     // Injected so captions started from the glasses are kept while no screen is open.
     @Inject
-    lateinit var captionTranscripts: com.macedonga.visor.display.CaptionTranscripts
+    lateinit var captionTranscripts: CaptionTranscripts
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -113,6 +127,10 @@ class GlassesService : Service() {
 
     /** The notification collector, held so it can be stopped before anything else is. */
     private var notifications: Job? = null
+
+    /** What the collector last posted, for a later start intent to post again. */
+    @Volatile
+    private var posted: Notification? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -123,22 +141,19 @@ class GlassesService : Service() {
             return START_STICKY
         }
 
-        // Checked before startForeground and not after.
-        if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
+        // Without Bluetooth there is no link to hold.
+        if (!bluetoothAllowed(this)) {
             stopSelf()
             return START_NOT_STICKY
         }
 
         startForeground(
             NOTIFICATION_ID,
-            notification(Status(getString(R.string.connection_reaching), null, false, null, null)),
+            posted ?: notification(Status(getString(R.string.mood_searching), null, false, null, null)),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
 
-        // A second start intent must not open a second session. The design's rule is one
-        // session for the life of the connection, and the glasses hold one RFCOMM channel.
+        // One session only: later intents switch pair or retry.
         if (!started) {
             started = true
             connection.start(scope, targetFrom(intent))
@@ -147,30 +162,29 @@ class GlassesService : Service() {
             navigation.start(scope)
             moveToLe()
             holdLe()
-            com.macedonga.visor.gallery.notePlaces(this, scope, connection, media.places)
-            com.macedonga.visor.gallery.importOnItsOwn(this, scope, connection, media, importChoice, albums)
-            com.macedonga.visor.language.keepAssistantConfig(scope, connection, glassesConfig, media, glassesSettings, assistantConfig, log)
+            notePlaces(this, scope, connection, media.places)
+            importOnItsOwn(this, scope, connection, media, importChoice)
+            keepAssistantConfig(scope, connection, glassesConfig, glassesSettings, assistantConfig, log)
             developer.keep(scope)
-            com.macedonga.visor.settings.keepCameraInLine(scope, glassesSettings, assistantConfig, log)
-            com.macedonga.visor.settings.keepMuseWithWakeWord(scope, glassesSettings, log)
-            com.macedonga.visor.settings.keepLandscape(scope, connection, glassesSettings, glassesConfig, media, log)
-            media.steadiedOnGlasses = com.macedonga.visor.settings.steadiedOnGlasses(glassesSettings)
+            keepCameraInLine(scope, glassesSettings, assistantConfig, log)
+            keepMuseWithWakeWord(scope, glassesSettings, log)
+            keepLandscape(scope, connection, glassesSettings, glassesConfig, log)
+            media.steadiedOnGlasses = steadiedOnGlasses(glassesSettings)
             notifications = scope.launch {
-                var shown: Any? = null
+                var shown: Shown? = null
                 combine(connection.state, liveNow(), outside.glimpse, ::Triple).collect { (state, now, glimpse) ->
                     // The state changes every few seconds; the notification only when what it says does.
-                    val shows: Any = now ?: status(state, glimpse)
+                    val shows: Shown = now ?: status(state, glimpse)
                     if (shows != shown) {
                         shown = shows
-                        getSystemService(NotificationManager::class.java)
-                            .notify(NOTIFICATION_ID, if (shows is Status) notification(shows) else liveNotification(shows as LiveNow))
+                        val n = when (shows) {
+                            is Status -> notification(shows)
+                            is LiveNow -> liveNotification(shows)
+                        }
+                        posted = n
+                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, n)
                     }
-                    // target == null alone is also the state before the store read finishes, so
-                    // checking it without reason would stop the service on every launch before
-                    // GlassesConnection.start ever gets to read the store.
-                    if (state.target == null && state.reason.isNotBlank()) {
-                        stopSelf()
-                    }
+                    if (state.noGlasses) stopSelf()
                 }
             }
         } else if (intent?.action == ACTION_RECONNECT) {
@@ -184,19 +198,16 @@ class GlassesService : Service() {
     /** Another pair asked for: the session with this one ends first, as the glasses hold one each. */
     private fun switchTo(target: GlassesTarget) {
         if (target.serial == connection.state.value.target?.serial) return
-        if (live.running.value || media.importing.value) return
+        if (live.usingWifi || media.importing.value) return
         // Asked twice in a row, the second finds this pair already chosen.
         scope.launch { connection.restart(scope, target) { it.target?.serial == target.serial } }
     }
 
-    /**
-     * Asked from the tile: a pair the ladder is waiting to try again is tried now. Never while the
-     * Live or an import has the glasses over Wi-Fi: Bluetooth is paused for them, and a second session ends theirs.
-     */
+    /** [reconnect]: a waiting pair is tried now, unless a new session would end the Live's or an import's on Wi-Fi. */
     private fun retry() {
         val state = connection.state.value
         if (state.link != LinkState.DISCONNECTED && state.link != LinkState.LOST) return
-        if (live.running.value || media.importing.value) return
+        if (live.usingWifi || media.importing.value) return
         scope.launch {
             // Tried again on Bluetooth: a Wi-Fi link that dropped is not one to wait for.
             connection.restart(scope, state.target?.takeIf { it.link is GlassesLink.Bluetooth }) {
@@ -206,25 +217,18 @@ class GlassesService : Service() {
     }
 
     override fun onDestroy() {
-        // runBlocking because onDestroy cannot suspend, and because returning before the socket
-        // closes would let a second session open onto glasses that still hold the first one.
+        // Blocking: a new session must not open while the glasses still hold this one.
         runBlocking {
-            // Joined, and before the connection is stopped rather than after. This is the only
-            // thing that guarantees no further notification is posted: see [notifications].
+            // The collector stops first, so nothing is posted once the connection ends.
             notifications?.cancelAndJoin()
             connection.stop()
         }
         keeper.release()
-        notifications = null
         scope.cancel()
-        started = false
         super.onDestroy()
     }
 
-    /**
-     * A session that had to start on RFCOMM, before the LE link was up, moves onto LE once it is: on RFCOMM their
-     * sleep would cut it. Not during a live stream, and at most once a minute.
-     */
+    /** Moves an RFCOMM session onto LE once LE is up, as their sleep cuts RFCOMM; never mid-stream, at most once a minute. */
     private fun moveToLe() {
         scope.launch {
             var last = 0L
@@ -255,14 +259,17 @@ class GlassesService : Service() {
         }
     }
 
-    /** What the Live is doing while it runs, for the notification; null when it does not. */
-    private data class LiveNow(val words: Int, val since: Long, val short: String)
+    /** What the ongoing notification shows: the connection, or the Live while it runs. */
+    private sealed interface Shown
+
+    /** What the Live is doing, for the notification. */
+    private data class LiveNow(@StringRes val label: Int, val since: Long, val badge: String) : Shown
 
     private fun liveNow() = combine(live.status, live.since, live.outputs.recording, live.outputs.broadcast.state) { status, since, recording, broadcast ->
         when {
-            status.phase == com.macedonga.visor.core.media.LivePhase.IDLE || status.phase == com.macedonga.visor.core.media.LivePhase.FAILED -> null
+            status.phase == LivePhase.IDLE || status.phase == LivePhase.FAILED -> null
             recording != null -> LiveNow(R.string.live_notification_recording, recording.since, getString(R.string.live_rec))
-            broadcast.phase == com.macedonga.visor.core.media.BroadcastPhase.LIVE -> LiveNow(R.string.live_notification_on_air, broadcast.since, getString(R.string.live_on_air))
+            broadcast.phase == BroadcastPhase.LIVE -> LiveNow(R.string.live_notification_on_air, broadcast.since, getString(R.string.live_on_air))
             else -> LiveNow(R.string.live_notification_watching, since, getString(R.string.live_badge))
         }
     }.distinctUntilChanged()
@@ -273,16 +280,16 @@ class GlassesService : Service() {
         val stop = PendingIntent.getService(this, 1, Intent(this, GlassesService::class.java).setAction(ACTION_STOP_LIVE), PendingIntent.FLAG_IMMUTABLE)
         val builder = Notification.Builder(this, LIVE_CHANNEL_ID)
             .setContentTitle(getString(R.string.live_notification_title))
-            .setContentText(getString(now.words))
+            .setContentText(getString(now.label))
             .setSmallIcon(R.drawable.ic_stat_visor)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_STATUS)
-            .setContentIntent(PendingIntent.getActivity(this, 2, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .setContentIntent(PendingIntent.getActivity(this, 4, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(Notification.Action.Builder(null, getString(R.string.live_stop), stop).build())
         if (now.since > 0) builder.setWhen(now.since).setShowWhen(true).setUsesChronometer(true)
         if (Build.VERSION.SDK_INT >= 36) {
-            builder.setShortCriticalText(now.short)
-            // Asking to be promoted came with Android 16.1; on 16.0 the call is missing and Live crashed.
+            builder.setShortCriticalText(now.badge)
+            // setRequestPromotedOngoing exists from Android 16.1.
             if (Build.VERSION.SDK_INT_FULL >= Build.VERSION_CODES_FULL.BAKLAVA_1) builder.setRequestPromotedOngoing(true)
         }
         return builder.build()
@@ -296,19 +303,15 @@ class GlassesService : Service() {
         return GlassesTarget(GlassesLink.Bluetooth(address), serial)
     }
 
-    /**
-     * What the connection notification says: the home's word for the pair, and their battery and the case's. [text] is
-     * the same in words, for TalkBack and plain notifications.
-     */
-    private data class Status(val title: String, val glasses: Int?, val charging: Boolean, val case: Int?, val text: String?)
+    /** The connection notification: the home's word for the pair and the batteries, which [text] spells out for TalkBack. */
+    private data class Status(val title: String, val glasses: Int?, val charging: Boolean, val case: Int?, val text: String?) : Shown
 
     private fun status(state: GlassesState, glimpse: Glimpse): Status {
         val title = getString(if (state.diagnosis == Diagnosis.EVICTED) R.string.connection_key_refused else moodWords(glimpse.mood))
-        val batteries = listOfNotNull(
+        val text = listOfNotNull(
             glimpse.glasses?.let { getString(if (glimpse.charging) R.string.notify_glasses_charging else R.string.notify_glasses, it) },
             glimpse.case?.let { getString(R.string.widget_case, it) },
         ).joinToString(" · ").ifEmpty { null }
-        val text = batteries ?: getString(connectionWords(state)).takeIf { it != title }
         return Status(title, glimpse.glasses, glimpse.charging, glimpse.case, text)
     }
 
@@ -317,12 +320,8 @@ class GlassesService : Service() {
             .setContentTitle(status.title)
             .setContentText(status.text)
             .setShowWhen(false)
-            .apply {
-                if (Build.VERSION.SDK_INT >= 31) {
-                    style = Notification.DecoratedCustomViewStyle()
-                    setCustomContentView(statusViews(status))
-                }
-            }
+            .setStyle(Notification.DecoratedCustomViewStyle())
+            .setCustomContentView(statusViews(status))
             .setSmallIcon(R.drawable.ic_stat_visor)
             .setOngoing(true)
             .setContentIntent(
@@ -336,7 +335,6 @@ class GlassesService : Service() {
             .build()
 
     /** The widget's look in the shade: icons and numbers, tinted with the shade's own text colour. */
-    @RequiresApi(31)
     private fun statusViews(status: Status): RemoteViews {
         val v = RemoteViews(packageName, R.layout.notification_glasses)
         v.setTextViewText(R.id.title, status.title)
@@ -357,8 +355,6 @@ class GlassesService : Service() {
             v.setViewVisibility(R.id.case_level, case)
             status.case?.let { v.setTextViewText(R.id.case_level, "$it%") }
         }
-        v.setViewVisibility(R.id.text, if (!numbers && status.text != null) View.VISIBLE else View.GONE)
-        status.text?.let { v.setTextViewText(R.id.text, it) }
         return v
     }
 
@@ -373,7 +369,7 @@ class GlassesService : Service() {
         const val EXTRA_ADDRESS = "com.macedonga.visor.extra.ADDRESS"
         const val EXTRA_SERIAL = "com.macedonga.visor.extra.SERIAL"
 
-        /** Low importance, no vibration, no light, deliberately. */
+        /** The silent connection and Live channels. */
         fun createNotificationChannel(context: Context) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
@@ -396,26 +392,36 @@ class GlassesService : Service() {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(live)
         }
 
+        /** The person disconnected: Home does not start the service again until a start or reconnect. */
+        @Volatile
+        var stoppedByUser = false
+            private set
+
         fun start(context: Context, target: GlassesTarget? = null) {
+            stoppedByUser = false
+            if (!bluetoothAllowed(context)) return
             val intent = Intent(context, GlassesService::class.java)
-            if (target != null) {
-                intent.putExtra(EXTRA_SERIAL, target.serial)
-                when (val link = target.link) {
-                    is GlassesLink.Bluetooth -> intent.putExtra(EXTRA_ADDRESS, link.address)
-                    // Only media import uses Wi-Fi, on a session of its own.
-                    is GlassesLink.Wifi -> Unit
-                }
-            }
+            if (target != null) (target.link as? GlassesLink.Bluetooth)?.let { intent.putExtra(EXTRA_SERIAL, target.serial).putExtra(EXTRA_ADDRESS, it.address) }
             context.startForegroundService(intent)
         }
 
         /** Start the service, or have the running one try the glasses again now. */
         fun reconnect(context: Context) {
+            stoppedByUser = false
+            if (!bluetoothAllowed(context)) return
             context.startForegroundService(Intent(context, GlassesService::class.java).setAction(ACTION_RECONNECT))
         }
 
+        // Checked before a foreground start: a service that stops before startForeground crashes the app.
+        private fun bluetoothAllowed(context: Context) = context.allows(Manifest.permission.BLUETOOTH_CONNECT)
+
         fun stop(context: Context) {
             context.stopService(Intent(context, GlassesService::class.java))
+        }
+
+        fun disconnect(context: Context) {
+            stoppedByUser = true
+            stop(context)
         }
     }
 }

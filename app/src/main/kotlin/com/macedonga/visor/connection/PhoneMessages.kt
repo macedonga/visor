@@ -7,9 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.ContactsContract.PhoneLookup
 import android.provider.Telephony
 import android.telephony.PhoneNumberUtils
@@ -18,14 +16,17 @@ import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
+import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.RecentChats
 import com.macedonga.visor.notify.TextReplies
-import com.macedonga.visor.settings.hasDisplay
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.nio.ByteBuffer
 import java.util.Locale
@@ -33,10 +34,6 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -59,7 +56,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PhoneMessages @Inject constructor(
     @ApplicationContext private val context: Context,
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
     private val replies: TextReplies,
     private val calls: PhoneCalls,
     private val control: PhoneCallControl,
@@ -67,7 +64,7 @@ class PhoneMessages @Inject constructor(
     private val linkPrompt: LinkPrompt,
     private val glasses: Provider<GlassesConnection>,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Messages: failed: $e") })
+    private val scope = responderScope(log, "Messages")
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         // Call control has types with empty payloads, so it is checked before the text's.
@@ -80,14 +77,14 @@ class PhoneMessages @Inject constructor(
         if (type == MT_LOAD_CALL_LOG) return calls.loadCallLog(request, reply, connection)
         if (type == LinkPrompt.MT_TRIGGER) return linkPrompt.trigger(request, reply, connection)
         // The RPC envelope's field 1 is a request id string; the texts' requests carry a provider number there.
-        if (type in RPC_TYPES && request.bytes(1).isNotEmpty() && hasDisplay(glasses.get().state.value.info?.build)) {
+        if (type in RPC_TYPES && request.bytes(1).isNotEmpty() && isDisplayBuild(glasses.get().state.value.info?.build)) {
             return nativeRpc(request, type, reply, connection)
         }
-        if (type !in SERVED) return log.get().add("Messages: type $type not served")
+        if (type !in SERVED) return log.add("Messages: type $type not served")
         // The phone's texts, and replies to a chat notification (Messenger, WhatsApp, Instagram) through its reply action.
-        val provider = request.varint(1)
+        val provider = request.varint(1).toInt()
         val chat = type == MT_OUTGOING && provider in CHAT
-        if (provider != NATIVE && !chat) return log.get().add("Messages: provider $provider not served")
+        if (provider != GlassesNotification.PROVIDER_NATIVE && !chat) return log.add("Messages: provider $provider not served")
         scope.launch {
             when (type) {
                 MT_LOAD_THREADS -> threads(request, reply, connection)
@@ -103,14 +100,14 @@ class PhoneMessages @Inject constructor(
         val kind = request.varint(2)
         if (type != MT_LOAD_THREADS || kind != RPC_MIGRATION_INTENT) {
             mux.send(reply, Wire.fieldBytes(1, id) + Wire.fieldVarint(3, ERROR_API_ERRORED_OUT), messageType = type)
-            return log.get().add("Messages: WhatsApp request $kind refused, no WhatsApp on this phone")
+            return log.add("Messages: WhatsApp request $kind refused")
         }
         // TetheredMigrationIntentRequest {1 id, 2 serial, 3 protocol, 4 capabilities}.
         val intent = Wire.parse(request.bytes(3))
         val answer = Wire.fieldBytes(1, intent.bytes(1)) + Wire.fieldBytes(2, intent.bytes(2)) + Wire.fieldBytes(3, epoch) +
             Wire.fieldVarint(6, MIGRATION_PROTOCOL) + Wire.fieldVarint(7, intent.varint(4) and CAPABILITIES)
         mux.send(reply, Wire.fieldBytes(1, id) + Wire.fieldVarint(2, 1) + Wire.fieldBytes(4, answer), messageType = type)
-        log.get().add("Messages: WhatsApp transport query answered (no preference)")
+        log.add("Messages: WhatsApp transport query answered (no preference)")
     }
 
     // The controller epoch: any non-empty id; with transport 0 the Display does not keep it.
@@ -118,39 +115,43 @@ class PhoneMessages @Inject constructor(
 
     /** LoadThreadsRequest {2 request id, 3 count, 5 chunked}: the newest conversations, SMS, MMS and RCS alike. */
     private suspend fun threads(request: Wire.Fields, reply: Int, mux: DataXConnection) {
-        val id = requests.start("sms://threads", SOURCE_SMS)
-        val requestId = request.bytes(2)
-        if (!allowed(Manifest.permission.READ_SMS)) {
-            answer(mux, reply, MT_LOAD_THREADS, Wire.fieldBytes(1, requestId) + refused(), request.varint(5) != 0L)
-            return requests.finish(id, "SMS not allowed", failed = true)
+        val id = requests.start("sms://threads", RequestSource.SMS)
+        try {
+            val requestId = request.bytes(2)
+            if (!context.allows(Manifest.permission.READ_SMS)) {
+                answer(mux, reply, MT_LOAD_THREADS, Wire.fieldBytes(1, requestId) + refused(), request.varint(5) != 0L)
+                return requests.finish(id, "SMS not allowed", failed = true)
+            }
+            val count = request.varint(3).toInt().takeIf { it > 0 } ?: DEFAULT_THREADS
+            val stored = conversations(count, null)
+            // The remembered chats the store does not hold, by thread id or by a number it has.
+            val listed = stored.map { t ->
+                Listed(t.id.toString(), t.addresses, t.date, t.snippet.ifBlank { messagesOf(t.id, 1).firstOrNull()?.text.orEmpty() }, "", t.addresses.size > 1)
+            } + recent.chats().filter { c ->
+                stored.none { s -> s.id.toString() == c.id || s.addresses.any { a -> c.numbers.any { RecentChats.sameNumber(a, it) } } }
+            }.map { c ->
+                Listed(c.id, c.numbers, c.messages.firstOrNull()?.time ?: 0L, c.messages.firstOrNull()?.text.orEmpty(), c.title, c.group)
+            }
+            val threads = listed.sortedByDescending { it.date }.take(count)
+            val names = HashMap<String, String>()
+            var body = Wire.fieldBytes(1, requestId)
+            for (t in threads) {
+                val name = if (t.group && t.title.isNotBlank()) t.title else (t.numbers.joinToString(", ") { a -> names.getOrPut(a) { nameOf(a) } }.ifEmpty { t.title })
+                // SgThread: 1 id, 2 name, 3 type (1 group), 4 latest message, 5 its time, 6 Participant {1 id}.
+                body += Wire.fieldBytes(
+                    2,
+                    Wire.fieldString(1, t.id) + Wire.fieldString(2, name) +
+                        (if (t.group) Wire.fieldVarint(3, THREAD_GROUP) else ByteArray(0)) +
+                        Wire.fieldString(4, t.snippet) + Wire.fieldVarint(5, t.date) +
+                        t.numbers.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldBytes(6, Wire.fieldString(1, a)) },
+                )
+            }
+            body += Wire.fieldVarint(3, threads.maxOfOrNull { it.date } ?: 0)
+            answer(mux, reply, MT_LOAD_THREADS, body, request.varint(5) != 0L)
+            requests.finish(id, "${threads.size} threads", failed = false, bytes = body.size.toLong())
+        } catch (e: Exception) {
+            requests.finish(id, "failed: ${e.message}", failed = true)
         }
-        val count = request.varint(3).toInt().takeIf { it > 0 } ?: DEFAULT_THREADS
-        val stored = conversations(count, null)
-        // The remembered chats the store does not hold, by thread id or by a number it has.
-        val listed = stored.map { t ->
-            Listed(t.id.toString(), t.addresses, t.date, t.snippet.ifBlank { messagesOf(t.id, 1).firstOrNull()?.text.orEmpty() }, "", t.addresses.size > 1)
-        } + recent.chats().filter { c ->
-            stored.none { s -> s.id.toString() == c.id || s.addresses.any { a -> c.numbers.any { RecentChats.sameNumber(a, it) } } }
-        }.map { c ->
-            Listed(c.id, c.numbers, c.messages.firstOrNull()?.time ?: 0L, c.messages.firstOrNull()?.text.orEmpty(), c.title, c.group)
-        }
-        val threads = listed.sortedByDescending { it.date }.take(count)
-        val names = HashMap<String, String>()
-        var body = Wire.fieldBytes(1, requestId)
-        for (t in threads) {
-            val name = if (t.group && t.title.isNotBlank()) t.title else (t.numbers.joinToString(", ") { a -> names.getOrPut(a) { nameOf(a) } }.ifEmpty { t.title })
-            // SgThread: 1 id, 2 name, 3 type (1 group), 4 latest message, 5 its time, 6 Participant {1 id}.
-            body += Wire.fieldBytes(
-                2,
-                Wire.fieldBytes(1, t.id.encodeToByteArray()) + Wire.fieldBytes(2, name.encodeToByteArray()) +
-                    (if (t.group) Wire.fieldVarint(3, THREAD_GROUP) else ByteArray(0)) +
-                    Wire.fieldBytes(4, t.snippet.encodeToByteArray()) + Wire.fieldVarint(5, t.date) +
-                    t.numbers.fold(ByteArray(0)) { acc, a -> acc + Wire.fieldBytes(6, Wire.fieldBytes(1, a.encodeToByteArray())) },
-            )
-        }
-        body += Wire.fieldVarint(3, threads.maxOfOrNull { it.date } ?: 0)
-        answer(mux, reply, MT_LOAD_THREADS, body, request.varint(5) != 0L)
-        requests.finish(id, "${threads.size} threads", failed = false, bytes = body.size.toLong())
     }
 
     /** LoadMessagesRequest {2 request id, 3 count, 4 thread id, 8 chunked, 9 phone numbers}: oldest first. */
@@ -159,30 +160,34 @@ class PhoneMessages @Inject constructor(
         val numbers = request.repeatedBytes(9).map { it.decodeToString() }.filter { it.isNotBlank() }
         val chunked = request.varint(8) != 0L
         val key = request.bytes(4).decodeToString()
-        val id = requests.start("sms://thread/$key", SOURCE_SMS)
-        if (!allowed(Manifest.permission.READ_SMS)) {
-            answer(mux, reply, MT_LOAD_MESSAGES, Wire.fieldBytes(1, requestId) + refused(), chunked)
-            return requests.finish(id, "SMS not allowed", failed = true)
+        val id = requests.start("sms://thread/$key", RequestSource.SMS)
+        try {
+            if (!context.allows(Manifest.permission.READ_SMS)) {
+                answer(mux, reply, MT_LOAD_MESSAGES, Wire.fieldBytes(1, requestId) + refused(), chunked)
+                return requests.finish(id, "SMS not allowed", failed = true)
+            }
+            val thread = key.toLongOrNull()
+                ?: numbers.takeIf { it.isNotEmpty() }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(context, it.toSet()) }.getOrNull() }
+            val count = request.varint(3).toInt().takeIf { it > 0 }?.coerceAtMost(MAX_MESSAGES) ?: DEFAULT_MESSAGES
+            // A store thread that came back empty, or a chat the store does not hold, is answered from what its notifications showed.
+            val rows = (thread?.let { messagesOf(it, count) }.orEmpty()).ifEmpty { recentMessages(key, thread, numbers, count) }
+            var body = Wire.fieldBytes(1, requestId)
+            for (m in rows.asReversed()) {
+                // SgMessage: 1 id, 2 text, 3 time, 4 the address (the other side's, in or out), 7 attachment, 19 box, 20 service.
+                body += Wire.fieldBytes(
+                    2,
+                    Wire.fieldString(1, m.id) + Wire.fieldString(2, m.text) +
+                        Wire.fieldVarint(3, m.date) + Wire.fieldString(4, m.address) +
+                        (if (m.attachment) Wire.fieldVarint(7, 1) else ByteArray(0)) +
+                        Wire.fieldString(19, folder(m.box)) + Wire.fieldVarint(20, m.service),
+                )
+            }
+            body += Wire.fieldVarint(5, RESPONSE_FILE_BUS) + Wire.fieldString(7, thread?.toString() ?: key.ifEmpty { "0" })
+            answer(mux, reply, MT_LOAD_MESSAGES, body, chunked)
+            requests.finish(id, "${rows.size} messages", failed = false, bytes = body.size.toLong())
+        } catch (e: Exception) {
+            requests.finish(id, "failed: ${e.message}", failed = true)
         }
-        val thread = key.toLongOrNull()
-            ?: numbers.takeIf { it.isNotEmpty() }?.let { runCatching { Telephony.Threads.getOrCreateThreadId(context, it.toSet()) }.getOrNull() }
-        val count = request.varint(3).toInt().takeIf { it > 0 }?.coerceAtMost(MAX_MESSAGES) ?: DEFAULT_MESSAGES
-        // A store thread that came back empty, or a chat the store does not hold, is answered from what its notifications showed.
-        val rows = (thread?.let { messagesOf(it, count) }.orEmpty()).ifEmpty { recentMessages(key, thread, numbers, count) }
-        var body = Wire.fieldBytes(1, requestId)
-        for (m in rows.asReversed()) {
-            // SgMessage: 1 id, 2 text, 3 time, 4 the address (the other side's, in or out), 7 attachment, 19 box, 20 service.
-            body += Wire.fieldBytes(
-                2,
-                Wire.fieldBytes(1, m.id.encodeToByteArray()) + Wire.fieldBytes(2, m.text.encodeToByteArray()) +
-                    Wire.fieldVarint(3, m.date) + Wire.fieldBytes(4, m.address.encodeToByteArray()) +
-                    (if (m.attachment) Wire.fieldVarint(7, 1) else ByteArray(0)) +
-                    Wire.fieldBytes(19, folder(m.box).encodeToByteArray()) + Wire.fieldVarint(20, m.service),
-            )
-        }
-        body += Wire.fieldVarint(5, RESPONSE_FILE_BUS) + Wire.fieldBytes(7, (thread?.toString() ?: key.ifEmpty { "0" }).encodeToByteArray())
-        answer(mux, reply, MT_LOAD_MESSAGES, body, chunked)
-        requests.finish(id, "${rows.size} messages", failed = false, bytes = body.size.toLong())
     }
 
     /** A chat from the notifications, newest first, in the same shape as the store's messages. */
@@ -203,26 +208,25 @@ class PhoneMessages @Inject constructor(
         val to = request.repeatedBytes(7).map { it.decodeToString() }.filter { it.isNotBlank() }.ifEmpty { addressesOf(thread) }
         // A conversation with its notification up answers through the Messages app, as RCS when it is one. A chat only does that.
         val viaApp = text.isNotBlank() && (chat || replies.has(thread))
-        val id = requests.start("${if (viaApp) "messages" else "sms"}://send/${to.joinToString(",").ifEmpty { thread }}", SOURCE_SMS)
+        val id = requests.start("${if (viaApp) "messages" else "sms"}://send/${to.joinToString(",").ifEmpty { thread }}", RequestSource.SMS)
         val error = when {
             viaApp -> replies.reply(context, thread, text)
-            chat -> if (text.isBlank()) "Empty message" else "No reply in that conversation"
-            !allowed(Manifest.permission.SEND_SMS) -> "SMS not allowed in Visor"
+            text.isBlank() -> "Empty message"
+            !context.allows(Manifest.permission.SEND_SMS) -> "SMS not allowed in Visor"
             to.isEmpty() -> "No recipient"
             to.size > 1 -> "Group texts are not supported"
-            text.isBlank() -> "Empty message"
             else -> deliver(to.single(), text)
         }
         val body = Wire.fieldBytes(1, requestId) + Wire.fieldVarint(2, if (error == null) OUT_SUCCESS else OUT_FAILURE) +
-            (error?.let { Wire.fieldBytes(3, it.encodeToByteArray()) } ?: ByteArray(0))
+            (error?.let { Wire.fieldString(3, it) } ?: ByteArray(0))
         // The glasses may have closed the channel by now; the status is then theirs to miss.
         runCatching { mux.send(reply, body, messageType = MT_OUTGOING) }
-        requests.finish(id, error ?: "sent", failed = error != null, bytes = text.length.toLong())
+        requests.finish(id, error ?: "sent", failed = error != null, bytes = text.encodeToByteArray().size.toLong())
     }
 
     /** Sends one text and waits for the radio's word on every part: null when all went, else why not. */
     private suspend fun deliver(to: String, text: String): String? {
-        val sms = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
+        val sms = context.getSystemService(SmsManager::class.java)
         val parts = sms.divideMessage(text)
         val action = "${context.packageName}.SMS_SENT.${UUID.randomUUID()}"
         val results = Channel<Int>(parts.size)
@@ -241,11 +245,11 @@ class PhoneMessages @Inject constructor(
             // Android files a text a non-default app sends in the SMS store itself.
             if (parts.size == 1) sms.sendTextMessage(to, null, text, sent[0], null) else sms.sendMultipartTextMessage(to, null, parts, sent, null)
             val codes = withTimeoutOrNull(SEND_TIMEOUT_MS) { List(parts.size) { results.receive() } } ?: return "No answer from the phone's radio"
-            return when (codes.firstOrNull { it != Activity.RESULT_OK }) {
+            return when (val code = codes.firstOrNull { it != Activity.RESULT_OK }) {
                 null -> null
                 SmsManager.RESULT_ERROR_RADIO_OFF -> "The phone's radio is off"
                 SmsManager.RESULT_ERROR_NO_SERVICE -> "No service"
-                else -> "Not sent (error ${codes.first { it != Activity.RESULT_OK }})"
+                else -> "Not sent (error $code)"
             }
         } catch (e: Exception) {
             return e.message ?: e.toString()
@@ -266,7 +270,7 @@ class PhoneMessages @Inject constructor(
 
     /** The numbers of a thread's other side. */
     fun addressesOf(thread: String): List<String> {
-        val stored = thread.toLongOrNull()?.takeIf { allowed(Manifest.permission.READ_SMS) }?.let { conversations(1, it).firstOrNull()?.addresses }
+        val stored = thread.toLongOrNull()?.takeIf { context.allows(Manifest.permission.READ_SMS) }?.let { conversations(1, it).firstOrNull()?.addresses }
         return stored ?: recent.find(thread)?.numbers.orEmpty()
     }
 
@@ -275,7 +279,7 @@ class PhoneMessages @Inject constructor(
     /** A thread for the list: from the store, or a remembered chat (its id is the notification's thread). */
     private class Listed(val id: String, val numbers: List<String>, val date: Long, val snippet: String, val title: String, val group: Boolean)
 
-    /** Conversations newest first, from Android's thread list, which holds SMS, MMS and the RCS chats Messages files as MMS. */
+    /** Recipient ids to addresses, from Android's canonical-addresses table. */
     private fun canonical(): Map<Long, String> {
         val canonical = HashMap<Long, String>()
         context.contentResolver.query(CANONICAL_ADDRESSES, arrayOf("_id", "address"), null, null, null)?.use { c ->
@@ -287,14 +291,11 @@ class PhoneMessages @Inject constructor(
     /** For the debug receiver: the newest rows of the thread list as Visor reads them, ids and counts only. */
     fun describeThreads(count: Int): String {
         val canonical = canonical()
-        val columns = arrayOf(Telephony.Threads._ID, Telephony.Threads.DATE, Telephony.Threads.RECIPIENT_IDS, Telephony.Threads.SNIPPET, Telephony.Threads.MESSAGE_COUNT)
-        fun rows(uri: Uri, where: String? = null) = context.contentResolver.query(uri, arrayOf("_id"), where, null, null)?.use { it.count } ?: -1
+        fun rows(uri: Uri) = context.contentResolver.query(uri, arrayOf("_id"), null, null, null)?.use { it.count } ?: -1
         val lines = mutableListOf(
             "canonical addresses: ${canonical.size}, sms ${rows(Telephony.Sms.CONTENT_URI)}, mms ${rows(Telephony.Mms.CONTENT_URI)}",
-            "thread 489: sms ${rows(Telephony.Sms.CONTENT_URI, "thread_id=489")}, mms ${rows(Telephony.Mms.CONTENT_URI, "thread_id=489")}; " +
-                "thread 509: sms ${rows(Telephony.Sms.CONTENT_URI, "thread_id=509")}; listed ${rows(CONVERSATIONS, "_id IN (489,509)")}",
         )
-        context.contentResolver.query(CONVERSATIONS, columns, null, null, "${Telephony.Threads.DATE} DESC")?.use { c ->
+        context.contentResolver.query(CONVERSATIONS, THREAD_COLUMNS, null, null, "${Telephony.Threads.DATE} DESC")?.use { c ->
             lines += "rows: ${c.count}"
             while (c.moveToNext() && lines.size < count + 2) {
                 val ids = c.getString(2).orEmpty()
@@ -305,12 +306,12 @@ class PhoneMessages @Inject constructor(
         return lines.joinToString("\n")
     }
 
+    /** Conversations newest first, from Android's thread list, which holds SMS, MMS and the RCS chats Messages files as MMS. */
     private fun conversations(count: Int, only: Long?): List<Conversation> {
         val canonical = canonical()
         val out = mutableListOf<Conversation>()
         val where = only?.let { "${Telephony.Threads._ID} = $it" }
-        val columns = arrayOf(Telephony.Threads._ID, Telephony.Threads.DATE, Telephony.Threads.RECIPIENT_IDS, Telephony.Threads.SNIPPET, Telephony.Threads.MESSAGE_COUNT)
-        context.contentResolver.query(CONVERSATIONS, columns, where, null, "${Telephony.Threads.DATE} DESC")?.use { c ->
+        context.contentResolver.query(CONVERSATIONS, THREAD_COLUMNS, where, null, "${Telephony.Threads.DATE} DESC")?.use { c ->
             while (c.moveToNext() && out.size < count) {
                 if (c.getInt(4) == 0) continue
                 val addresses = c.getString(2).orEmpty().split(' ').mapNotNull { canonical[it.toLongOrNull()]?.takeIf(String::isNotBlank) }
@@ -371,24 +372,24 @@ class PhoneMessages @Inject constructor(
         return ""
     }
 
-    private class Sms(val id: Long, val thread: Long, val address: String, val body: String, val date: Long, val box: Int)
+    private class Sms(val id: Long, val address: String, val body: String, val date: Long, val box: Int)
 
     /** SMS rows newest first, handed to [more] until it says stop. */
-    private fun read(selection: String?, args: Array<String>?, more: (Sms) -> Boolean) {
-        val columns = arrayOf(Telephony.Sms._ID, Telephony.Sms.THREAD_ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE)
+    private fun read(selection: String, args: Array<String>, more: (Sms) -> Boolean) {
+        val columns = arrayOf(Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE)
         context.contentResolver.query(Telephony.Sms.CONTENT_URI, columns, selection, args, "${Telephony.Sms.DATE} DESC")?.use { c ->
             while (c.moveToNext()) {
-                val address = c.getString(2).orEmpty()
+                val address = c.getString(1).orEmpty()
                 // A draft with no number yet is not a conversation.
                 if (address.isBlank()) continue
-                if (!more(Sms(c.getLong(0), c.getLong(1), address, c.getString(3).orEmpty(), c.getLong(4), c.getInt(5)))) break
+                if (!more(Sms(c.getLong(0), address, c.getString(2).orEmpty(), c.getLong(3), c.getInt(4)))) break
             }
         }
     }
 
     /** The contact's name for a number, else the number as the phone writes it. */
     private fun nameOf(number: String): String {
-        if (allowed(Manifest.permission.READ_CONTACTS)) {
+        if (context.allows(Manifest.permission.READ_CONTACTS)) {
             val uri = Uri.withAppendedPath(PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
             runCatching {
                 context.contentResolver.query(uri, arrayOf(PhoneLookup.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null }
@@ -398,11 +399,13 @@ class PhoneMessages @Inject constructor(
         return PhoneNumberUtils.formatNumber(number, country) ?: number
     }
 
-    private fun allowed(permission: String) = context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-
     /** SgError {1 title, 2 message} in a reply's field 6. */
     private fun refused(): ByteArray =
-        Wire.fieldBytes(6, Wire.fieldBytes(1, "SMS not allowed".encodeToByteArray()) + Wire.fieldBytes(2, "Allow SMS for Visor on the phone.".encodeToByteArray()))
+        Wire.fieldBytes(
+            6,
+            Wire.fieldString(1, context.getString(R.string.texts_refused_title)) +
+                Wire.fieldString(2, context.getString(R.string.texts_refused)),
+        )
 
     companion object {
         const val SVC = 70
@@ -418,8 +421,7 @@ class PhoneMessages @Inject constructor(
         private const val ERROR_API_ERRORED_OUT = 12L
         private const val MIGRATION_PROTOCOL = 1L
         private const val CAPABILITIES = 15L
-        private const val NATIVE = 3L
-        private val CHAT = setOf(1L, 2L, 4L)
+        private val CHAT = setOf(GlassesNotification.PROVIDER_MESSENGER, GlassesNotification.PROVIDER_WHATSAPP, GlassesNotification.PROVIDER_INSTAGRAM)
         private const val DEFAULT_THREADS = 10
         private const val DEFAULT_MESSAGES = 25
         private const val MAX_MESSAGES = 100
@@ -430,6 +432,9 @@ class PhoneMessages @Inject constructor(
         private const val PDU_TO = 151
         private const val INSERT_ADDRESS = "insert-address-token"
         private val CONVERSATIONS: Uri = Telephony.Threads.CONTENT_URI.buildUpon().appendQueryParameter("simple", "true").build()
+        private val THREAD_COLUMNS = arrayOf(
+            Telephony.Threads._ID, Telephony.Threads.DATE, Telephony.Threads.RECIPIENT_IDS, Telephony.Threads.SNIPPET, Telephony.Threads.MESSAGE_COUNT,
+        )
         private val CANONICAL_ADDRESSES: Uri = Uri.parse("content://mms-sms/canonical-addresses")
         private val MMS_PARTS: Uri = Uri.parse("content://mms/part")
         private const val RESPONSE_FILE_BUS = 2L
@@ -438,7 +443,6 @@ class PhoneMessages @Inject constructor(
         private const val SEND_TIMEOUT_MS = 30_000L
         private const val CHUNK = 1000
         private const val CHUNK_HEAD = 52
-        private const val SOURCE_SMS = -4
 
         // Telephony's box numbers as the Meta app names them. Lowercase: the glasses mark a message as sent only for
         // "sent", and any other one of ours shows as still sending.

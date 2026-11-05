@@ -8,7 +8,6 @@ import android.os.Looper
 import android.speech.ModelDownloadListener
 import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
-import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -17,12 +16,17 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Why the phone cannot hear or speak a phone language. */
+enum class PhoneSpeech { OLD_ANDROID, NO_RECOGNITION, NO_RECOGNITION_FOR_LANGUAGE, NO_VOICE }
+
+class PhoneSpeechException(val problem: PhoneSpeech, detail: String) : IllegalStateException(detail)
+
 /**
  * The phone's on-device speech models. Visor hears what the glasses leave to the server with them, in the glasses'
  * language: at launch, and whenever the glasses say their language, the model is checked and fetched if missing.
  */
 object SpeechModels {
-    /** The languages the on-device recogniser holds; null until read. */
+    /** The languages the on-device recogniser holds; empty until read. */
     @Volatile
     var installed: List<String> = emptyList()
         private set
@@ -31,17 +35,16 @@ object SpeechModels {
 
     private const val DESTROY_DELAY_MS = 5_000L
 
-    suspend fun check(context: Context, locale: Locale): Boolean = withContext(Dispatchers.Main.immediate) {
-        if (Build.VERSION.SDK_INT < 33) error("recognizing 3P audio from the glasses requires Android 13 or newer")
+    /** True when a recogniser confirms [locale]; false when none could say; throws when none has it. */
+    suspend fun supports(context: Context, locale: Locale): Boolean = withContext(Dispatchers.Main.immediate) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) throw PhoneSpeechException(PhoneSpeech.OLD_ANDROID, "hearing the glasses needs Android 13 or newer")
         val wanted = speechTag(locale)
         val services = buildList {
             if (SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) add(true)
             if (SpeechRecognizer.isRecognitionAvailable(context)) add(false)
         }
-        check(services.isNotEmpty()) { "the phone has no speech recognition service" }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, wanted)
+        if (services.isEmpty()) throw PhoneSpeechException(PhoneSpeech.NO_RECOGNITION, "the phone has no speech recognition service")
+        val intent = recognizeIntent(wanted)
         var unknown = false
         for (onDevice in services) {
             val r = if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else SpeechRecognizer.createSpeechRecognizer(context)
@@ -69,7 +72,7 @@ object SpeechModels {
             if (supported == true) return@withContext true
             if (supported == null) unknown = true
         }
-        check(unknown) { "the phone has no speech recognition for $wanted" }
+        if (!unknown) throw PhoneSpeechException(PhoneSpeech.NO_RECOGNITION_FOR_LANGUAGE, "the phone has no speech recognition for $wanted")
         false
     }
 
@@ -79,9 +82,7 @@ object SpeechModels {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@post note("this Android cannot list its speech models")
         if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@post note("this phone has no on-device speech recognition")
         val wanted = speechTag(locale)
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, wanted)
+        val intent = recognizeIntent(wanted)
         val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         r.checkRecognitionSupport(intent, context.mainExecutor, object : RecognitionSupportCallback {
             override fun onSupportResult(support: RecognitionSupport) {
@@ -110,8 +111,7 @@ object SpeechModels {
         note("downloading the phone's speech model for $wanted")
         // Android 13 starts the download but has no listener for how it goes (ModelDownloadListener is 14).
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // The recogniser queues the download on the main thread; destroyed before it runs, it calls a service
-            // already let go and the app crashes (issue #36). It goes once the download has been handed over.
+            // Destroyed before its queued download runs, the recogniser crashes the app, so it goes a little later.
             r.triggerModelDownload(intent)
             main.postDelayed({ r.destroy() }, DESTROY_DELAY_MS)
             return

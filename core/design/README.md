@@ -1,5 +1,3 @@
-The token layer: colour, type, shape, motion and haptics.
+The token layer: colour and type.
 
-Manrope ships here as the OFL variable file in res/font. Its licence travels with the APK
-in assets/licenses, because the OFL requires the licence to accompany the font wherever it
-is redistributed.
+Inter ships as the OFL variable file in res/font; its licence travels in assets/licenses, as the OFL requires.

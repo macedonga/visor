@@ -71,6 +71,9 @@ internal class McpConnection(
     private var transport: RpcTransport? = null
 
     @Volatile
+    private var closed = false
+
+    @Volatile
     var info: ServerInfo? = null
         private set
 
@@ -129,6 +132,7 @@ internal class McpConnection(
     }
 
     fun close() {
+        closed = true
         transport?.close()
         transport = null
     }
@@ -136,6 +140,11 @@ internal class McpConnection(
     private suspend fun connected(): Pair<RpcTransport, Boolean> = lock.withLock {
         transport?.takeIf { it.alive }?.let { return@withLock it to false }
         val t = open()
+        // Closed while it was opening: nothing would close this one.
+        if (closed) {
+            t.close()
+            throw McpException(McpException.Kind.UNREACHABLE, "closed")
+        }
         transport = t
         t to true
     }
@@ -157,9 +166,9 @@ internal class McpConnection(
                 if (t is LegacySse) t.open()
                 initialize(t)
                 return t
-            } catch (error: McpException) {
+            } catch (error: Throwable) {
                 t.close()
-                if (error.kind != McpException.Kind.NOT_MCP) throw error
+                if (error !is McpException || error.kind != McpException.Kind.NOT_MCP) throw error
                 if (first == null) first = error
             }
         }
@@ -167,11 +176,7 @@ internal class McpConnection(
     }
 
     private suspend fun initialize(t: RpcTransport) {
-        val params = JSONObject()
-            .put("protocolVersion", LATEST)
-            .put("capabilities", JSONObject())
-            .put("clientInfo", JSONObject().put("name", "visor").put("title", "Visor").put("version", version))
-        val result = exchange(t, "initialize", params, INIT_MS)
+        val result = exchange(t, "initialize", initializeParams(version), INIT_MS)
         val protocol = result.str("protocolVersion").ifEmpty { LATEST }
         t.protocolVersion = protocol
         t.send(rpcMessage("notifications/initialized"))
@@ -199,7 +204,7 @@ internal class McpConnection(
             throw McpException(McpException.Kind.TIMEOUT, "no answer to $method in ${timeoutMs / 1000} s")
         }
         response.optJSONObject("error")?.let { e ->
-            throw McpException(McpException.Kind.ERROR, e.str("message").ifEmpty { "error ${e.optInt("code")}" }, code = e.optInt("code"))
+            throw McpException(McpException.Kind.ERROR, e.str("message").ifEmpty { "error ${e.optInt("code")}" })
         }
         return response.optJSONObject("result") ?: JSONObject()
     }
@@ -220,15 +225,15 @@ internal class McpConnection(
 
     private fun toolOf(o: JSONObject): McpTool? {
         val name = o.str("name").ifEmpty { return null }
-        val notes = o.optJSONObject("annotations") ?: JSONObject()
+        val annotations = o.optJSONObject("annotations") ?: JSONObject()
         val schema = o.optJSONObject("inputSchema") ?: JSONObject().put("type", "object")
         if (!schema.has("properties")) schema.put("properties", JSONObject())
         return McpTool(
             name = name,
-            title = o.str("title").ifEmpty { notes.str("title") },
+            title = o.str("title").ifEmpty { annotations.str("title") },
             description = o.str("description"),
             schema = schema,
-            readOnly = notes.optBoolean("readOnlyHint", false),
+            readOnly = annotations.optBoolean("readOnlyHint", false),
         )
     }
 
@@ -262,5 +267,10 @@ internal class McpConnection(
         )
 
         fun now() = System.currentTimeMillis()
+
+        fun initializeParams(version: String): JSONObject = JSONObject()
+            .put("protocolVersion", LATEST)
+            .put("capabilities", JSONObject())
+            .put("clientInfo", JSONObject().put("name", "visor").put("title", "Visor").put("version", version))
     }
 }

@@ -5,7 +5,6 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.view.TextureView
-import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -20,29 +19,20 @@ import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/**
- * The glasses from [LocalStage]: the 3D pair over nothing, the pool of light around and under it drawn separately by
- * [LightPool]. Only [SharedStage] shows it; tilting the phone leans the pair a few degrees.
- */
+/** The 3D pair from [LocalStage] over nothing, its pool drawn by [LightPool]; only [SharedStage] shows it. */
 @Composable
 internal fun GlassesStage(liveliness: Float, active: Boolean, modifier: Modifier = Modifier) {
     val stage = LocalStage.current
     val light = stage.light
     val pose = stage.pose
     val renderer = stage.renderer
-    LaunchedEffect(renderer) { snapshotFlow { light.tick.longValue }.collect { renderer.invalidate() } }
     // The tilt sensor listens only while the pair is on screen.
     if (active) Tilt(light, pose, renderer)
     Drift(light, pose, liveliness, renderer)
-    Box(modifier) {
-        AndroidView(factory = { TextureView(it).also(renderer::attach) }, onRelease = { renderer.detach(it) })
-    }
+    AndroidView(factory = { TextureView(it).also(renderer::attach) }, modifier = modifier, onRelease = { renderer.detach(it) })
 }
 
-/**
- * The pair's own motion: a slow turn, lean, roll and float, each a pair of waves whose periods share no
- * common beat, so it never visibly repeats. [liveliness] scales it, eased so a change of mood never jumps.
- */
+/** The pair's own slow turn, lean, roll and float, from waves with no common beat; [liveliness] scales it, eased. */
 @Composable
 private fun Drift(light: LightFrame, pose: GlassesPose, liveliness: Float, renderer: GlassesRenderer) {
     val target = rememberUpdatedState(liveliness)
@@ -62,11 +52,7 @@ private fun Drift(light: LightFrame, pose: GlassesPose, liveliness: Float, rende
 
 private fun wave(t: Float, periodSeconds: Float, phase: Float = 0f) = sin(2 * PI.toFloat() * t / periodSeconds + phase)
 
-/**
- * The phone's tilt as parallax: tip it sideways and the pair turns a little and drifts the same way,
- * tip it towards you and it leans. Measured from gravity against a rest that follows slowly, so any
- * way of holding the phone becomes level after a few seconds. Listens only while the screen is started.
- */
+/** The phone's tilt as parallax, against a rest that follows slowly so any grip levels out; only while started. */
 @Composable
 private fun Tilt(light: LightFrame, pose: GlassesPose, renderer: GlassesRenderer) {
     val context = LocalContext.current

@@ -24,6 +24,16 @@ data class GlassesRequest(
     val times: Int = 1,
 )
 
+/** Request log sources other than the data fetcher's, whose numbers the glasses give. */
+object RequestSource {
+    const val TUNNEL = -1
+    const val META = -2
+    const val LOCATION = -3
+    const val SMS = -4
+    const val CALLS = -5
+    const val MAPS = -6
+}
+
 /** The requests the glasses made through the phone, newest last, in memory only: their links can carry tokens. */
 @Singleton
 class RequestLog @Inject constructor() {
@@ -40,18 +50,19 @@ class RequestLog @Inject constructor() {
     fun finish(id: Long, outcome: String, failed: Boolean, bytes: Long = 0) {
         _items.update { list ->
             val done = list.map { if (it.id == id) it.copy(outcome = outcome, failed = failed, bytes = bytes, millis = System.currentTimeMillis() - it.at) else it }
-            // The same request ending the same way as the one before it is counted on that one, not listed again.
-            val at = done.indexOfFirst { it.id == id }
-            val earlier = done.subList(0, maxOf(at, 0)).lastOrNull { it.url == done[at].url }
-            if (at > 0 && earlier != null && earlier.outcome == outcome && earlier.failed == failed) {
-                done.mapNotNull { e ->
-                    when (e.id) {
-                        id -> null
-                        earlier.id -> e.copy(times = e.times + 1, at = done[at].at)
-                        else -> e
-                    }
+            // A repeat that ended the same way is counted on the earlier entry, which moves to the repeat's place.
+            val index = done.indexOfFirst { it.id == id }
+            if (index <= 0) return@update done
+            val now = done[index]
+            val earlier = done.subList(0, index).lastOrNull { it.url == now.url }
+                ?.takeIf { it.outcome == outcome && it.failed == failed } ?: return@update done
+            done.mapNotNull {
+                when (it.id) {
+                    earlier.id -> null
+                    id -> earlier.copy(times = earlier.times + 1, at = now.at)
+                    else -> it
                 }
-            } else done
+            }
         }
     }
 

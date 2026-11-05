@@ -3,14 +3,15 @@ package com.macedonga.visor.connection
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.LocationManager
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.util.Locale
@@ -19,28 +20,19 @@ import java.util.zip.GZIPOutputStream
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * svc9002, panels: the Display's home asks which panels the phone offers (type 1, answered 2) and opens one (type 0,
- * answered with a UICommand on 0). The one panel is the Briefing, the Glanceables (weather, reminders and the rest):
- * Meta's XFBGlanceablesQuery run with the user's login, its preview and each card's Bloks payload gzipped into a
- * BloksPayload, the cards' list beside it. A cache prewarm (3) is answered 4.
- */
+/** svc9002, the Display home's Briefing panel: Meta's XFBGlanceablesQuery cards, gzipped as Bloks. */
 @Singleton
 class Panels @Inject constructor(
     @ApplicationContext private val context: Context,
     private val login: Provider<MetaLogin>,
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Panels: failed: $e") })
+    private val scope = responderScope(log, "Panels")
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val reply = DataXConnection.mirror(message.info.channelId)
@@ -56,11 +48,11 @@ class Panels @Inject constructor(
 
     /** PanelInfo: 1 id, 2 name, 3 ttl s, 4 renderer (Bloks), 5 data provider (DataX), 6 cache policy (enabled). */
     private fun briefingInfo(): ByteArray =
-        Wire.fieldVarint(1, BRIEFING.toLong()) + Wire.fieldBytes(2, "Briefing".encodeToByteArray()) + Wire.fieldVarint(3, TTL_S) +
+        Wire.fieldVarint(1, BRIEFING.toLong()) + Wire.fieldString(2, "Briefing") + Wire.fieldVarint(3, TTL_S) +
             Wire.fieldVarint(4, RENDERER_BLOKS) + Wire.fieldVarint(5, PROVIDER_DATAX) + Wire.fieldVarint(6, CACHE_ENABLED)
 
     private suspend fun open(host: Host, reply: Int, mux: DataXConnection) {
-        val id = requests.start("bloks://glanceables", SOURCE_META)
+        val id = requests.start("bloks://glanceables", RequestSource.META)
         val started = System.nanoTime()
         try {
             val g = fetch(host)
@@ -72,9 +64,9 @@ class Panels @Inject constructor(
                 val cardId = p.optString("id")
                 val hash = p.optString("content_hash")
                 hashes[cardId] = hash
-                bloks += Wire.fieldBytes(1, Wire.fieldBytes(1, cardId.encodeToByteArray()) + Wire.fieldBytes(2, p.optString("payload").encodeToByteArray()) + Wire.fieldBytes(3, hash.encodeToByteArray()))
+                bloks += Wire.fieldBytes(1, Wire.fieldString(1, cardId) + Wire.fieldString(2, p.optString("payload")) + Wire.fieldString(3, hash))
             }
-            bloks += Wire.fieldBytes(2, g.optString("preview").encodeToByteArray())
+            bloks += Wire.fieldString(2, g.optString("preview"))
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bloks) } }.toByteArray()
 
             var data = Wire.fieldBytes(1, gz)
@@ -84,9 +76,9 @@ class Panels @Inject constructor(
                 val name = c.optString("name")
                 data += Wire.fieldBytes(
                     2,
-                    Wire.fieldBytes(1, c.optString("id").encodeToByteArray()) + Wire.fieldBytes(2, name.encodeToByteArray()) +
-                        Wire.fieldBytes(3, "Shows ${name.lowercase()} information".encodeToByteArray()) + Wire.fieldVarint(4, if (c.optBoolean("enabled")) 1 else 0) +
-                        Wire.fieldBytes(6, hashes[c.optString("id")].orEmpty().encodeToByteArray()) + Wire.fieldBytes(7, c.optString("icon_uri").encodeToByteArray()),
+                    Wire.fieldString(1, c.optString("id")) + Wire.fieldString(2, name) +
+                        Wire.fieldString(3, "Shows ${name.lowercase()} information") + Wire.fieldVarint(4, if (c.optBoolean("enabled")) 1 else 0) +
+                        Wire.fieldString(6, hashes[c.optString("id")].orEmpty()) + Wire.fieldString(7, c.optString("icon_uri")),
                 )
             }
             data += Wire.fieldVarint(3, g.optLong("fresh_ttl")) + Wire.fieldVarint(4, g.optLong("ttl"))
@@ -97,7 +89,7 @@ class Panels @Inject constructor(
             requests.finish(id, "from Meta, ${payloads.length()} cards", failed = false, bytes = gz.size.toLong())
         } catch (error: Exception) {
             requests.finish(id, "failed: ${error.message}", failed = true)
-            val details = Wire.fieldBytes(1, (error.message ?: "failed").encodeToByteArray())
+            val details = Wire.fieldString(1, error.message ?: "failed")
             runCatching { mux.send(reply, Wire.fieldVarint(1, COMMAND_ERROR) + Wire.fieldBytes(11, details), messageType = MT_OPEN) }
         }
     }
@@ -125,8 +117,9 @@ class Panels @Inject constructor(
     /** The phone's last known place, for the weather; none without the permission. */
     @SuppressLint("MissingPermission")
     private fun here(): Pair<Double, Double>? {
-        if (context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return null
+        if (!context.allows(Manifest.permission.ACCESS_COARSE_LOCATION)) return null
         val lm = context.getSystemService(LocationManager::class.java) ?: return null
+        // The newest fix of any enabled provider: fused alone often has none of its own.
         val best = lm.getProviders(true).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }.maxByOrNull { it.time } ?: return null
         // Two decimals, as the Display itself sends them: a kilometre is plenty for the weather.
         return Math.round(best.latitude * 100) / 100.0 to Math.round(best.longitude * 100) / 100.0
@@ -165,6 +158,5 @@ class Panels @Inject constructor(
         private const val OS_ANDROID = 1L
         private const val DEVICE_WRIST = 2L
         private const val GLANCEABLES_DOC = "168198258811666417495687582669"
-        private const val SOURCE_META = -2
     }
 }

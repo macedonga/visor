@@ -59,9 +59,8 @@ object BloksJson {
                 '\t' -> out.append("\\t")
                 '\b' -> out.append("\\b")
                 '\u000c' -> out.append("\\f")
-                ' ' -> out.append("\\u2028")
-                ' ' -> out.append("\\u2029")
-                else -> if (c < ' ') out.append(String.format("\\u%04x", c.code)) else out.append(c)
+                // JsonWriter escapes the line and paragraph separators too.
+                else -> if (c < ' ' || c == '\u2028' || c == '\u2029') out.append(String.format("\\u%04x", c.code)) else out.append(c)
             }
         }
         out.append('"')

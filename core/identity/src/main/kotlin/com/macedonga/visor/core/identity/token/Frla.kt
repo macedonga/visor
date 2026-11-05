@@ -1,50 +1,53 @@
 package com.macedonga.visor.core.identity.token
 
 import com.macedonga.visor.core.identity.BuildConfig
-import com.macedonga.visor.core.identity.HttpPost
 import com.macedonga.visor.core.identity.UrlConnectionPost
 import com.macedonga.visor.core.identity.pyUrlencode
+import com.macedonga.visor.core.identity.text
 import java.util.UUID
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-
-/** FRLA to ARAe, the exchange confirmed live on 2026-09-15. */
 
 /** The Meta app's own token, so not a user secret. The build reads it from local.properties. */
 private fun arAppToken(): String = BuildConfig.META_AR_TOKEN.ifEmpty {
     throw TokenError("This build has no Meta app token. Add VISOR_META_AR_TOKEN to local.properties and build again.")
 }
 
-const val DEFAULT_AR_HOST = "ar.graph.meta.com"
+internal const val AR_HOST = "ar.graph.meta.com"
 
-private fun post(url: String, fields: Map<String, String>, http: HttpPost): JsonObject {
+/** Meta turned the FRLA down. */
+internal class LoginRefused(message: String) : TokenError(message)
+
+/** The Meta app's user agent, sent on Meta's auth calls. */
+private const val META_USER_AGENT =
+    "Dalvik/2.1.0 (Linux; U; Android 15) " +
+        "[FBAN/Stella;FBAV/289.0.0.25.162;FBSN/Android;FBSV/15;FBLC/en_US]"
+
+/** A form POST to one of Meta's auth endpoints, the answer as JSON. */
+internal fun authPost(url: String, fields: Map<String, String>, authorization: String? = null): JsonObject {
+    val headers = buildMap<String, String> {
+        authorization?.let { put("Authorization", it) }
+        put("Content-Type", "application/x-www-form-urlencoded")
+        put("User-Agent", META_USER_AGENT)
+    }
     val reply = try {
-        http.post(
-            url,
-            mapOf(
-                "Content-Type" to "application/x-www-form-urlencoded",
-                "User-Agent" to META_USER_AGENT,
-            ),
-            pyUrlencode(fields).toByteArray(Charsets.US_ASCII),
-        )
+        UrlConnectionPost.post(url, headers, pyUrlencode(fields).toByteArray(Charsets.US_ASCII))
     } catch (error: Exception) {
-        // The interesting answers arrive as 4xx/5xx with a JSON body and are read, not thrown;
-        // only failing to reach the server at all lands here.
-        throw TokenError("$url: ${error.javaClass.simpleName}: ${error.message}", unreachable = true)
+        // Refusals come back as replies; only a server never reached lands here.
+        throw TokenError("Meta could not be reached: ${error.message}", unreachable = true)
     }
     return try {
         Json.parseToJsonElement(String(reply.body, Charsets.UTF_8)).jsonObject
     } catch (error: Exception) {
-        throw TokenError("$url: response was not JSON")
+        throw TokenError("$url: HTTP ${reply.status}, not JSON")
     }
 }
 
-/** The FRLA to ARAe call itself, split out so a web login can reuse it verbatim. */
-fun exchangeFrla(frla: String, host: String = DEFAULT_AR_HOST, http: HttpPost = UrlConnectionPost): Token {
-    val payload = post(
-        "https://$host/login",
+/** Trade an FRLA for an AR access token. */
+fun exchangeFrla(frla: String): Token {
+    val payload = authPost(
+        "https://$AR_HOST/login",
         linkedMapOf(
             "access_token" to arAppToken(),
             "frl_access_token" to frla,
@@ -54,18 +57,11 @@ fun exchangeFrla(frla: String, host: String = DEFAULT_AR_HOST, http: HttpPost = 
             "generate_session_cookies" to "1",
             "generate_analytics_claim" to "1",
         ),
-        http,
     )
-    payload["error"]?.let { error ->
-        val message = (error as? JsonObject)?.get("message")
-            ?.let { (it as? JsonPrimitive)?.content ?: it.toString() }
-            ?: (error as? JsonPrimitive)?.content
-            ?: error.toString()
-        throw TokenError("exchange refused: $message")
-    }
+    payload.errorMessage()?.let { throw LoginRefused("exchange refused: $it") }
     val value = payload.text("access_token")
     if (value.isNullOrEmpty()) {
-        throw TokenError("no access_token in the response; keys: ${payload.sortedKeys()}")
+        throw LoginRefused("no access_token in the response; keys: ${payload.sortedKeys()}")
     }
-    return Token(value, "ar")
+    return Token(value)
 }

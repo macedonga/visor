@@ -4,9 +4,7 @@
 "label":"Color correction",
 "note":"Choose a filter to adjust colors on the glasses display.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -48,9 +46,7 @@
 "label":"Color correction",
 "note":"Turns color correction on or off. Changing it wakes the display.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -61,9 +57,7 @@
 "label":"Enable magnification",
 "note":"Turns the glasses' custom accessibility service on or off. TalkBack stays as it was.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -72,11 +66,11 @@
 {
 "key":"action_button_assistant_custom_prompt",
 "label":"Action button prompt",
+"label_it":"Prompt del pulsante di azione",
+"label_ru":"Запрос для кнопки действия",
 "note":"Text sent to Meta AI when the action button runs a custom prompt.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":100,
@@ -88,9 +82,7 @@
 "label":"Long press prompt",
 "note":"Text Meta AI gets when a long press of the action button runs your custom prompt.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":100,
@@ -102,9 +94,7 @@
 "label":"Action button Spotify link",
 "note":"The Spotify link the action button opens, spotify:playlist:… and the like.",
 "group":"Music and media",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":200,
@@ -116,9 +106,7 @@
 "label":"Active device",
 "note":"Shows whether these glasses are the active device. The system sets it, not the user.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -128,9 +116,7 @@
 "label":"Advanced video quality",
 "note":"Turns on an advanced video quality profile for the camera. The exact video change is not decoded.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -140,9 +126,7 @@
 "label":"Mock business phone number",
 "note":"Stored only. Nothing on the glasses reads this number.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":100,
@@ -154,9 +138,7 @@
 "label":"AI lens suggestions",
 "note":"Shows AI lens suggestions in Live AI.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -166,9 +148,7 @@
 "label":"Airship developer mode",
 "note":"Developer switch the phone syncs to the glasses. Nothing on the glasses acts on it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -178,9 +158,7 @@
 "label":"Block explicit songs",
 "note":"Stored on the glasses only. Nothing on the glasses blocks explicit songs.",
 "group":"Music and media",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -190,9 +168,7 @@
 "label":"iPhone notifications",
 "note":"Lets the glasses show notifications from an iPhone over Bluetooth Low Energy.",
 "group":"Notifications",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -200,11 +176,11 @@
 {
 "key":"assignable_action_button_long_press_mapping",
 "label":"Action button long press",
+"label_it":"Pressione prolungata del pulsante di azione",
+"label_ru":"Удержание кнопки действия",
 "note":"What the action button does when you hold it.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -215,7 +191,9 @@
 },
 {
 "value":"1",
-"label":"Off"
+"label":"Off",
+"label_it":"Disattivato",
+"label_ru":"Выкл."
 },
 {
 "value":"2",
@@ -223,19 +201,27 @@
 },
 {
 "value":"3",
-"label":"Wellness partner 6"
+"label":"Wellness partner 6",
+"label_it":"Partner benessere 6",
+"label_ru":"Партнёр по здоровью 6"
 },
 {
 "value":"4",
-"label":"Capture"
+"label":"Capture",
+"label_it":"Acquisizione",
+"label_ru":"Съёмка"
 },
 {
 "value":"5",
-"label":"Tap to call"
+"label":"Tap to call",
+"label_it":"Tocca per chiamare",
+"label_ru":"Звонок нажатием"
 },
 {
 "value":"6",
-"label":"Custom Meta AI prompt"
+"label":"Custom Meta AI prompt",
+"label_it":"Prompt personalizzato per Meta AI",
+"label_ru":"Свой запрос к Meta AI"
 },
 {
 "value":"7",
@@ -243,19 +229,27 @@
 },
 {
 "value":"8",
-"label":"Music app 1"
+"label":"Music app 1",
+"label_it":"App musicale 1",
+"label_ru":"Музыкальное приложение 1"
 },
 {
 "value":"9",
-"label":"Music app 2"
+"label":"Music app 2",
+"label_it":"App musicale 2",
+"label_ru":"Музыкальное приложение 2"
 },
 {
 "value":"10",
-"label":"Music app 3"
+"label":"Music app 3",
+"label_it":"App musicale 3",
+"label_ru":"Музыкальное приложение 3"
 },
 {
 "value":"11",
-"label":"Autocapture"
+"label":"Autocapture",
+"label_it":"Acquisisci automaticamente",
+"label_ru":"Автосъёмка"
 },
 {
 "value":"12",
@@ -263,7 +257,9 @@
 },
 {
 "value":"13",
-"label":"Live translation"
+"label":"Live translation",
+"label_it":"Traduzione in tempo reale",
+"label_ru":"Перевод в реальном времени"
 },
 {
 "value":"14",
@@ -271,55 +267,80 @@
 },
 {
 "value":"15",
-"label":"Heart rate"
+"label":"Heart rate",
+"label_it":"Frequenza cardiaca",
+"label_ru":"Пульс"
 },
 {
 "value":"16",
-"label":"Workout duration"
+"label":"Workout duration",
+"label_it":"Durata dell'allenamento",
+"label_ru":"Длительность тренировки"
 },
 {
 "value":"17",
-"label":"Workout distance"
+"label":"Workout distance",
+"label_it":"Distanza dell'allenamento",
+"label_ru":"Дистанция тренировки"
 },
 {
 "value":"18",
-"label":"Workout pace"
+"label":"Workout pace",
+"label_it":"Ritmo dell'allenamento",
+"label_ru":"Темп тренировки"
 },
 {
 "value":"19",
-"label":"Sensing"
+"label":"Sensing",
+"label_it":"Rilevamento",
+"label_ru":"Распознавание"
 },
 {
 "value":"20",
-"label":"Mute or unmute"
+"label":"Mute or unmute",
+"label_it":"Disattiva o riattiva l'audio",
+"label_ru":"Выключить или включить звук"
 },
 {
 "value":"21",
-"label":"Music"
+"label":"Music",
+"label_it":"Musica",
+"label_ru":"Музыка"
 },
 {
 "value":"22",
-"label":"Hearing"
+"label":"Hearing",
+"label_it":"Udito",
+"label_ru":"Слух"
 },
 {
 "value":"23",
-"label":"Hearing assist 2"
+"label":"Hearing assist 2",
+"label_it":"Assistenza uditiva 2",
+"label_ru":"Помощь слуху 2"
 },
 {
 "value":"24",
-"label":"Share to Instagram"
+"label":"Share to Instagram",
+"label_it":"Condividi su Instagram",
+"label_ru":"Поделиться в Instagram"
 },
 {
 "value":"25",
-"label":"Switch audio source"
+"label":"Switch audio source",
+"label_it":"Cambia sorgente audio",
+"label_ru":"Сменить источник звука"
 },
 {
 "value":"26",
-"label":"Pause or resume announcements"
+"label":"Pause or resume announcements",
+"label_it":"Metti in pausa o riprendi gli annunci",
+"label_ru":"Пауза или возобновление объявлений"
 },
 {
 "value":"27",
-"label":"Echromic"
+"label":"Echromic",
+"hidden":true
 }
 ]
 }
@@ -327,11 +348,11 @@
 {
 "key":"assignable_action_button_short_press_mapping",
 "label":"Action button press",
+"label_it":"Pressione del pulsante di azione",
+"label_ru":"Нажатие кнопки действия",
 "note":"What the action button does when you press it once.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -342,7 +363,9 @@
 },
 {
 "value":"1",
-"label":"Off"
+"label":"Off",
+"label_it":"Disattivato",
+"label_ru":"Выкл."
 },
 {
 "value":"2",
@@ -350,19 +373,27 @@
 },
 {
 "value":"3",
-"label":"Wellness partner 6"
+"label":"Wellness partner 6",
+"label_it":"Partner benessere 6",
+"label_ru":"Партнёр по здоровью 6"
 },
 {
 "value":"4",
-"label":"Capture"
+"label":"Capture",
+"label_it":"Acquisizione",
+"label_ru":"Съёмка"
 },
 {
 "value":"5",
-"label":"Tap to call"
+"label":"Tap to call",
+"label_it":"Tocca per chiamare",
+"label_ru":"Звонок нажатием"
 },
 {
 "value":"6",
-"label":"Custom Meta AI prompt"
+"label":"Custom Meta AI prompt",
+"label_it":"Prompt personalizzato per Meta AI",
+"label_ru":"Свой запрос к Meta AI"
 },
 {
 "value":"7",
@@ -370,19 +401,27 @@
 },
 {
 "value":"8",
-"label":"Music app 1"
+"label":"Music app 1",
+"label_it":"App musicale 1",
+"label_ru":"Музыкальное приложение 1"
 },
 {
 "value":"9",
-"label":"Music app 2"
+"label":"Music app 2",
+"label_it":"App musicale 2",
+"label_ru":"Музыкальное приложение 2"
 },
 {
 "value":"10",
-"label":"Music app 3"
+"label":"Music app 3",
+"label_it":"App musicale 3",
+"label_ru":"Музыкальное приложение 3"
 },
 {
 "value":"11",
-"label":"Autocapture"
+"label":"Autocapture",
+"label_it":"Acquisisci automaticamente",
+"label_ru":"Автосъёмка"
 },
 {
 "value":"12",
@@ -390,7 +429,9 @@
 },
 {
 "value":"13",
-"label":"Live translation"
+"label":"Live translation",
+"label_it":"Traduzione in tempo reale",
+"label_ru":"Перевод в реальном времени"
 },
 {
 "value":"14",
@@ -398,55 +439,80 @@
 },
 {
 "value":"15",
-"label":"Heart rate"
+"label":"Heart rate",
+"label_it":"Frequenza cardiaca",
+"label_ru":"Пульс"
 },
 {
 "value":"16",
-"label":"Workout duration"
+"label":"Workout duration",
+"label_it":"Durata dell'allenamento",
+"label_ru":"Длительность тренировки"
 },
 {
 "value":"17",
-"label":"Workout distance"
+"label":"Workout distance",
+"label_it":"Distanza dell'allenamento",
+"label_ru":"Дистанция тренировки"
 },
 {
 "value":"18",
-"label":"Workout pace"
+"label":"Workout pace",
+"label_it":"Ritmo dell'allenamento",
+"label_ru":"Темп тренировки"
 },
 {
 "value":"19",
-"label":"Sensing"
+"label":"Sensing",
+"label_it":"Rilevamento",
+"label_ru":"Распознавание"
 },
 {
 "value":"20",
-"label":"Mute or unmute"
+"label":"Mute or unmute",
+"label_it":"Disattiva o riattiva l'audio",
+"label_ru":"Выключить или включить звук"
 },
 {
 "value":"21",
-"label":"Music"
+"label":"Music",
+"label_it":"Musica",
+"label_ru":"Музыка"
 },
 {
 "value":"22",
-"label":"Hearing"
+"label":"Hearing",
+"label_it":"Udito",
+"label_ru":"Слух"
 },
 {
 "value":"23",
-"label":"Hearing assist 2"
+"label":"Hearing assist 2",
+"label_it":"Assistenza uditiva 2",
+"label_ru":"Помощь слуху 2"
 },
 {
 "value":"24",
-"label":"Share to Instagram"
+"label":"Share to Instagram",
+"label_it":"Condividi su Instagram",
+"label_ru":"Поделиться в Instagram"
 },
 {
 "value":"25",
-"label":"Switch audio source"
+"label":"Switch audio source",
+"label_it":"Cambia sorgente audio",
+"label_ru":"Сменить источник звука"
 },
 {
 "value":"26",
-"label":"Pause or resume announcements"
+"label":"Pause or resume announcements",
+"label_it":"Metti in pausa o riprendi gli annunci",
+"label_ru":"Пауза или возобновление объявлений"
 },
 {
 "value":"27",
-"label":"Echromic"
+"label":"Echromic",
+"hidden":true
 }
 ]
 }
@@ -456,9 +522,7 @@
 "label":"Action button light",
 "note":"Which light the action button uses. The value names are not decoded yet, so it is read-only. Value names are not decoded, so the app must not write it.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -469,9 +533,7 @@
 "label":"AI phone calls",
 "note":"Turns on Meta AI phone calls. The glasses do not read it.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -481,9 +543,7 @@
 "label":"AI phone calls (test)",
 "note":"Test switch for AI phone calls. Nothing on the glasses acts on it; it is stored only.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -493,9 +553,7 @@
 "label":"Assistant audio mode",
 "note":"Nothing on the glasses reads this setting. Integer stored and synced only; no code on the glasses reads it.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -506,9 +564,7 @@
 "label":"Auto-trim videos",
 "note":"Auto-trim for videos Meta AI captures. Nothing on the glasses acts on it; it is stored and synced.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -518,9 +574,7 @@
 "label":"Messaging apps (old packed form)",
 "note":"The older packed form of the messaging app settings, one byte per app. The glasses hold 0 and use the newer setting.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"bits",
 "fields":[
@@ -623,9 +677,7 @@
 "label":"Messaging app settings",
 "note":"Per messaging app: whether it is on, whether messages are announced or read out, and whether a reply is allowed.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"structured",
 "format":"protobuf-base64",
@@ -790,9 +842,7 @@
 "label":"Detailed Meta AI logs",
 "note":"Turns on more detailed logs for Meta AI on the glasses.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -802,9 +852,7 @@
 "label":"Assistant logging level",
 "note":"Logging detail for the Meta AI assistant. Developer setting; the binary names no levels.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -815,9 +863,7 @@
 "label":"Meta AI display",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -827,9 +873,7 @@
 "label":"Meta AI",
 "note":"Turns Meta AI on or off on the glasses.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -837,11 +881,10 @@
 {
 "key":"assistant_follow_up_enabled",
 "label":"Respond without \"Hey Meta\"",
+"label_ru":"Отвечать без «Hey Meta»",
 "note":"Your glasses' microphone will stay on and listen for another prompt for a brief period after your prompt is completed. You can skip saying \"Hey Meta.\"",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -853,9 +896,7 @@
 "label":"On-device language model",
 "note":"Nothing on the glasses reads this setting.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -865,9 +906,7 @@
 "label":"Meta AI vision",
 "note":"Meta AI vision switch. Nothing on the glasses or phone reads it; it is stored and synced only.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -877,9 +916,7 @@
 "label":"Preview via file handle",
 "note":"Developer switch for previewing assistant media through a file handle.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -889,9 +926,7 @@
 "label":"Store Meta AI photos and videos",
 "note":"Keeps the photos and videos Meta AI processes. Nothing on the glasses reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -899,11 +934,11 @@
 {
 "key":"assistant_store_voice_recordings",
 "label":"Store voice recordings",
+"label_it":"Memorizza registrazioni vocali",
+"label_ru":"Хранить записи голоса",
 "note":"Lets Meta keep recordings of what you say to Meta AI.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -911,11 +946,10 @@
 {
 "key":"assistant_store_voice_transcripts",
 "label":"Store transcripts",
+"label_ru":"Хранить расшифровки",
 "note":"Store a text copy and related data of what you say.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -927,9 +961,7 @@
 "label":"Meta AI voice",
 "note":"The voice Meta AI speaks with.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -985,9 +1017,7 @@
 "label":"Voice verification",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -997,9 +1027,7 @@
 "label":"Custom wake word",
 "note":"The custom wake phrase, if one is set.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":100,
@@ -1009,11 +1037,10 @@
 {
 "key":"attention_deferral_user_enabled",
 "label":"Reduce interruptions",
+"label_ru":"Меньше прерываний",
 "note":"Waits to deliver notifications until you're no longer speaking.",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1025,9 +1052,7 @@
 "label":"Audio balance",
 "note":"Adjust the balance between the left and right channels.",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"range",
 "min":-1.0,
@@ -1041,11 +1066,11 @@
 {
 "key":"audio_noise_reduction_enabled",
 "label":"Audio noise reduction",
+"label_it":"Riduzione del rumore",
+"label_ru":"Шумоподавление",
 "note":"Reduces background noise in video audio when the phone processes it.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1053,11 +1078,10 @@
 {
 "key":"audio_playback_during_capture_enabled",
 "label":"Listen while recording",
+"label_ru":"Слушать во время записи",
 "note":"Audio will continue to play when capturing videos",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -1073,11 +1097,11 @@
 {
 "key":"auto_play_pause_on_don_doff",
 "label":"Pause music when glasses come off",
+"label_it":"Metti in pausa la musica quando togli gli occhiali",
+"label_ru":"Пауза музыки при снятии очков",
 "note":"Pauses music when the glasses come off.",
 "group":"Music and media",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -1087,9 +1111,7 @@
 "label":"Autocapture action test",
 "note":"Adds the activity type to the autocapture experiences the glasses run.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1099,9 +1121,7 @@
 "label":"Autocapture sounds",
 "note":"Your glasses will make a sound each time an autocapture starts and stops.",
 "group":"Video and live",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1113,9 +1133,7 @@
 "label":"Autocapture capture mode",
 "note":"Capture mode for autocapture. Nothing on the glasses reads it; the value is stored and synced.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -1126,9 +1144,7 @@
 "label":"Motion data stream",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -1138,9 +1154,7 @@
 "label":"Autocapture MCU mode",
 "note":"Switches autocapture to MCU mode. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -1150,9 +1164,7 @@
 "label":"Motion capture mode",
 "note":"Mode for motion-triggered autocapture. The values are not named in the code, so it is read-only. Values are not named in the code, so no options can be offered.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -1163,9 +1175,7 @@
 "label":"Motion-triggered autocapture",
 "note":"Motion-triggered autocapture switch. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1175,9 +1185,7 @@
 "label":"Motion capture clip length",
 "note":"Nothing on the glasses acts on this clip length; it is stored and synced only.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -1188,9 +1196,7 @@
 "label":"Interactive autocapture",
 "note":"Adds interactive autocapture to the glasses' capture experiences.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1200,9 +1206,7 @@
 "label":"Autocapture interval",
 "note":"Time between autocapture clips. The code does not give the unit; the default is 15.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -1213,9 +1217,7 @@
 "label":"Long autocapture test",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -1225,9 +1227,7 @@
 "label":"Switch to low power mode",
 "note":"Say \"Hey Meta, switch to low power autocapture.\"",
 "group":"Video and live",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -1239,9 +1239,7 @@
 "label":"Motion autocapture test",
 "note":"Experiment switch for motion autocapture. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -1251,9 +1249,7 @@
 "label":"Low resolution autocapture on phone",
 "note":"Changes how autocapture runs alongside video on the glasses. Off by default.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1263,9 +1259,7 @@
 "label":"Autocapture session length",
 "note":"Default length of an autocapture session. The unit is not stated in the code read.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -1276,9 +1270,7 @@
 "label":"Viewfinder",
 "note":"See what you’re capturing when your display is on.",
 "group":"Video and live",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1290,9 +1282,7 @@
 "label":"Timed motion-sensor autocapture",
 "note":"Adds timed autocapture that uses the motion sensor to the glasses' capture experiences.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1302,9 +1292,7 @@
 "label":"Timed interval capture mode",
 "note":"Capture mode for timed-interval autocapture. Nothing on the glasses reads it; it is stored and synced.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -1315,9 +1303,7 @@
 "label":"Timed interval captures",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -1327,9 +1313,7 @@
 "label":"Timed interval clip length",
 "note":"Length of each clip in timed-interval autocapture. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -1340,9 +1324,7 @@
 "label":"Autocapture clip length",
 "note":"Length of each autocapture clip, as the Meta app sets it. Nothing on the glasses reads it. No unit or bounds in the code, so no range can be offered.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -1351,11 +1333,10 @@
 {
 "key":"avc_enabled",
 "label":"Adaptive volume",
+"label_ru":"Адаптивная громкость",
 "note":"Automatically adjust glasses volume based on your environment.",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1365,11 +1346,10 @@
 {
 "key":"battery_saver_mode_enabled",
 "label":"Battery saver",
+"label_ru":"Экономия батареи",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1380,9 +1360,7 @@
 "label":"Bluetooth message access",
 "note":"Nothing on the glasses reads this setting. Integer status stored and synced only; no code on the glasses reads it.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -1391,11 +1369,10 @@
 {
 "key":"blv_scene_reader_enabled",
 "label":"Detailed responses",
+"label_ru":"Подробные ответы",
 "note":"You'll hear more about objects, signage and people. Do not use as a mobility aid.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -1407,9 +1384,7 @@
 "label":"Camera use",
 "note":"Lets Meta AI use the glasses camera. Off stops Meta AI camera use.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -1419,9 +1394,7 @@
 "label":"Touchpad: one-finger double tap",
 "note":"Key sent for a one-finger double tap on the touchpad.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -1629,9 +1602,7 @@
 "label":"Touchpad: one-finger long press",
 "note":"Key sent when the touchpad sees a one-finger long press.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -1839,9 +1810,7 @@
 "label":"Touchpad: one-finger long press release",
 "note":"Key sent when a one-finger long press on the touchpad ends. Nothing on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -2049,9 +2018,7 @@
 "label":"Touchpad: one-finger swipe down",
 "note":"Key sent for a one-finger swipe down. Nothing on the glasses reads this setting.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -2259,9 +2226,7 @@
 "label":"Touchpad: one-finger swipe forward",
 "note":"Sets the key sent for a one-finger forward swipe. No code on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -2469,9 +2434,7 @@
 "label":"Touchpad: one-finger swipe back",
 "note":"Keycode for a one-finger swipe back on the touchpad. Nothing on the glasses reads this setting.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -2679,9 +2642,7 @@
 "label":"Touchpad: one-finger swipe up",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -2889,9 +2850,7 @@
 "label":"Touchpad: one-finger tap",
 "note":"Key sent for a one-finger tap on the touchpad.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -3099,9 +3058,7 @@
 "label":"Touchpad: two-finger double tap",
 "note":"Key sent for a two-finger double tap. Nothing on the glasses reads this key.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -3309,9 +3266,7 @@
 "label":"Touchpad: two-finger long press",
 "note":"Key sent when a two-finger long press on the touchpad starts. Nothing on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -3519,9 +3474,7 @@
 "label":"Touchpad: two-finger long press release",
 "note":"Key sent when a two-finger long press ends. Nothing on the glasses reads this setting.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -3729,9 +3682,7 @@
 "label":"Touchpad: two-finger swipe down",
 "note":"Sets the key sent for a two-finger downward swipe. No code on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -3939,9 +3890,7 @@
 "label":"Touchpad: two-finger swipe forward",
 "note":"Keycode for a two-finger swipe forward on the touchpad. Nothing on the glasses reads this setting.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -4149,9 +4098,7 @@
 "label":"Touchpad: two-finger swipe back",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -4359,9 +4306,7 @@
 "label":"Touchpad: two-finger swipe up",
 "note":"Key sent for a two-finger swipe up. No firmware code reads it, so it does nothing on its own.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -4569,9 +4514,7 @@
 "label":"Touchpad: two-finger tap",
 "note":"Key sent for a two-finger tap. Default is back.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -4777,11 +4720,10 @@
 {
 "key":"captouch_enabled",
 "label":"Touchpad gestures",
+"label_ru":"Жесты сенсорной панели",
 "note":"Turn off the touchpad until you close the hinges to avoid accidental gestures.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -4796,11 +4738,10 @@
 {
 "key":"capture_aspect_ratio",
 "label":"Media orientation",
+"label_ru":"Ориентация снимков",
 "note":"Portrait (3:4) or landscape (4:3) photos and videos. The glasses always take the whole portrait frame; Visor crops landscape ones to 4:3 as it brings them over.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -4808,12 +4749,14 @@
 "value":"0",
 "label":"Portrait",
 "label_it":"Verticale",
+"label_ru":"Вертикальная",
 "detail":"3:4"
 },
 {
 "value":"1",
 "label":"Landscape",
 "label_it":"Orizzontale",
+"label_ru":"Горизонтальная",
 "detail":"4:3"
 },
 {
@@ -4834,11 +4777,10 @@
 {
 "key":"capture_auto_review",
 "label":"Auto review",
+"label_ru":"Автопросмотр",
 "note":"Auto review provides a quick glance at what you've captured, making it easy to review and share on the go.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -4853,9 +4795,7 @@
 "label":"Capture button assistant shortcut",
 "note":"Assistant shortcut bound to the capture button. Stored and synced only; nothing on the glasses reads it.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":2000,
@@ -4867,9 +4807,7 @@
 "label":"Capture button double press",
 "note":"Stored on the glasses only. The double press is handled without reading it. No value list or bounds in code; the double press uses a fixed key code.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -4878,11 +4816,10 @@
 {
 "key":"capture_button_short_long_press",
 "label":"Capture button",
+"label_ru":"Кнопка съёмки",
 "note":"Swaps what a short and a long press of the capture button do: photo or video.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -4890,15 +4827,19 @@
 "value":"0",
 "label":"Photo-first (default)",
 "label_it":"Foto prima (predefinito)",
+"label_ru":"Сначала фото (по умолчанию)",
 "detail":"Pressing the capture button once will take a photo. Press and hold will record a video.",
-"detail_it":"Premi il pulsante di acquisizione una volta per scattare una foto. Tienilo premuto per registrare video."
+"detail_it":"Premi il pulsante di acquisizione una volta per scattare una foto. Tienilo premuto per registrare video.",
+"detail_ru":"Одно нажатие кнопки съёмки делает фото. Нажатие с удержанием записывает видео."
 },
 {
 "value":"1",
 "label":"Video-first",
 "label_it":"Video prima",
+"label_ru":"Сначала видео",
 "detail":"Pressing the capture button once will record a video. Press and hold will take photos.",
-"detail_it":"Premi il pulsante di acquisizione una volta per registrare video. Tienilo premuto per scattare foto."
+"detail_it":"Premi il pulsante di acquisizione una volta per registrare video. Tienilo premuto per scattare foto.",
+"detail_ru":"Одно нажатие кнопки съёмки записывает видео. Нажатие с удержанием делает фото."
 }
 ]
 },
@@ -4907,32 +4848,37 @@
 {
 "key":"capture_mode",
 "label":"Alternative capture modes",
+"label_ru":"Другие режимы съёмки",
 "note":"Choose what the action button does",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"3",
 "label":"Hyperlapse",
+"label_ru":"Гиперлапс",
 "detail":"Condense long time lapses into short, shareable clips.",
-"detail_it":"Condensa lunghi time-lapse in brevi clip da condividere."
+"detail_it":"Condensa lunghi time-lapse in brevi clip da condividere.",
+"detail_ru":"Сжимает долгую съёмку в короткие клипы, которыми удобно делиться."
 },
 {
 "value":"6",
 "label":"Slow motion",
+"label_ru":"Замедленная съёмка",
 "detail":"Record video in 4x slow motion.",
-"detail_it":"Registra video in slow motion 4x."
+"detail_it":"Registra video in slow motion 4x.",
+"detail_ru":"Видео с замедлением в 4 раза."
 },
 {
 "value":"5",
 "label":"Autocapture",
 "label_it":"Acquisisci automaticamente",
+"label_ru":"Автосъёмка",
 "detail":"Automatically capture photos of important things around you",
-"detail_it":"Acquisisci automaticamente foto dei momenti importanti intorno a te."
+"detail_it":"Acquisisci automaticamente foto dei momenti importanti intorno a te.",
+"detail_ru":"Автоматически снимает фото важных моментов вокруг вас."
 },
 {
 "value":"1",
@@ -4966,9 +4912,7 @@
 "label":"Long press for capture mode",
 "note":"Long press on the capture button. Values are not decoded; nothing on the glasses reads it.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -4979,9 +4923,7 @@
 "label":"Carrier MMS size limit",
 "note":"Largest MMS size the carrier allows. Nothing on the glasses acts on it; it is stored only.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":2000,
@@ -4993,9 +4935,7 @@
 "label":"Cellular data",
 "note":"Updates will use cellular data if you're not connected to Wi-Fi.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -5007,9 +4947,7 @@
 "label":"Camera use",
 "note":"When you interact with Meta AI, an image may be taken.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5019,11 +4957,10 @@
 {
 "key":"cloud_media_processing_enabled",
 "label":"Cloud media",
+"label_ru":"Медиа в облаке",
 "note":"Allow your photos and videos to be sent to Meta's cloud for processing and temporary storage.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5035,9 +4972,7 @@
 "label":"Automatic updates",
 "note":"Lets the glasses check for and download firmware updates from the cloud.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5048,9 +4983,7 @@
 "label":"Factory reset after update check",
 "note":"Stored flag for a factory reset after an update check. Nothing on the glasses reads it.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5060,9 +4993,7 @@
 "label":"Preferred update bandwidth",
 "note":"Preferred network for downloading glasses updates. Values are not decoded.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -5073,9 +5004,7 @@
 "label":"Messages while in case",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5085,9 +5014,7 @@
 "label":"Messaging phone number",
 "note":"This phone's number for calls and messages through the glasses.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":20,
@@ -5099,9 +5026,7 @@
 "label":"Phone app language",
 "note":"Language of the phone app, sent to the glasses so they match it. The phone sets it from its own locale.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"locale"
 }
@@ -5111,9 +5036,7 @@
 "label":"Companion developer mode",
 "note":"Developer flag the phone writes. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -5124,9 +5047,7 @@
 "label":"Phone encryption key ID",
 "note":"Identifier of the phone's encryption key, written during relay setup. Not for editing.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":200,
@@ -5138,9 +5059,7 @@
 "label":"This phone's numbers",
 "note":"The SIM numbers of the phone, for SMS and MMS relay through the glasses.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"phone_list",
 "separator":","
@@ -5151,9 +5070,7 @@
 "label":"Phone relay status",
 "note":"Phone relay state, as the phone reports it. Nothing on the glasses reads it.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -5206,9 +5123,7 @@
 "label":"Connections",
 "note":"Turns the connections feature on or off. Nothing on the glasses reads it.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5218,9 +5133,7 @@
 "label":"Constellation state",
 "note":"State string kept for the partner fulfillment service. No user choice exists.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":2000,
@@ -5232,9 +5145,7 @@
 "label":"Navigation reassurance distance",
 "note":"Nothing on the glasses acts on this distance; it is stored and synced only.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -5245,9 +5156,7 @@
 "label":"Continuous AI camera schedule",
 "note":"Profiles of settings and the weekly windows that switch between them. The glasses check the layout, not the version number.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"schedule"
 }
@@ -5257,9 +5166,7 @@
 "label":"Continuous AI camera chunk length",
 "note":"Length of each continuous AI camera capture chunk, in seconds.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":"s"
@@ -5270,9 +5177,7 @@
 "label":"Continuous AI camera feedback",
 "note":"How the glasses signal when continuous AI camera runs: light, sound, speech, or a mix.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -5316,9 +5221,7 @@
 "label":"Continuous AI camera",
 "note":"Turns continuous AI camera capture on or off.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -5328,9 +5231,7 @@
 "label":"Continuous AI camera frame rate",
 "note":"Frame rate for continuous AI camera captures. The service applies a change while it runs. No bounds in the code, so no safe range can be offered.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -5341,9 +5242,7 @@
 "label":"Headband mode",
 "note":"Headband mode for the continuous AI camera. Nothing on the glasses reads it.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5353,9 +5252,7 @@
 "label":"Light on while the AI camera is paused",
 "note":"Keeps the notification light on while the continuous AI camera is paused. The light while recording is separate.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5365,9 +5262,7 @@
 "label":"AI camera paused",
 "note":"Pauses the continuous AI camera.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -5377,9 +5272,7 @@
 "label":"Conversation focus early access",
 "note":"Early-access switch for conversation focus in the hearing service.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5389,9 +5282,7 @@
 "label":"Conversation focus region gate",
 "note":"Region gate for conversation focus, set by the system. Nothing on the glasses reads it.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5401,9 +5292,7 @@
 "label":"Conversation focus eligibility",
 "note":"Conversation focus early access flag. Nothing on the glasses reads it.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5413,9 +5302,7 @@
 "label":"Conversation focus early-access values",
 "note":"Developer switch: use early-access values for conversation focus instead of server settings.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5425,9 +5312,7 @@
 "label":"Share crowdsourced data",
 "note":"Turns sharing of crowdsourced data on or off. The location service reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5437,9 +5322,7 @@
 "label":"Share location for crowdsourcing",
 "note":"Lets crowdsourced data include the glasses' location.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5449,9 +5332,7 @@
 "label":"Share Wi-Fi data for crowdsourcing",
 "note":"Lets crowdsourced location data include Wi-Fi scans.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5461,9 +5342,7 @@
 "label":"Current music app",
 "note":"The media app the glasses' controls act on, as the phone reports it.",
 "group":"Music and media",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -5503,9 +5382,7 @@
 "label":"Custom wake phrase",
 "note":"Uses a phrase you record as a voice command trigger, in addition to Hey Meta.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -5515,9 +5392,7 @@
 "label":"Dash cam segment length",
 "note":"Stored on the glasses only. Nothing on the glasses uses it. No bounds or value list in code. Length is in milliseconds.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -5528,9 +5403,7 @@
 "label":"Dashcam fall detection",
 "note":"Dashcam fall detection switch. Nothing on the glasses reads it.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5540,9 +5413,7 @@
 "label":"Dashcam resolution",
 "note":"Dashcam resolution and frame rate. Nothing on the glasses reads it, so it changes nothing yet.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -5574,9 +5445,7 @@
 "label":"Debug video capture mode",
 "note":"Internal capture mode for debugging. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -5587,9 +5456,7 @@
 "label":"Default music provider",
 "note":"Stored as a number that picks the default music app.",
 "group":"Music and media",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -5600,9 +5467,7 @@
 "label":"Default apps by category",
 "note":"Sets which phone app handles each category, such as music.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"structured",
 "format":"protobuf-base64",
@@ -5639,9 +5504,7 @@
 "label":"Default SMS app",
 "note":"Package name of the phone's default SMS app. Stored and synced only; nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"app",
 "role":"sms",
@@ -5656,11 +5519,11 @@
 {
 "key":"detailed_responses_live_ai_enabled",
 "label":"Detailed Live AI answers",
+"label_it":"Risposte dettagliate di Live AI",
+"label_ru":"Подробные ответы Live AI",
 "note":"Gives more detailed answers in Live AI.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5670,9 +5533,7 @@
 "label":"Charging LEDs (developer)",
 "note":"Developer switch for the LEDs shown while charging. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5682,9 +5543,7 @@
 "label":"Developer Mode",
 "note":"If you are developing for Meta AI Glasses, Developer Mode allows you to use features required for app development",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5696,9 +5555,7 @@
 "label":"Name",
 "note":"The name you give these glasses. Free text.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":100,
@@ -5711,9 +5568,7 @@
 "label":"Privacy identifier",
 "note":"Privacy identifier from Meta's server. The user cannot set it on the device.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":200,
@@ -5723,11 +5578,10 @@
 {
 "key":"device_share_additional_data_enabled",
 "label":"Share additional data",
+"label_ru":"Передавать дополнительные данные",
 "note":"By default, Meta collects the data needed to make your devices work properly. You may also share additional data, including things like how often you wear your glasses pushed back on your head, instead of on your nose.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -5739,9 +5593,7 @@
 "label":"Devkit developer mode",
 "note":"Developer mode for the devkit build. Nothing on the glasses reads it; stored and synced.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5751,9 +5603,7 @@
 "label":"Display mapping",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5763,9 +5613,7 @@
 "label":"Early Access",
 "note":"Whether Meta counts these glasses for its early access programme. Meta's server sets it; already on here.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5775,9 +5623,7 @@
 "label":"Early access programme",
 "note":"Your opt-in to Meta's early access features.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -5787,9 +5633,7 @@
 "label":"Education partner 1",
 "note":"Turns on the first education partner. The assistant binary reads the switch.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5797,11 +5641,10 @@
 {
 "key":"eis_mode",
 "label":"Video stabilization",
+"label_ru":"Стабилизация видео",
 "note":"How the camera stabilizes video.",
 "group":"Video and live",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -5809,29 +5652,37 @@
 "value":"0",
 "label":"Auto-select",
 "label_it":"Selezione automatica",
+"label_ru":"Автовыбор",
 "detail":"Default / High, med or low stabilization selected automatically based on video motion",
-"detail_it":"Stabilizzazione predefinita, alta, media o bassa selezionata automaticamente in base al movimento del video"
+"detail_it":"Stabilizzazione predefinita, alta, media o bassa selezionata automaticamente in base al movimento del video",
+"detail_ru":"Стандартная, высокая, средняя или низкая стабилизация выбирается автоматически по движению в кадре"
 },
 {
 "value":"1",
 "label":"High",
 "label_it":"Alta",
+"label_ru":"Высокая",
 "detail":"Smoothest stabilization",
-"detail_it":"Stabilizzazione più omogenea"
+"detail_it":"Stabilizzazione più omogenea",
+"detail_ru":"Самая плавная стабилизация"
 },
 {
 "value":"2",
 "label":"Medium",
 "label_it":"Media",
+"label_ru":"Средняя",
 "detail":"Some stabilization and horizon correction",
-"detail_it":"Stabilizzazione parziale e correzione dell'orizzonte"
+"detail_it":"Stabilizzazione parziale e correzione dell'orizzonte",
+"detail_ru":"Частичная стабилизация и выравнивание горизонта"
 },
 {
 "value":"3",
 "label":"Low",
 "label_it":"Bassa",
+"label_ru":"Низкая",
 "detail":"Maintains action but removes high jitter",
-"detail_it":"Mantiene l'azione ma rimuove il jitter elevato"
+"detail_it":"Mantiene l'azione ma rimuove il jitter elevato",
+"detail_ru":"Сохраняет динамику, но убирает сильную тряску"
 }
 ]
 },
@@ -5850,9 +5701,7 @@
 "label":"Band instant action",
 "note":"The action the neural band runs on an instant gesture, stored as a number.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -5861,11 +5710,10 @@
 {
 "key":"enable_calendar_event_alert",
 "label":"Calendar alerts",
+"label_ru":"Уведомления календаря",
 "note":"Get alerts for upcoming calendar events",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5875,11 +5723,10 @@
 {
 "key":"enable_calendar_event_alert_announce_details",
 "label":"Read event details",
+"label_ru":"Зачитывать детали события",
 "note":"Read out event details",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5891,9 +5738,7 @@
 "label":"Wake display",
 "note":"Wake the display for calendar notifications",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5903,11 +5748,11 @@
 {
 "key":"enable_calling_with_meta_ai",
 "label":"Calling with Meta AI",
+"label_it":"Chiamate con Meta AI",
+"label_ru":"Звонки через Meta AI",
 "note":"Switch for calling with Meta AI. The glasses carry the flag in their config tables.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5917,9 +5762,7 @@
 "label":"Google Calendar alerts",
 "note":"Alerts you on the glasses for Google Calendar events.",
 "group":"Notifications",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -5929,9 +5772,7 @@
 "label":"Nova ICA",
 "note":"Gate for Nova-based Meta AI calling. Set through MobileConfig.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5941,9 +5782,7 @@
 "label":"Audio notifications",
 "note":"Enable calendar event audio alerts",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5955,9 +5794,7 @@
 "label":"Read event details",
 "note":"Read out event details",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -5969,9 +5806,7 @@
 "label":"Wake display",
 "note":"Wake the display for calendar notifications",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -5981,11 +5816,11 @@
 {
 "key":"enable_phone_to_wearable_call_log_sync",
 "label":"Sync call log to glasses",
+"label_it":"Sincronizza il registro chiamate con gli occhiali",
+"label_ru":"Синхронизация журнала звонков с очками",
 "note":"Stored and synced to the glasses. Nothing on the glasses uses it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -5993,11 +5828,11 @@
 {
 "key":"enable_phone_to_wearable_contacts_sync",
 "label":"Sync contacts to glasses",
+"label_it":"Sincronizza i contatti con gli occhiali",
+"label_ru":"Синхронизация контактов с очками",
 "note":"Sync phone contacts to the glasses. Nothing on the glasses reads this key.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -6007,9 +5842,7 @@
 "label":"SMS and MMS relay",
 "note":"Relay setting for SMS and MMS messages. Nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -6019,9 +5852,7 @@
 "label":"Untethered relay",
 "note":"Relay setting. Nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -6031,9 +5862,7 @@
 "label":"Warp in air",
 "note":"Changing it makes the assistant shut down its warp feature.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -6043,9 +5872,7 @@
 "label":"Exposure adjustment",
 "note":"Shifts camera exposure up or down. Float exposure offset; the code read gives no bounds.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -6056,9 +5883,7 @@
 "label":"Fast authentication",
 "note":"Stored and synced only. Nothing on the glasses reads it.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -6068,9 +5893,7 @@
 "label":"Example rollout flag",
 "note":"Test flag for the settings rollout system. Nothing on the glasses uses it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -6080,9 +5903,7 @@
 "label":"Flicker reduction",
 "note":"Sets the flicker reduction mode the camera uses for capture.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -6106,9 +5927,7 @@
 "label":"Bold text",
 "note":"Android's bold text: it adds this much to every font weight (Settings.Secure.FONT_WEIGHT_ADJUSTMENT).",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -6129,9 +5948,7 @@
 "label":"Forest feature",
 "note":"Feature flag the assistant and AR libraries read as a switch. The feature is not named.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -6141,9 +5958,7 @@
 "label":"Band: index finger double tap",
 "note":"Key sent when the neural band reports an index finger double tap. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -6351,9 +6166,7 @@
 "label":"Band: index finger instant action",
 "note":"Sets the key sent for the index finger instant action on the neural band. No code on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -6561,9 +6374,7 @@
 "label":"Band: index finger press",
 "note":"Keycode for an index finger press on the neural band. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -6771,9 +6582,7 @@
 "label":"Band: index finger release",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -6981,9 +6790,7 @@
 "label":"Band: index finger single tap",
 "note":"Key sent when the neural band index finger taps once.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -7191,9 +6998,7 @@
 "label":"Band: index finger tap and hold",
 "note":"Key the band sends for an index-finger tap and hold. Nothing on the glasses reads the setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -7401,9 +7206,7 @@
 "label":"Band: index finger tap and hold release",
 "note":"Key sent when an index finger tap and hold ends on the neural band. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -7611,9 +7414,7 @@
 "label":"Band: middle finger double tap",
 "note":"Key sent when the neural band reports a middle finger double tap. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -7821,9 +7622,7 @@
 "label":"Band: middle finger instant action",
 "note":"Sets the key sent for the middle finger instant action on the neural band. No code on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -8031,9 +7830,7 @@
 "label":"Band: middle finger press",
 "note":"Keycode for a middle finger press on the neural band. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -8241,9 +8038,7 @@
 "label":"Band: middle finger release",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -8451,9 +8246,7 @@
 "label":"Band: middle finger single tap",
 "note":"Key sent when the neural band middle finger taps once.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -8661,9 +8454,7 @@
 "label":"Band: middle finger tap and hold",
 "note":"Key the band sends for a middle-finger tap and hold. Nothing on the glasses reads the setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -8871,9 +8662,7 @@
 "label":"Band: middle finger tap and hold release",
 "note":"Key sent when a middle finger tap and hold ends on the neural band. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -9081,9 +8870,7 @@
 "label":"Band: thumb double tap",
 "note":"Key sent when the neural band reports a thumb double tap. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -9291,9 +9078,7 @@
 "label":"Band: thumb instant action",
 "note":"Sets the key sent for the thumb instant action on the neural band. No code on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -9501,9 +9286,7 @@
 "label":"Band: thumb single tap",
 "note":"Keycode for a thumb single tap on the neural band. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -9711,9 +9494,7 @@
 "label":"Band: thumb swipe down",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -9921,9 +9702,7 @@
 "label":"Band: thumb swipe left",
 "note":"Key sent when the thumb swipes left on the neural band.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -10131,9 +9910,7 @@
 "label":"Band: thumb swipe right",
 "note":"Key the band sends for a thumb swipe right. Default is right. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -10341,9 +10118,7 @@
 "label":"Band: thumb swipe up",
 "note":"Key sent when the band reports a thumb swipe up. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -10551,9 +10326,7 @@
 "label":"Gesture assistant shortcut",
 "note":"Nothing on the glasses acts on this text; it is stored and synced only.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":100,
@@ -10565,9 +10338,7 @@
 "label":"Gesture X action",
 "note":"Sets the action for the X gesture. The code read does not name its values. Integer whose values the decoded code does not name.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -10578,9 +10349,7 @@
 "label":"Hand gestures",
 "note":"Toggle to enable hand gestures.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -10592,9 +10361,7 @@
 "label":"Point-at prompt",
 "note":"The prompt the assistant uses when you point at something.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":100,
@@ -10606,9 +10373,7 @@
 "label":"Custom point-at prompt",
 "note":"Prompt Meta AI uses when you point at something, in place of the default description.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":100,
@@ -10620,9 +10385,7 @@
 "label":"Hand gestures without wake word",
 "note":"Turns on hand gestures without saying the wake word.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10632,9 +10395,7 @@
 "label":"Handwriting input",
 "note":"Turns on handwriting input. The assistant runtime reads it under this name.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -10644,9 +10405,7 @@
 "label":"SMS threads not migrated",
 "note":"Records whether SMS threads still need migrating. Nothing on the glasses acts on it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10656,9 +10415,7 @@
 "label":"Muse",
 "note":"Meta's Muse assistant. Newer firmware wakes on a custom phrase only with it on.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10668,9 +10425,7 @@
 "label":"HE feature",
 "note":"Stored and synced only. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10680,9 +10435,7 @@
 "label":"Head nod controls",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -10692,9 +10445,7 @@
 "label":"Hearing Boost expiry",
 "note":"When the hearing boost ends, as a time value. The unit is not in the code.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -10705,9 +10456,7 @@
 "label":"Conversation focus setup done",
 "note":"The glasses refuse to start conversation focus until this is on. The Meta app turns it on at the end of its conversation focus intro.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -10717,9 +10466,7 @@
 "label":"Hearing Boost subscription",
 "note":"Hearing Boost subscription state sent by the phone. Stored only.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -10730,9 +10477,7 @@
 "label":"High text contrast",
 "note":"Turns high text contrast on or off. The glasses also turn it on when the display is critically hot.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -10742,9 +10487,7 @@
 "label":"Demo reset interval",
 "note":"How often demo mode wipes the glasses, in minutes.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":"min",
@@ -10756,9 +10499,7 @@
 "label":"Factory reset on a timer (demo mode)",
 "note":"Retail demo mode: wipes the glasses every so often. After a wipe they forget Visor and need setting up again.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10768,9 +10509,7 @@
 "label":"C50 device flag",
 "note":"Reports whether the glasses are the C50 model. Set by the system.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -10780,9 +10519,7 @@
 "label":"C50 in-app Meta AI flag",
 "note":"Turns in-app Meta AI on or off for the C50 flag.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -10792,9 +10529,7 @@
 "label":"Landscape mode",
 "note":"The older landscape switch. Visor keeps it in line with Media orientation.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -10810,9 +10545,7 @@
 "label":"Language pack build",
 "note":"Build number of the cached language pack. Stored only.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":32,
@@ -10824,9 +10557,7 @@
 "label":"Discreet audio sensitivity",
 "note":"Adjust to your level of comfort",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -10838,9 +10569,7 @@
 "label":"Discreet audio sensitivity",
 "note":"Adjust to your level of comfort",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -10874,9 +10603,7 @@
 "label":"Lens brightness",
 "note":"Lens brightness value. Stored and synced; nothing on the glasses reads it.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -10887,9 +10614,7 @@
 "label":"Lens tint",
 "note":"Sets the lens tint to clear, auto, dark or mid.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -10922,9 +10647,7 @@
 "label":"Lens tint toggle mode",
 "note":"Lens tint toggle mode. Nothing on the glasses reads it.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -10935,9 +10658,7 @@
 "label":"Live AI",
 "note":"Turns Live AI on or off.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10947,9 +10668,7 @@
 "label":"Live AI faster stream start",
 "note":"Starts the Live AI media stream in the background. Nothing on the glasses reads it.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -10957,11 +10676,11 @@
 {
 "key":"live_ai_voice_only",
 "label":"Live AI voice only",
+"label_it":"Live AI solo voce",
+"label_ru":"Live AI только голосом",
 "note":"Sets Live AI to voice only. The phone sends this flag with each voice stream.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -10971,9 +10690,7 @@
 "label":"Live caption voice",
 "note":"Sets the voice used for live captions.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -11025,9 +10742,7 @@
 "label":"Live notes consent",
 "note":"Records that the user agreed to live notes. Nothing on the glasses reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11037,9 +10752,7 @@
 "label":"Live translation early access",
 "note":"Turns on the early-access version of live speech translation.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11049,9 +10762,7 @@
 "label":"Live translation on server",
 "note":"Turns on server-side live speech translation. Off by default.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11061,9 +10772,7 @@
 "label":"Live translation voice",
 "note":"Voice used to speak live translations.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -11113,11 +10822,11 @@
 {
 "key":"location_camera_geotagging_enabled",
 "label":"Location tags on photos",
+"label_it":"Posizione nelle foto",
+"label_ru":"Геометки на фото",
 "note":"Whether photos and videos get a location tag. The glasses do not read it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11125,11 +10834,11 @@
 {
 "key":"location_chatbot_enabled",
 "label":"Location for Meta AI",
+"label_it":"Posizione per Meta AI",
+"label_ru":"Геолокация для Meta AI",
 "note":"Lets Meta AI use the phone's location for glasses requests. When off, location requests are refused.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11137,11 +10846,11 @@
 {
 "key":"location_global_enabled",
 "label":"Location services",
+"label_it":"Servizi di localizzazione",
+"label_ru":"Службы геолокации",
 "note":"Turns location on or off for the glasses.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -11151,9 +10860,7 @@
 "label":"Device management",
 "note":"Device management flag. Nothing on the glasses acts on it; stored and synced.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -11161,11 +10868,10 @@
 {
 "key":"media_auto_leveling_enabled",
 "label":"Auto level",
+"label_ru":"Автовыравнивание",
 "note":"Automatically frame your captures for best quality.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -11175,11 +10881,11 @@
 {
 "key":"media_cloud_enabled",
 "label":"Cloud features for media",
+"label_it":"Funzioni cloud per i contenuti multimediali",
+"label_ru":"Облачные функции для медиа",
 "note":"Lets Meta AI use the cloud for photos and videos.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -11189,9 +10895,7 @@
 "label":"Band media: index finger single tap",
 "note":"Key the band sends for an index-finger single tap, meant for media. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -11399,9 +11103,7 @@
 "label":"Band media: middle finger single tap",
 "note":"Key sent for a middle finger single tap on the band, for media. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -11609,9 +11311,7 @@
 "label":"Band media: thumb swipe down",
 "note":"Key sent for a thumb swipe down on the neural band. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -11819,9 +11519,7 @@
 "label":"Band media: thumb swipe left",
 "note":"Sets the key sent for a thumb swipe left on the neural band. No code on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -12029,9 +11727,7 @@
 "label":"Band media: thumb swipe right",
 "note":"Keycode for a thumb swipe right on the neural band. Nothing on the glasses reads this setting.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -12239,9 +11935,7 @@
 "label":"Band media: thumb swipe up",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -12447,11 +12141,10 @@
 {
 "key":"media_occlusion_removal_enabled",
 "label":"Media quality",
+"label_ru":"Качество медиа",
 "note":"Automatically crop captures when the camera is partially blocked by objects like a hat brim or hair.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -12463,9 +12156,7 @@
 "label":"Messenger contacts sync",
 "note":"Messenger contacts sync flag set by the phone. Nothing on the glasses reads it. Values are not named in the code; the phone sync sets it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -12476,9 +12167,7 @@
 "label":"Meta AI handwriting",
 "note":"Turns on Meta AI handwriting input. The assistant runtime reads it as a switch.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -12488,9 +12177,7 @@
 "label":"Meta AI during calls",
 "note":"Lets Meta AI start while a phone call is active instead of being blocked.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12500,12 +12187,9 @@
 "label":"Metadata",
 "note":"Stored and synced only; nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
-"type":"readonly",
-"why":"Part of the settings sync itself (SettingsSyncMetadata), not a stored setting."
+"type":"readonly"
 }
 },
 {
@@ -12513,9 +12197,7 @@
 "label":"Miranda DC service",
 "note":"Internal service flag. Nothing on the glasses reads it; stored and synced.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12525,9 +12207,7 @@
 "label":"Mirrored notification apps",
 "note":"Per-app notification mirroring settings, stored on the glasses. Not for editing.",
 "group":"Notifications",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":2000,
@@ -12539,9 +12219,7 @@
 "label":"Double press for Meta AI",
 "note":"Setting for the double press that opens Meta AI. The glasses do not read it.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -12551,9 +12229,7 @@
 "label":"Meta AI consent",
 "note":"Consent record for multimodal Meta AI features. Nothing on the glasses reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -12563,9 +12239,7 @@
 "label":"Rollout target state",
 "note":"Rollout target of an internal config. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -12574,11 +12248,10 @@
 {
 "key":"mono_audio_enabled",
 "label":"Mono audio",
+"label_ru":"Монозвук",
 "note":"Play the same audio from the left and right speakers.",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -12588,11 +12261,11 @@
 {
 "key":"motion_blur_reduction_enabled",
 "label":"Motion blur reduction",
+"label_it":"Riduzione della sfocatura di movimento",
+"label_ru":"Уменьшение размытия в движении",
 "note":"Turns motion blur reduction on or off for video.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12602,9 +12275,7 @@
 "label":"Media processing for photos",
 "note":"Turns media processing of unprocessed photos on or off.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
@@ -12624,9 +12295,7 @@
 "label":"Media processing for videos",
 "note":"Turns media processing of unprocessed videos on or off.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -12644,11 +12313,10 @@
 {
 "key":"music_concurrency_enabled",
 "label":"Playback while recording",
+"label_ru":"Воспроизведение во время записи",
 "note":"Allow media to play while recording videos. Sound from your media may be captured.",
 "group":"Music and media",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -12667,9 +12335,7 @@
 "label":"Third music partner",
 "note":"Turns on a third music partner app.",
 "group":"Music and media",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12677,29 +12343,37 @@
 {
 "key":"mute_announcements_default_duration",
 "label":"Default pause length",
-"note":"Default length of an announcement pause, in seconds. The Meta app offers 1, 2, 4 and 8 hours.",
+"label_it":"Durata predefinita della pausa",
+"label_ru":"Длительность паузы по умолчанию",
+"note":"Default length of an announcement pause.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"3600",
-"label":"1 hour"
+"label":"1 hour",
+"label_it":"1 ora",
+"label_ru":"1 час"
 },
 {
 "value":"7200",
-"label":"2 hours"
+"label":"2 hours",
+"label_it":"2 ore",
+"label_ru":"2 часа"
 },
 {
 "value":"14400",
-"label":"4 hours"
+"label":"4 hours",
+"label_it":"4 ore",
+"label_ru":"4 часа"
 },
 {
 "value":"28800",
-"label":"8 hours"
+"label":"8 hours",
+"label_it":"8 ore",
+"label_ru":"8 часов"
 }
 ]
 }
@@ -12709,9 +12383,7 @@
 "label":"Announcements paused until",
 "note":"Time until incoming call announcements stay muted, as epoch seconds. Empty means not muted.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"text",
 "max":2000,
@@ -12723,9 +12395,7 @@
 "label":"Announcement pause mode",
 "note":"Nothing on the glasses acts on this value; it is stored and synced only.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -12734,11 +12404,11 @@
 {
 "key":"natural_invocation_enabled",
 "label":"Talk without the wake phrase",
+"label_it":"Parla senza la frase di attivazione",
+"label_ru":"Говорить без фразы активации",
 "note":"Lets you talk to the assistant without saying the wake phrase first.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12748,9 +12418,7 @@
 "label":"Nose occlusion tuning",
 "note":"Tuning flag for how the nose is detected in the camera view.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -12758,29 +12426,36 @@
 {
 "key":"notification_led_brightness",
 "label":"Notification LED brightness",
+"label_ru":"Яркость индикатора уведомлений",
 "note":"Brightness of the alert light. The Java LED code uses one fixed level whatever this is set to.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"1",
-"label":"Automatic"
+"label":"Automatic",
+"label_it":"Automatica",
+"label_ru":"Автоматически"
 },
 {
 "value":"2",
-"label":"Low"
+"label":"Low",
+"label_it":"Bassa",
+"label_ru":"Низкая"
 },
 {
 "value":"3",
-"label":"Medium"
+"label":"Medium",
+"label_it":"Media",
+"label_ru":"Средняя"
 },
 {
 "value":"4",
-"label":"High"
+"label":"High",
+"label_it":"Alta",
+"label_ru":"Высокая"
 }
 ]
 },
@@ -12789,11 +12464,11 @@
 {
 "key":"notification_volume",
 "label":"Notification volume",
+"label_it":"Volume delle notifiche",
+"label_ru":"Громкость уведомлений",
 "note":"Level of notification sounds on the audio system's absolute scale.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"range",
 "min":55.0,
@@ -12805,11 +12480,11 @@
 {
 "key":"occlusion_detection_enabled",
 "label":"Occlusion detection",
+"label_it":"Rilevamento delle ostruzioni",
+"label_ru":"Обнаружение перекрытия камеры",
 "note":"Detects when something blocks the camera view.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12819,9 +12494,7 @@
 "label":"Setup session id",
 "note":"Id of the first-time setup session.",
 "group":"Updates and system",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":64,
@@ -12833,9 +12506,7 @@
 "label":"Oxide",
 "note":"Runs the Oxide and Meta AI services and sends the wake word to Meta AI.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -12845,9 +12516,7 @@
 "label":"Paired phone system",
 "note":"Records the type of phone the glasses are paired with. Nothing on the glasses acts on it. Phone type the glasses record when paired; nothing for the user to change.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -12858,9 +12527,7 @@
 "label":"Palm unlock early access",
 "note":"Stored and synced only; nothing on the glasses reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -12870,9 +12537,7 @@
 "label":"Palm unlock",
 "note":"Securely unlock your glasses without using your phone.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -12884,9 +12549,7 @@
 "label":"Partner app settings",
 "note":"Settings and display info for partner apps, stored as a protobuf the phone app writes.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"structured",
 "format":"protobuf-base64",
@@ -13058,9 +12721,7 @@
 "label":"Passive audio capture",
 "note":"Background audio capture switch for the glasses assistant.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13070,9 +12731,7 @@
 "label":"Passive audio: own speech only",
 "note":"Limits passive audio capture to the own speech of the wearer. Nothing on the glasses reads it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13082,9 +12741,7 @@
 "label":"Passive meal capture",
 "note":"Turns passive meal capture on or off. Off by default.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13092,11 +12749,11 @@
 {
 "key":"passive_phone_unlock_enabled",
 "label":"Passive phone unlock",
+"label_it":"Sblocco passivo del telefono",
+"label_ru":"Пассивная разблокировка телефона",
 "note":"Turns passive phone unlock on or off.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13104,11 +12761,11 @@
 {
 "key":"passive_visual_capture_enabled",
 "label":"Passive visual capture",
+"label_it":"Acquisizione visiva passiva",
+"label_ru":"Пассивная визуальная съёмка",
 "note":"Turns passive camera capture on or off. The phone app settings page writes it.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -13118,9 +12775,7 @@
 "label":"Phone contacts sync",
 "note":"Stored and synced only; nothing on the glasses reads it. Integer the phone app writes; nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -13129,11 +12784,11 @@
 {
 "key":"posture_detection_enabled",
 "label":"Posture detection",
+"label_it":"Rilevamento della postura",
+"label_ru":"Отслеживание осанки",
 "note":"Turns posture detection on or off. The phone app lists it; the glasses do not read it.",
 "group":"Health and fitness",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13143,9 +12798,7 @@
 "label":"India QR payments (MC)",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13155,9 +12808,7 @@
 "label":"India QR payments setup done",
 "note":"Records that the India QR payments setup is done.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13167,9 +12818,7 @@
 "label":"QR payments in India",
 "note":"Turns QR payments on or off in India.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13179,9 +12828,7 @@
 "label":"UPI eligible",
 "note":"Eligibility flag for UPI payments. Set by the system, not the user.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13191,9 +12838,7 @@
 "label":"QR payments via WhatsApp",
 "note":"Turns on QR payments through WhatsApp in India.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13201,30 +12846,34 @@
 {
 "key":"quick_actions",
 "label":"Quick action",
+"label_it":"Azione rapida",
+"label_ru":"Быстрое действие",
 "note":"Chooses what the quick action does: send a message, a voice message, or a call.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"text",
 "label":"Messaging",
-"label_it":"Messaggio"
+"label_it":"Messaggio",
+"label_ru":"Сообщение"
 },
 {
 "value":"voice",
 "label":"Voice messaging",
 "label_it":"Messaggio vocale",
+"label_ru":"Голосовое сообщение",
 "detail":"Only available for WhatsApp, Messenger, and Instagram",
-"detail_it":"Disponibile solo per WhatsApp, Messenger e Instagram"
+"detail_it":"Disponibile solo per WhatsApp, Messenger e Instagram",
+"detail_ru":"Только для WhatsApp, Messenger и Instagram"
 },
 {
 "value":"call",
 "label":"Calling",
-"label_it":"Chiamata"
+"label_it":"Chiamata",
+"label_ru":"Звонок"
 },
 {
 "value":"",
@@ -13237,11 +12886,10 @@
 {
 "key":"quick_clips_photo_capture_enabled",
 "label":"Dynamic photo",
+"label_ru":"Динамичное фото",
 "note":"Capture more frames with each photo, so you can choose your favorite.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -13253,9 +12901,7 @@
 "label":"QVA",
 "note":"Turns on the QVA audio feature, which the audio server only enables on one device model.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -13265,9 +12911,7 @@
 "label":"QVA wellness sync",
 "note":"Syncs wellness data. Nothing on the glasses reads it.",
 "group":"Health and fitness",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13277,9 +12921,7 @@
 "label":"Reminders early access",
 "note":"Turns the early-access reminders feature on or off.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13287,11 +12929,10 @@
 {
 "key":"resolution_and_framerate",
 "label":"Resolution and frame rate",
+"label_ru":"Разрешение и частота кадров",
 "note":"Changing resolution or frame rate affects battery life, storage, recording duration, and orientation.",
 "group":"Camera",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -13299,15 +12940,19 @@
 "value":"0",
 "label":"Default",
 "label_it":"Predefinito",
+"label_ru":"По умолчанию",
 "detail":"1080p at 30fps",
-"detail_it":"1080p a 30 fps"
+"detail_it":"1080p a 30 fps",
+"detail_ru":"1080p, 30 кадр/с"
 },
 {
 "value":"2",
 "label":"High frame rate",
 "label_it":"Frequenza dei fotogrammi alta",
+"label_ru":"Высокая частота кадров",
 "detail":"1080p at 60fps",
 "detail_it":"1080p a 60 fps",
+"detail_ru":"1080p, 60 кадр/с",
 "products":[
 258,
 262,
@@ -13321,8 +12966,10 @@
 "value":"1",
 "label":"High resolution",
 "label_it":"Alta risoluzione",
+"label_ru":"Высокое разрешение",
 "detail":"3K at 30fps",
 "detail_it":"3K a 30 fps",
+"detail_ru":"3K, 30 кадр/с",
 "products":[
 262,
 263,
@@ -13365,9 +13012,7 @@
 "label":"Sample app 1",
 "note":"Test toggle for a sample app. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13377,9 +13022,7 @@
 "label":"Screen brightness",
 "note":"Sets display brightness. The stored value is a level; the brightness controls also take 1 to 100 percent.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"range",
 "min":1.0,
@@ -13393,9 +13036,7 @@
 "label":"Auto brightness",
 "note":"Adjusts glasses display brightness based on your environment",
 "group":"Display",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -13407,9 +13048,7 @@
 "label":"SDR video",
 "note":"Turns SDR video on or off. The glasses' camera UI reads it.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13419,9 +13058,7 @@
 "label":"Account sync metadata",
 "note":"Account sync data kept as a string. Not for editing.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":2000,
@@ -13433,9 +13070,7 @@
 "label":"Action button long press (flag)",
 "note":"Long press on the action button. Nothing on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13445,9 +13080,7 @@
 "label":"Action button short press (flag)",
 "note":"Old flag for the action button short press. The action button mapping setting is used instead.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13457,9 +13090,7 @@
 "label":"Mirror phone notifications",
 "note":"Lets phone notifications show on the glasses.",
 "group":"Notifications",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13469,9 +13100,7 @@
 "label":"Touchpad interaction model",
 "note":"Nothing on the glasses acts on this value; it is stored and synced only.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -13482,9 +13111,7 @@
 "label":"Touchpad model coherence",
 "note":"Stored and synced only; nothing on the glasses reads it. Integer; nothing on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -13493,11 +13120,10 @@
 {
 "key":"sg_captouch_invert_swipe_direction_horizontal",
 "label":"Invert swipe horizontal",
+"label_ru":"Инвертировать горизонтальные свайпы",
 "note":"Reverses horizontal swipes on the touchpad.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -13506,11 +13132,10 @@
 {
 "key":"sg_captouch_invert_swipe_direction_vertical",
 "label":"Invert swipe vertical",
+"label_ru":"Инвертировать вертикальные свайпы",
 "note":"Reverses vertical swipes on the touchpad.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -13521,9 +13146,7 @@
 "label":"Invert swipe horizontal",
 "note":"Stored and synced only. Nothing on the glasses reads it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -13534,9 +13157,7 @@
 "label":"Invert swipe vertical",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -13545,14 +13166,11 @@
 {
 "key":"sg_disable_thermal_shutdown",
 "label":"Disable thermal shutdown",
-"note":"Stops the glasses shutting down when a skin sensor reads too hot. For testing. Visor never writes it.",
+"note":"Stops the glasses shutting down when a skin sensor reads too hot. For testing.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
-"type":"readonly",
-"why":"Turning it off removes the protection against the glasses burning skin."
+"type":"readonly"
 }
 },
 {
@@ -13560,9 +13178,7 @@
 "label":"Display heat protection",
 "note":"For glasses with a display; these have none, so it does nothing here.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -13572,9 +13188,7 @@
 "label":"Display timeout event",
 "note":"Turns on a display timeout event. Nothing on the glasses reads it.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13582,11 +13196,11 @@
 {
 "key":"sg_do_not_disturb",
 "label":"Do not disturb",
+"label_it":"Non disturbare",
+"label_ru":"Не беспокоить",
 "note":"Silences call ringing on the glasses while on.",
 "group":"Notifications",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -13594,11 +13208,11 @@
 {
 "key":"sg_emg_display_off",
 "label":"Display off from neural band",
+"label_it":"Spegni il display dal Neural Band",
+"label_ru":"Выключение дисплея с Neural Band",
 "note":"Lets the neural band turn the display off.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13606,11 +13220,11 @@
 {
 "key":"sg_emg_instant_action",
 "label":"Neural band instant action",
+"label_it":"Azione istantanea del Neural Band",
+"label_ru":"Мгновенное действие Neural Band",
 "note":"Action number for the neural band instant gesture. Values are not listed in the code.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -13621,9 +13235,7 @@
 "label":"Glasses setup status",
 "note":"Setup progress of the glasses, written by the system. Not for editing. Status written by the system; value names are not defined in the code.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -13632,11 +13244,11 @@
 {
 "key":"sg_headphone_mode_enabled",
 "label":"Headphone mode",
+"label_it":"Modalità cuffie",
+"label_ru":"Режим наушников",
 "note":"Switches the glasses audio to headphone mode.",
 "group":"Sound",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13646,9 +13258,7 @@
 "label":"Instant action",
 "note":"Touchpad instant action, stored as a number. The value names are not decoded yet, so it is read-only. Value names are not decoded; do not write until decoded.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -13657,11 +13267,11 @@
 {
 "key":"sg_invert_wrist_roll_direction",
 "label":"Invert wrist roll",
+"label_it":"Inverti la rotazione del polso",
+"label_ru":"Инвертировать поворот запястья",
 "note":"Would reverse wrist roll direction. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -13671,9 +13281,7 @@
 "label":"Live transcription in Meta AI",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Live AI and translation",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13683,9 +13291,7 @@
 "label":"Companion app setup status",
 "note":"Shows how far the phone companion app setup has got. The glasses write it. Status the glasses write during setup; not user-set.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -13696,9 +13302,7 @@
 "label":"Sample setting",
 "note":"Sample key from the settings SDK. Nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13708,9 +13312,7 @@
 "label":"Screen reader",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -13730,9 +13332,7 @@
 "label":"Speaking pitch",
 "note":"Pitch of the screen reader voice. The glasses code does not read this key.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"range",
 "min":0.0,
@@ -13747,9 +13347,7 @@
 "label":"Speaking rate",
 "note":"How fast the screen reader speaks. The phone slider runs from 0 to 100.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"range",
 "min":0.0,
@@ -13764,9 +13362,7 @@
 "label":"Display temperature warning",
 "note":"For glasses with a display; these have none, so it does nothing here.",
 "group":"Display",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13776,9 +13372,7 @@
 "label":"Simplified touchpad calling",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -13788,9 +13382,7 @@
 "label":"Zoom level",
 "note":"Display magnification mirrored from the phone. The stored int is an index into seven scales.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -13836,9 +13428,7 @@
 "label":"Enable screen reader",
 "note":"Copies the phone's TalkBack setting to the glasses.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -13849,9 +13439,7 @@
 "label":"Text size",
 "note":"Text size mirrored from the phone. The stored int is an index; the glasses map it to a font scale.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -13893,9 +13481,7 @@
 "label":"Messaging setup status",
 "note":"Per-provider linking state for messaging apps, stored as base64 protobuf. The phone app reads it; the glasses do not.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"structured",
 "format":"protobuf-base64",
@@ -14009,9 +13595,7 @@
 "label":"Allow input during setup",
 "note":"Blocks the assistant trigger while this and setup-complete are both 0. Any non-zero value is on.",
 "group":"Accessibility",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -14029,11 +13613,10 @@
 {
 "key":"smart_reply_enabled",
 "label":"Suggested replies",
+"label_ru":"Предлагаемые ответы",
 "note":"Show quick, suggested responses based on conversation context.",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -14045,9 +13628,7 @@
 "label":"Spatial audio",
 "note":"Plays media as plain stereo or as spatial audio.",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -14073,9 +13654,7 @@
 "label":"Spotify Tap",
 "note":"Tap and hold the glasses to play Spotify.",
 "group":"Music and media",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -14085,9 +13664,7 @@
 "label":"Band on standby: index finger instant action",
 "note":"Action for an index finger gesture on standby. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -14295,9 +13872,7 @@
 "label":"Band on standby: middle finger instant action",
 "note":"Key the band sends for a middle-finger instant action on standby. Nothing on the glasses reads it.",
 "group":"Neural band gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"choice",
 "options":[
@@ -14505,9 +14080,7 @@
 "label":"Tap and hold prompt",
 "note":"Prompt the assistant uses for the tap and hold action.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":100,
@@ -14517,11 +14090,11 @@
 {
 "key":"tap_and_hold_mapping",
 "label":"Tap and hold action",
+"label_it":"Azione di tocco prolungato",
+"label_ru":"Действие при касании с удержанием",
 "note":"Chooses what a touchpad tap and hold does, such as opening Meta AI or playing music.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -14532,11 +14105,13 @@
 },
 {
 "value":"1",
-"label":"None"
+"label":"Off",
+"label_it":"Disattivato",
+"label_ru":"Выкл."
 },
 {
 "value":"2",
-"label":"Assistant"
+"label":"Meta AI"
 },
 {
 "value":"3",
@@ -14552,23 +14127,31 @@
 },
 {
 "value":"6",
-"label":"iHeart"
+"label":"iHeartRadio"
 },
 {
 "value":"7",
-"label":"Conversation focus"
+"label":"Conversation focus",
+"label_it":"Focus conversazione",
+"label_ru":"Фокус на разговоре"
 },
 {
 "value":"8",
-"label":"Quick actions"
+"label":"Quick actions",
+"label_it":"Azioni rapide",
+"label_ru":"Быстрые действия"
 },
 {
 "value":"9",
-"label":"Sensing"
+"label":"Sensing",
+"label_it":"Rilevamento",
+"label_ru":"Распознавание"
 },
 {
 "value":"10",
-"label":"AI prompt"
+"label":"Custom Meta AI prompt",
+"label_it":"Prompt personalizzato per Meta AI",
+"label_ru":"Свой запрос к Meta AI"
 },
 {
 "value":"11",
@@ -14580,35 +14163,51 @@
 },
 {
 "value":"13",
-"label":"Live translation"
+"label":"Live translation",
+"label_it":"Traduzione in tempo reale",
+"label_ru":"Перевод в реальном времени"
 },
 {
 "value":"14",
-"label":"Heart rate (fitness)"
+"label":"Heart rate",
+"label_it":"Frequenza cardiaca",
+"label_ru":"Пульс"
 },
 {
 "value":"15",
-"label":"Workout duration"
+"label":"Workout duration",
+"label_it":"Durata dell'allenamento",
+"label_ru":"Длительность тренировки"
 },
 {
 "value":"16",
-"label":"Workout distance"
+"label":"Workout distance",
+"label_it":"Distanza dell'allenamento",
+"label_ru":"Дистанция тренировки"
 },
 {
 "value":"17",
-"label":"Workout pace"
+"label":"Workout pace",
+"label_it":"Ritmo dell'allenamento",
+"label_ru":"Темп тренировки"
 },
 {
 "value":"18",
-"label":"Hearing Dolores"
+"label":"Hearing",
+"label_it":"Udito",
+"label_ru":"Слух"
 },
 {
 "value":"19",
-"label":"Music"
+"label":"Music",
+"label_it":"Musica",
+"label_ru":"Музыка"
 },
 {
 "value":"20",
-"label":"Instagram Instants share"
+"label":"Instagram Instants share",
+"label_it":"Condividi su Instagram Instants",
+"label_ru":"Поделиться в Instagram Instants"
 }
 ]
 }
@@ -14618,9 +14217,7 @@
 "label":"Telecom untethered relay",
 "note":"Stored and synced only; nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -14630,9 +14227,7 @@
 "label":"Telecom glasses key ID",
 "note":"Identifier of the glasses' telecom encryption key. Stored and synced only.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":200,
@@ -14644,9 +14239,7 @@
 "label":"Telecom relay status",
 "note":"State of the telecom relay that works without the phone connected, as the phone reports it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -14699,9 +14292,7 @@
 "label":"Test switch (developer)",
 "note":"Developer test switch. Nothing on the glasses uses it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -14711,9 +14302,7 @@
 "label":"Test float (developer)",
 "note":"Test value with no effect. Only the mobile-config defaults and name tables use it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -14724,9 +14313,7 @@
 "label":"Test int (developer)",
 "note":"Developer test value. Nothing on the glasses reads it. Developer test value with no bounds, so nothing to offer.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -14737,9 +14324,7 @@
 "label":"Test int32 (developer)",
 "note":"Developer test value. Nothing on the glasses acts on it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -14750,9 +14335,7 @@
 "label":"Test text (developer)",
 "note":"Meta's test key; nothing reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":200,
@@ -14764,9 +14347,7 @@
 "label":"Test shared int (developer)",
 "note":"Test value for checking settings sync. Nothing on the glasses reads it. Developer test value; nothing on the glasses reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"number",
 "unit":""
@@ -14777,9 +14358,7 @@
 "label":"Test shared text (developer)",
 "note":"Meta's test key; nothing reads it.",
 "group":"Developer and tests",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":200,
@@ -14789,17 +14368,19 @@
 {
 "key":"tts_speak_speed",
 "label":"Speech speed",
-"note":"How fast the glasses speak. 100 is normal speed.",
+"label_it":"Velocità della voce",
+"label_ru":"Скорость речи",
+"note":"How fast the glasses speak.",
 "group":"Sound",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"75",
-"label":"0.75x"
+"label":"0.75x",
+"label_it":"0,75x",
+"label_ru":"0,75x"
 },
 {
 "value":"100",
@@ -14807,15 +14388,21 @@
 },
 {
 "value":"125",
-"label":"1.25x"
+"label":"1.25x",
+"label_it":"1,25x",
+"label_ru":"1,25x"
 },
 {
 "value":"150",
-"label":"1.5x"
+"label":"1.5x",
+"label_it":"1,5x",
+"label_ru":"1,5x"
 },
 {
 "value":"175",
-"label":"1.75x"
+"label":"1.75x",
+"label_it":"1,75x",
+"label_ru":"1,75x"
 }
 ]
 }
@@ -14825,9 +14412,7 @@
 "label":"Two-stage stabilization",
 "note":"Two-stage image stabilization for video.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -14837,9 +14422,7 @@
 "label":"Stabilization buffer size",
 "note":"Buffer size for two-stage video stabilisation. The code gives no unit or range, so it is read-only. No unit or bounds in the code, so no range can be offered.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -14850,12 +14433,9 @@
 "label":"Stabilisation buffer size (3K)",
 "note":"Stabilisation buffer size for the 3K variant. No code on the glasses uses it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
-"type":"readonly",
-"why":"This firmware does not have it: no code reads it and no app defines its type, so there is nothing to encode a value as."
+"type":"readonly"
 }
 },
 {
@@ -14863,9 +14443,7 @@
 "label":"Stabilization neighbor frames",
 "note":"Nothing on the glasses acts on this count; it is stored and synced only.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -14876,12 +14454,9 @@
 "label":"Stabilisation neighbour frames (3K)",
 "note":"Stored and synced only; nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
-"type":"readonly",
-"why":"This firmware does not have it: no code reads it and no app defines its type, so there is nothing to encode a value as."
+"type":"readonly"
 }
 },
 {
@@ -14889,9 +14464,7 @@
 "label":"Stabilized output height",
 "note":"Output height in pixels for two-stage stabilization. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":"px"
@@ -14902,12 +14475,9 @@
 "label":"Stabilisation output height (3K)",
 "note":"Stabilised output height for 3K video. This firmware does not use it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
-"type":"readonly",
-"why":"This firmware does not have it: no code reads it and no app defines its type, so there is nothing to encode a value as."
+"type":"readonly"
 }
 },
 {
@@ -14915,9 +14485,7 @@
 "label":"Stabilized output width",
 "note":"Output width of stabilized video, in pixels.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -14928,22 +14496,18 @@
 "label":"Stabilisation output width (3K)",
 "note":"Stabilised output width for 3K video. Nothing on the glasses reads it.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
-"type":"readonly",
-"why":"This firmware does not have it: no code reads it and no app defines its type, so there is nothing to encode a value as."
+"type":"readonly"
 }
 },
 {
 "key":"user_setup_ica_toggle_enabled",
 "label":"Announce calls",
+"label_ru":"Объявлять звонки",
 "note":"Hear who's calling you.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -14953,11 +14517,10 @@
 {
 "key":"verified_session_enabled",
 "label":"Verified sessions",
+"label_ru":"Подтверждённые сеансы",
 "note":"After a phone unlock, the session stays verified until you take the glasses off.",
 "group":"Privacy and data",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -14966,35 +14529,39 @@
 {
 "key":"video_duration_ms",
 "label":"Video length",
+"label_ru":"Длительность видео",
 "note":"Choose a maximum video length. These limits help optimize for sharing and space.",
 "group":"Video and live",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"30000",
 "label":"30 seconds",
-"label_it":"30 secondi"
+"label_it":"30 secondi",
+"label_ru":"30 секунд"
 },
 {
 "value":"60000",
 "label":"1 minute",
-"label_it":"1 minuto"
+"label_it":"1 minuto",
+"label_ru":"1 минута"
 },
 {
 "value":"180000",
 "label":"3 minutes",
-"label_it":"3 minuti"
+"label_it":"3 minuti",
+"label_ru":"3 минуты"
 },
 {
 "value":"300000",
 "label":"5 minutes",
 "label_it":"5 minuti",
+"label_ru":"5 минут",
 "detail":"At the default resolution only",
 "detail_it":"Solo alla risoluzione predefinita",
+"detail_ru":"Только при стандартном разрешении",
 "products":[
 262,
 263,
@@ -15006,7 +14573,8 @@
 {
 "value":"600000",
 "label":"10 minutes",
-"label_it":"10 minuti"
+"label_it":"10 minuti",
+"label_ru":"10 минут"
 },
 {
 "value":"5000",
@@ -15030,9 +14598,7 @@
 "label":"Video frame rate",
 "note":"Nothing on the glasses acts on this value; it is stored and synced only.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -15043,9 +14609,7 @@
 "label":"HDR video",
 "note":"Sets the HDR mode for video. Values are not named in the code read. Integer passed to the camera HAL; its value names are not decoded.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -15056,9 +14620,7 @@
 "label":"Stabilization mode",
 "note":"Stored and synced only. The camera reads the eis_mode setting instead.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -15069,9 +14631,7 @@
 "label":"White balance",
 "note":"Fixed colour temperature for video, 2000 to 8000 K. 0 lets the camera choose.",
 "group":"Video and live",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"number",
 "unit":"K",
@@ -15084,9 +14644,7 @@
 "label":"Voice memo eligibility",
 "note":"Result of the voice memo eligibility check, written by the system.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -15096,9 +14654,7 @@
 "label":"Voice notes early access",
 "note":"Early access switch for voice notes.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -15108,9 +14664,7 @@
 "label":"Audible alerts",
 "note":"Assistant will announce device status and errors.",
 "group":"Notifications",
-"invert":false,
-"user_facing":true,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 },
@@ -15121,9 +14675,7 @@
 "label":"Wake duration",
 "note":"Wake-up duration read by the always-on camera service. The unit and range are not in the binary.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"number",
 "unit":""
@@ -15132,25 +14684,30 @@
 {
 "key":"wake_handedness",
 "label":"Choose hand",
+"label_ru":"Выбор руки",
 "note":"Which hand the always-on camera tracks for wake gestures.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"choice",
 "options":[
 {
 "value":"0",
-"label":"Left hand"
+"label":"Left hand",
+"label_it":"Mano sinistra",
+"label_ru":"Левая рука"
 },
 {
 "value":"1",
-"label":"Right hand"
+"label":"Right hand",
+"label_it":"Mano destra",
+"label_ru":"Правая рука"
 },
 {
 "value":"2",
-"label":"Both hands"
+"label":"Both hands",
+"label_it":"Entrambe le mani",
+"label_ru":"Обе руки"
 }
 ]
 },
@@ -15161,9 +14718,7 @@
 "label":"Wake-only mode",
 "note":"Keeps the always-on camera off until you wake the glasses.",
 "group":"Camera",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 }
@@ -15173,9 +14728,7 @@
 "label":"Thumb to middle finger distance",
 "note":"Distance threshold for the thumb-to-middle-finger wake gesture. The code gives no unit.",
 "group":"Touch and gestures",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -15184,11 +14737,10 @@
 {
 "key":"wakeword_enabled",
 "label":"\"Hey Meta\"",
+"label_ru":"«Hey Meta»",
 "note":"Say \"Hey Meta\" or \"OK Meta\" to start a voice command.",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 },
@@ -15198,11 +14750,10 @@
 {
 "key":"wakeword_sound_enabled",
 "label":"Wake sound",
+"label_ru":"Звук активации",
 "note":"Your glasses will make a sound after you say \"Hey Meta\" or \"OK Meta.\"",
 "group":"Meta AI",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -15212,11 +14763,11 @@
 {
 "key":"water_eject_enabled",
 "label":"Water eject",
+"label_it":"Espulsione dell'acqua",
+"label_ru":"Выталкивание воды",
 "note":"Clears water from the speaker with an ejection sound.",
 "group":"Glasses",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"toggle"
 }
@@ -15224,11 +14775,10 @@
 {
 "key":"wear_detection_enabled",
 "label":"Wear detection",
+"label_ru":"Определение ношения",
 "note":"Features will pause when you take off your glasses and resume when you put them back on.",
 "group":"Glasses",
-"invert":false,
-"user_facing":true,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"toggle"
 },
@@ -15240,9 +14790,7 @@
 "label":"Glasses encryption key ID",
 "note":"ID of the glasses end-to-end encryption key. The phone sets it during relay setup.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":200,
@@ -15254,9 +14802,7 @@
 "label":"Glasses relay status",
 "note":"State of the relay that works without the phone connected, as the phone reports it. The phone sets it from its relay state machine.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"high",
+"invert":false,"confidence":"high",
 "control":{
 "type":"choice",
 "options":[
@@ -15309,9 +14855,7 @@
 "label":"Link previews in messages",
 "note":"Link previews in messages. Nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -15321,9 +14865,7 @@
 "label":"Wellness partner 1",
 "note":"Nothing on the glasses acts on this switch; it is stored and synced only.",
 "group":"Health and fitness",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -15333,9 +14875,7 @@
 "label":"Wellness partner 5",
 "note":"Turns on a wellness partner feature flag.",
 "group":"Health and fitness",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"toggle"
 }
@@ -15345,9 +14885,7 @@
 "label":"WhatsApp contacts sync",
 "note":"WhatsApp contact sync status. Stored and synced only; nothing on the glasses reads it.",
 "group":"Calls and messages",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"number",
 "unit":""
@@ -15358,9 +14896,7 @@
 "label":"Wi-Fi password",
 "note":"Stored on the glasses only. Nothing on the glasses uses it.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"low",
+"invert":false,"confidence":"low",
 "control":{
 "type":"text",
 "max":63,
@@ -15372,9 +14908,7 @@
 "label":"Wi-Fi network name",
 "note":"Name of the Wi-Fi network the glasses join.",
 "group":"Connectivity",
-"invert":false,
-"user_facing":false,
-"confidence":"medium",
+"invert":false,"confidence":"medium",
 "control":{
 "type":"text",
 "max":32,

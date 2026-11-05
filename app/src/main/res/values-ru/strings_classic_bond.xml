@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="classic_bond_title">Классическое сопряжение для звонков</string>
+    <string name="classic_bond_undo">Отменить классическое сопряжение</string>
+    <string name="classic_bond_running">Повторное сопряжение…</string>
+    <string name="classic_bond_present">Классическое сопряжение есть</string>
+    <string name="classic_bond_calls_on">Звонки подключены</string>
+    <string name="classic_bond_calls_off">Звонки не подключены</string>
+    <string name="classic_bond_unreachable">Режим сопряжения недоступен</string>
+    <string name="classic_bond_ready">Готово к повторному сопряжению</string>
+    <string name="classic_bond_confirm_title">Сопрячь очки заново?</string>
+    <string name="classic_bond_undo_title">Снова сопрячь по LE?</string>
+    <string name="classic_bond_confirm_text">Очки отменят сопряжение с этим телефоном и сопрягутся заново. Держите их раскрытыми рядом с телефоном и примите запрос на сопряжение. Если обе попытки не удадутся, очки придётся сбросить.</string>
+    <string name="classic_bond_confirm">Сопрячь заново</string>
+    <string name="classic_bond_fail_unsupported">Недоступно</string>
+    <string name="classic_bond_fail_busy">Не во время звонка, вида с камеры или импорта</string>
+    <string name="classic_bond_fail_companion">Нет сопутствующего устройства</string>
+    <string name="classic_bond_fail_refused">Отклонено (%1$s)</string>
+    <string name="classic_bond_fail_unpair">Телефон сохранил старое сопряжение</string>
+    <string name="classic_bond_fail_restored">Не сопряжены, старое сопряжение восстановлено</string>
+    <string name="classic_bond_fail_lost">Не сопряжены, возможно, очки нужно сбросить</string>
+    <string name="classic_bond_fail">Ошибка: %1$s</string>
+</resources>

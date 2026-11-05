@@ -8,6 +8,12 @@ import android.media.MediaFormat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/** An encoded audio packet, AAC-LC, on the glasses' clock like the video. */
+class AudioPacket(val ptsUs: Long, val data: ByteArray)
+
+/** AAC-LC as the recorder and RTMP take it: [asc] is the AudioSpecificConfig. */
+class AacFormat(val sampleRate: Int, val channels: Int, val asc: ByteArray)
+
 /** An AAC AudioSpecificConfig read for what a decoder and a container need. Null if it is not one. */
 fun aacFormatOf(asc: ByteArray): AacFormat? {
     if (asc.size < 2) return null

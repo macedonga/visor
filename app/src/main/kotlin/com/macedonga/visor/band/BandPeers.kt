@@ -14,8 +14,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** A band the Display has paired: its address, whether it is connected, and whether directly or through the phone. */
-data class PairedBand(val address: String, val connected: Boolean, val direct: Boolean)
+/** A band the Display has paired, and whether it is connected. */
+data class PairedBand(val connected: Boolean)
 
 /**
  * svc41109, bt_peer_connection: the Display's own pairing with the Neural Band. GET_BLE_PAIRING_INFO (1) is answered
@@ -40,16 +40,11 @@ class BandPeers @Inject constructor(private val connection: GlassesConnection) {
         } ?: return@withLock null
         val (info, found) = runCatching {
             val parsed = BtPeer.pairingInfo(answer)
-            val direct = parsed.links.filter { it.link == BtPeer.LINK_DIRECT }.map { address(it.identity) }.toSet()
-            parsed to parsed.peers.map { peer -> address(peer.identity).let { PairedBand(it, peer.connected, it in direct) } }
+            parsed to parsed.peers.map { PairedBand(it.connected) }
         }.getOrNull() ?: return@withLock null
         _bands.value = found
         info
     }
-
-    /** BleAddr {2 addr}, least significant byte first. */
-    private fun address(bleAddr: ByteArray): String =
-        BtPeer.address(bleAddr).reversed().joinToString(":") { "%02X".format(it) }
 
     private companion object {
         const val ANSWER_MS = 8_000L

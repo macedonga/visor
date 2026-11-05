@@ -24,10 +24,8 @@ class Darkroom(private val context: Context, private val index: GalleryIndex) {
         const val STRIP_BATCH = 6
     }
 
-    private val scratch = File(context.cacheDir, "darkroom").also { dir ->
-        // Clips an older version copied here: they are read in place now.
-        dir.listFiles { f -> f.extension == "mp4" || f.extension == "part" }?.forEach { it.delete() }
-    }
+    private val scratch = File(context.cacheDir, "darkroom")
+    private val stripLock = Mutex()
 
     /**
      * Runs [read] on the live photo's clip where it sits, the last [Kept.clipBytes] of its Motion Photo, as a file
@@ -70,7 +68,7 @@ class Darkroom(private val context: Context, private val index: GalleryIndex) {
     suspend fun frameTimes(kept: Kept): List<Long> = withContext(Dispatchers.IO) { readClip(kept) { fd, offset, length -> frameTimesUs(fd, offset, length) } }.orEmpty()
 
     /** The clip's frames, small, for the editor's strip: decoded a few at a time from the start, in one pass. */
-    suspend fun strip(kept: Kept): List<Bitmap> = making.withLock {
+    suspend fun strip(kept: Kept): List<Bitmap> = stripLock.withLock {
         withContext(Dispatchers.IO) {
             readClip(kept) { fd, offset, length -> stripFrames(fd, offset, length) }.orEmpty()
         }
@@ -100,10 +98,9 @@ class Darkroom(private val context: Context, private val index: GalleryIndex) {
         }
     }
 
-    private val making = Mutex()
-
     /** Writes [kept] again with [edit], in place. The photo keeps its name, its time and its clip. */
     suspend fun apply(kept: Kept, edit: Edit): Kept = withContext(Dispatchers.IO) {
+        val clip = if (kept.clipBytes > 0) checkNotNull(clipBytes(kept)) { "the live photo's clip could not be read" } else null
         val source = checkNotNull(source(kept, edit.frameUs)) { "the photo's source could not be read" }
         val developed = develop(source, edit)
         val heic = File(index.originals(kept.handle), Assembly.STILL).takeIf { it.isFile }
@@ -114,7 +111,6 @@ class Darkroom(private val context: Context, private val index: GalleryIndex) {
             if (developed !== source) developed.recycle()
             source.recycle()
         }
-        val clip = clipBytes(kept)
         val bytes = if (clip != null) motionPhoto(jpeg, clip, edit.frameUs ?: kept.keyFrameUs) else jpeg
         checkNotNull(context.contentResolver.openOutputStream(Uri.parse(kept.uri), "wt")).use { it.write(bytes) }
         val next = kept.copy(edit = edit)

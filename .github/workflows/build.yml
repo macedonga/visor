@@ -1,4 +1,4 @@
-# Builds the debug APK on every push to main and every pull request.
+# Builds the debug and release APKs on every push to main and every pull request.
 # There are no test suites: the glasses are the test. This only proves that the app still builds.
 name: Build
 
@@ -36,8 +36,8 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Build the debug APK
-        run: ./gradlew :app:assembleDebug
+      - name: Build the debug and release APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

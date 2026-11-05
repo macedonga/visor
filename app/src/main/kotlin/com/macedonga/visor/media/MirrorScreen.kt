@@ -4,8 +4,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,14 +29,13 @@ import com.macedonga.visor.core.media.ScreencastPhase
 import com.macedonga.visor.core.media.ScreencastState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.settings.ActionPill
+import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SettingsPage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 @HiltViewModel
@@ -52,7 +50,7 @@ class MirrorModel @Inject constructor(val screencast: Screencast, private val lo
         viewModelScope.launch {
             screencast.state.collect { s ->
                 when (s.phase) {
-                    ScreencastPhase.FAILED -> log.add("Mirror failed: ${s.fault}")
+                    ScreencastPhase.FAILED -> log.add("Mirror failed: ${s.fault} ${s.detail}".trim())
                     ScreencastPhase.LIVE -> log.add("Mirror live")
                     else -> Unit
                 }
@@ -71,7 +69,6 @@ class MirrorModel @Inject constructor(val screencast: Screencast, private val lo
     override fun onCleared() {
         decoding.launch { decoder?.release(); decoder = null }
         feed.cancel()
-        super.onCleared()
     }
 }
 
@@ -98,34 +95,34 @@ fun MirrorScreen(model: MirrorModel = hiltViewModel()) {
             )
         }
         item(key = "controls") {
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ActionPill(stringResource(R.string.mirror_start), onClick = { model.screencast.start() }, enabled = !active)
-                ActionPill(stringResource(R.string.mirror_stop), onClick = { model.screencast.stop() }, quiet = true, enabled = active)
+            Box(Modifier.padding(horizontal = SIDE, vertical = 12.dp)) {
+                if (active) ActionPill(stringResource(R.string.mirror_stop), { model.screencast.stop() }, quiet = true)
+                else ActionPill(stringResource(R.string.mirror_start), { model.screencast.start() })
             }
         }
         item(key = "state") {
-            Text(
-                phraseOf(state),
+            val phrase = phraseOf(state)
+            if (phrase != null) Text(
+                phrase,
                 style = Visor.type.label,
-                color = Visor.colors.textSecondary,
-                modifier = Modifier.padding(horizontal = 16.dp),
+                color = if (state.phase == ScreencastPhase.FAILED) Visor.colors.signal else Visor.colors.textSecondary,
+                modifier = Modifier.padding(horizontal = SIDE),
             )
         }
     }
 }
 
 @Composable
-private fun phraseOf(s: ScreencastState): String = when (s.phase) {
-    ScreencastPhase.IDLE -> stringResource(R.string.mirror_idle)
+private fun phraseOf(s: ScreencastState): String? = when (s.phase) {
+    ScreencastPhase.IDLE, ScreencastPhase.LIVE -> null
     ScreencastPhase.STARTING -> stringResource(R.string.mirror_starting)
-    ScreencastPhase.LIVE -> stringResource(R.string.mirror_live)
     ScreencastPhase.FAILED -> when (s.fault) {
-        ScreencastFault.NOT_CONNECTED -> stringResource(R.string.mirror_not_connected)
+        ScreencastFault.NOT_CONNECTED -> stringResource(R.string.connect_first)
         ScreencastFault.NOT_READ -> stringResource(R.string.mirror_not_read)
         ScreencastFault.NO_FLAG -> stringResource(R.string.mirror_no_flag)
-        ScreencastFault.FLAG_NOT_SENT -> stringResource(R.string.mirror_flag_not_sent, s.detail)
+        ScreencastFault.FLAG_NOT_SENT -> stringResource(R.string.mirror_flag_not_sent)
         ScreencastFault.NEEDS_RESTART -> stringResource(R.string.mirror_needs_restart)
-        ScreencastFault.NO_WIFI -> stringResource(R.string.mirror_no_wifi, s.detail)
+        ScreencastFault.NO_WIFI -> stringResource(R.string.mirror_no_wifi)
         ScreencastFault.NO_ANSWER -> stringResource(R.string.mirror_no_answer)
         ScreencastFault.ASLEEP -> stringResource(R.string.mirror_asleep)
         ScreencastFault.GLASSES_TIMEOUT -> stringResource(R.string.mirror_timeout)

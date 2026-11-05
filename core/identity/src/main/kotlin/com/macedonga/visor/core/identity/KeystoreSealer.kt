@@ -9,10 +9,13 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** DIVERGENCE: the Android counterpart of `sealing.py`'s `DpapiSealer`. */
-class KeystoreSealer(private val alias: String = DEFAULT_ALIAS) : Sealer {
+/** The blob is not one of ours, or it is damaged. */
+class SealingException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-    override fun seal(data: ByteArray): ByteArray {
+/** Seals data with an AES-GCM key kept in the Android Keystore. */
+class KeystoreSealer(private val alias: String = DEFAULT_ALIAS) {
+
+    fun seal(data: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(MAGIC)
@@ -22,8 +25,9 @@ class KeystoreSealer(private val alias: String = DEFAULT_ALIAS) : Sealer {
         return MAGIC + iv + cipher.doFinal(data)
     }
 
-    override fun unseal(blob: ByteArray): ByteArray {
-        if (!blob.startsWithMagic(MAGIC)) throw SealingException("not a sealed bundle")
+    /** @throws SealingException if the blob is not ours, is damaged, or will not open. */
+    fun unseal(blob: ByteArray): ByteArray {
+        if (!blob.startsWithMagic()) throw SealingException("not a sealed blob")
         if (blob.size < MAGIC.size + IV_BYTES) {
             throw SealingException("the store is damaged")
         }
@@ -37,13 +41,11 @@ class KeystoreSealer(private val alias: String = DEFAULT_ALIAS) : Sealer {
             cipher.updateAAD(MAGIC)
             cipher.doFinal(blob, MAGIC.size + IV_BYTES, blob.size - MAGIC.size - IV_BYTES)
         } catch (error: GeneralSecurityException) {
-            throw SealingException(
-                "the store will not open. Either the file is damaged, or this phone's " +
-                    "key for it is gone and the identity has to be imported again.",
-                error,
-            )
+            throw SealingException("the store will not open", error)
         }
     }
+
+    private fun ByteArray.startsWithMagic(): Boolean = size >= MAGIC.size && MAGIC.indices.all { this[it] == MAGIC[it] }
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance(PROVIDER).apply { load(null) }
@@ -68,10 +70,10 @@ class KeystoreSealer(private val alias: String = DEFAULT_ALIAS) : Sealer {
     }
 
     companion object {
-        const val DEFAULT_ALIAS = "visor.identity.store"
+        private const val DEFAULT_ALIAS = "visor.identity.store"
 
-        /** `VKS1`, and the associated data, for the same reason `LBS1` is. */
-        val MAGIC: ByteArray = "VKS1".toByteArray(Charsets.US_ASCII)
+        /** Marks a sealed blob; also the GCM associated data. */
+        private val MAGIC: ByteArray = "VKS1".toByteArray(Charsets.US_ASCII)
 
         private const val PROVIDER = "AndroidKeyStore"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"

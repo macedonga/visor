@@ -7,18 +7,16 @@ import com.macedonga.visor.core.connection.MT_PEER_APP_INFO
 import com.macedonga.visor.core.connection.MT_PEER_GET_INFO
 import com.macedonga.visor.core.connection.SVC_PEER_BUILD_INFO
 import com.macedonga.visor.core.connection.encodePeerAppInfo
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
-import com.macedonga.visor.settings.hasDisplay
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
@@ -32,8 +30,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PeerAppInfo @Inject constructor(
     private val glasses: Provider<GlassesConnection>,
     private val login: Provider<MetaLogin>,
+    log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, _ -> })
+    private val scope = responderScope(log, "Peer info")
 
     private val body: ByteArray by lazy {
         encodePeerAppInfo(
@@ -54,7 +53,7 @@ class PeerAppInfo @Inject constructor(
         scope.launch {
             // The apps ask as the link comes up, before the canary's answer names the model.
             val build = withTimeoutOrNull(MODEL_WAIT_MS) { glasses.get().state.mapNotNull { it.info?.build }.first() }
-            if (hasDisplay(build)) connection.send(reply, body, messageType = MT_PEER_APP_INFO)
+            if (isDisplayBuild(build)) connection.send(reply, body, messageType = MT_PEER_APP_INFO)
         }
     }
 

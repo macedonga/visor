@@ -151,7 +151,7 @@ class Albums(private val context: Context) {
     }
 
     companion object {
-        /** The album Visor has always written to, and the one an empty setting means. */
+        /** The album an empty setting means. */
         const val DEFAULT = "Visor"
 
         private const val PHOTOS = "photos"
@@ -173,16 +173,15 @@ class Albums(private val context: Context) {
         private val NOT_IN_NAMES = Regex("[\\u0000-\\u001f\\u007f\"*:<>?|]")
 
         /** The selection for [photosPattern] and [videosPattern]: the escape keeps a wildcard in an album name a letter. */
-        val MATCH = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '\\'"
+        val MATCH = "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? ESCAPE '$ESCAPE'"
 
         /** A folder the gallery takes: never empty, one level, nothing hidden, no characters MediaStore would change. */
         fun folder(raw: String?): String = raw.orEmpty()
             .replace('/', ' ')
             .replace('\\', ' ')
             .replace(NOT_IN_NAMES, "_")
-            .trim()
-            .trimStart('.')
-            .trim()
+            .trimStart { it == '.' || it.isWhitespace() }
+            .trimEnd()
             .take(MAX_NAME)
             .trim()
             .ifEmpty { DEFAULT }

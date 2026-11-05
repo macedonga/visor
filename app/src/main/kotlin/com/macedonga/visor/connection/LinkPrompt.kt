@@ -14,7 +14,6 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 @Singleton
 class LinkPrompt @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) {
     /** The account the glasses last asked for, for the Accounts page to put first; Messenger rides on Facebook. */
     private val _asked = MutableStateFlow<LinkedAccountType?>(null)
@@ -39,12 +38,13 @@ class LinkPrompt @Inject constructor(
     }
 
     suspend fun trigger(request: Wire.Fields, reply: Int, connection: DataXConnection) {
-        val name = PROVIDERS[request.varint(1)]
+        val provider = request.varint(1)
+        val name = PROVIDERS[provider]
+        val account = ACCOUNTS[provider]
         val reconnect = request.varint(4) == SCENARIO_RECONNECT
-        // The phone's WhatsApp links glasses only for an app signed with Meta's key, so it is answered as not possible.
-        val shown = name != null && request.varint(1) != WHATSAPP && show(name, reconnect)
-        if (shown) _asked.value = ROWS[request.varint(1)]
-        log.get().add("Accounts: the glasses asked to link ${name ?: "provider ${request.varint(1)}"} on the phone" + if (shown) "" else "; not shown")
+        val shown = name != null && account != null && show(name, reconnect)
+        if (shown) _asked.value = account
+        log.add("Accounts: the glasses asked to link ${name ?: "provider $provider"} on the phone" + if (shown) "" else "; not shown")
         val answer = Wire.fieldBytes(1, request.bytes(2)) + Wire.fieldVarint(2, if (shown) 1L else 0L)
         connection.send(reply, answer, messageType = MT_RESPONSE)
     }
@@ -55,15 +55,15 @@ class LinkPrompt @Inject constructor(
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL, context.getString(R.string.link_channel), NotificationManager.IMPORTANCE_DEFAULT),
         )
+        if (manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val open = PendingIntent.getActivity(
-            context, 2,
+            context, 3,
             Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_ACCOUNTS).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_visor)
             .setContentTitle(context.getString(if (reconnect) R.string.link_reconnect_title else R.string.link_title, name))
-            .setContentText(context.getString(R.string.link_text))
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
@@ -76,14 +76,13 @@ class LinkPrompt @Inject constructor(
         private const val MT_RESPONSE = 29
         private const val SCENARIO_RECONNECT = 1L
         private const val CHANNEL = "linking"
-        private const val NOTIFICATION_ID = 7
-        private const val WHATSAPP = 2L
+        private const val NOTIFICATION_ID = 9
 
         // CommunicateProvider, as the Meta app numbers it.
         private val PROVIDERS = mapOf(1L to "Messenger", 2L to "WhatsApp", 4L to "Instagram", 6L to "Facebook", 7L to "Threads")
 
-        // The svc89 account each one is linked as: Messenger has none of its own and goes as the Facebook account.
-        private val ROWS = mapOf(
+        // The svc89 account each is linked as; WhatsApp has none (see AccountLinking).
+        private val ACCOUNTS = mapOf(
             1L to LinkedAccountType.FACEBOOK, 4L to LinkedAccountType.INSTAGRAM,
             6L to LinkedAccountType.FACEBOOK, 7L to LinkedAccountType.THREADS,
         )

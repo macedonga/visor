@@ -6,10 +6,8 @@ import com.macedonga.visor.core.identity.IdentityTrustExchange
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.GlassesSession
 import com.macedonga.visor.core.session.Responder
-import com.macedonga.visor.core.session.SecureLink
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
-import com.macedonga.visor.core.transport.Transport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
@@ -40,7 +38,6 @@ class GlassesSessionHost(private val session: GlassesSession) : SessionHost {
 /** Builds a real session on a real transport, with the svc36 exchange the bundle's key needs. */
 class RealSessionHostFactory(
     private val transports: TransportFactory,
-    private val linkFactory: ((Transport) -> SecureLink)? = null,
     // Services this app hosts, by service id.
     private val responders: Map<Int, Responder> = emptyMap(),
 ) : SessionHostFactory {
@@ -48,11 +45,7 @@ class RealSessionHostFactory(
     override fun create(target: GlassesTarget, bundle: IdentityBundle?): SessionHost {
         val transport = transports.create(target.link)
         val trust = bundle?.let { IdentityTrustExchange(BundleCredentials(it)) }
-        val session = if (linkFactory == null) {
-            GlassesSession(transport = transport, trust = trust)
-        } else {
-            GlassesSession(transport = transport, trust = trust, linkFactory = linkFactory)
-        }
+        val session = GlassesSession(transport, trust)
         responders.forEach(session::addResponder)
         return GlassesSessionHost(session)
     }

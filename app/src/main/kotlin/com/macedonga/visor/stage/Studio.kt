@@ -8,22 +8,17 @@ import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.sqrt
 
-/**
- * What the glasses reflect: a black studio with a wide softbox overhead and a thin strip to one side,
- * computed here instead of shipped as a KTX. Half float, because the panels are brighter than white.
- * Only level 0 is uploaded; Filament makes the mips.
- */
+/** What the glasses reflect: a black studio with a softbox overhead and a side strip; half float, as panels outshine white. */
 internal object Studio {
     private const val SIZE = 64
 
-    fun reflections(engine: Engine): Texture {
+    fun reflections(engine: Engine, radiance: FloatArray): Texture {
         val texture = Texture.Builder()
             .width(SIZE).height(SIZE).levels(7)
             .sampler(Texture.Sampler.SAMPLER_CUBEMAP)
             .format(Texture.InternalFormat.RGBA16F)
             .usage(Texture.Usage.DEFAULT or Texture.Usage.GEN_MIPMAPPABLE)
             .build(engine)
-        val radiance = radiance()
         val buffer = ByteBuffer.allocateDirect(SIZE * SIZE * 6 * 4 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
         for (i in 0 until SIZE * SIZE * 6) buffer.put(radiance[i * 3]).put(radiance[i * 3 + 1]).put(radiance[i * 3 + 2]).put(1f)
         buffer.rewind()
@@ -33,8 +28,7 @@ internal object Studio {
     }
 
     /** Two bands of irradiance in Filament's pre-scaled form: sh[0] + sh[1] y + sh[2] z + sh[3] x, per channel. */
-    fun irradiance(): FloatArray {
-        val radiance = radiance()
+    fun irradiance(radiance: FloatArray): FloatArray {
         var weight = 0.0
         val mean = DoubleArray(3)
         val axis = Array(3) { DoubleArray(3) }
@@ -58,7 +52,8 @@ internal object Studio {
         return sh
     }
 
-    private fun radiance(): FloatArray {
+    /** The studio's light in every texel of the cube, RGB. */
+    internal fun radiance(): FloatArray {
         val out = FloatArray(SIZE * SIZE * 6 * 3)
         var i = 0
         forEachTexel { d, _ ->
@@ -72,10 +67,7 @@ internal object Studio {
         return out
     }
 
-    /**
-     * (overall, cool part). Every panel fades over a wide band, so the frame reflects large soft gradients the way
-     * a product does under diffusion, not the hard rectangles of a bare light.
-     */
+    /** (overall, cool part) towards a direction; every panel fades over a wide band, so reflections stay soft. */
     private fun studioAt(x: Float, y: Float, z: Float): Pair<Float, Float> {
         val room = 0.006f + 0.012f * ((y + 1) / 2).pow(2)
         val overhead = smooth(y, 0.62f, 0.98f) * smooth(-abs(x), -0.85f, -0.3f) * 1.7f

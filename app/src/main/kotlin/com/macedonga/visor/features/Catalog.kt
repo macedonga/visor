@@ -3,22 +3,17 @@ package com.macedonga.visor.features
 import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.macedonga.visor.R
+import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.media.McParam
 import com.macedonga.visor.settings.Topic
 import com.macedonga.visor.ui.VisorIcons
 
 /** A switch a feature needs, and the value that turns the feature on. */
 sealed interface Gate {
-    /**
-     * A MobileConfig param: it goes out in a table, and the glasses read most of them when they start. [live]: one
-     * the glasses keep per session but apply at once all the same, as seen on the glasses, so no restart is asked.
-     * [device]: only on glasses whose build names that device. [floor]: a minimum build, on at any number but -1, so
-     * Meta's own floor stays; it is only sent where there is none, and turning the feature off leaves it.
-     */
+    /** A MobileConfig param. [live]: applies without a restart. [device]: that build only. [floor]: a minimum build, sent only where none is set. */
     data class Config(
         val name: String,
         val on: Any,
-        val off: Any? = null,
         val live: Boolean = false,
         val device: String? = null,
         val floor: Boolean = false,
@@ -37,17 +32,10 @@ sealed interface Gate {
     data class Setting(val key: String, val on: String, val off: String? = null) : Gate
 }
 
-// Meta Ray-Ban Display, whose image has no hearingservice.
-private val DISPLAY = setOf(259, 270, 271)
-private val NO_HEARING_SERVICE = DISPLAY
-
-// Ray-Ban Meta (2023), Oakley Meta HSTN and Ray-Ban Meta Gen 2 share one DSP (hammerhead-rt600). Its hearing pipeline
-// has one output channel, while the hearing service always sends a left and a right gain map: the right one is
-// refused and hearing correction never starts (#42). Meta's app offers it on none of them.
+// One-channel hearing DSP (hammerhead-rt600): it refuses the right ear's gain map, so correction never starts.
 private val ONE_CHANNEL_HEARING = setOf(258, 265, 266)
 
-// The hearing service starts focus only above the minimum build MobileConfig gives this model (libhearing's
-// getDeviceTypeMinSoCVersion); -1 or none, as on glasses Meta never configured, is INVALID_DEVICE.
+// Focus starts only above this model's minimum build; -1 or none is INVALID_DEVICE.
 private val FOCUS_FLOORS =
     listOf(
         "hammerhead" to "min_rbm_soc_version", "mako" to "min_paloma_soc_version",
@@ -57,11 +45,7 @@ private val FOCUS_FLOORS =
             Gate.Config("hearing_on_sn.cf_min_${it}_soc_version", 0L, live = true, device = it, floor = true)
         }
 
-/**
- * A feature Meta keeps off on these glasses (for the country, or for testers), what it is, how to use it, the
- * switches that turn it on and the topic it shows on. Each was traced in the firmware past its gates to the point
- * where it works. Live AI is not one: its one switch is a glasses setting the Meta AI page already shows.
- */
+/** A feature Meta keeps off: its words, switches, topic and the products it cannot run on. */
 enum class Feature(
     val id: String,
     @StringRes val title: Int,
@@ -75,18 +59,21 @@ enum class Feature(
     val page: Boolean = false,
     /** Products it cannot run on. */
     val absentOn: Set<Int> = emptySet(),
+    /** Whether a Meta Ray-Ban Display runs it. */
+    val onDisplay: Boolean = true,
+    /** The one fact its row shows. */
+    @StringRes val note: Int? = null,
 ) {
-    // getHasCFAccess reads cf_enabled unless conversation_focus_use_eap_settings is on; without Meta's value it is
-    // false, NO_ACCESS, and the glasses ask for early access.
+    // The Display's image has no hearingservice.
+    // Without cf_enabled the glasses answer NO_ACCESS and ask for early access.
     CONVERSATION_FOCUS(
         "conversation_focus", R.string.feature_cf, R.string.feature_cf_about, R.string.feature_cf_use, VisorIcons.Ear,
         listOf(Gate.Setting("hearing_boost_nux_completed", "true"), Gate.Config("hearing_on_sn.cf_enabled", true, live = true)) + FOCUS_FLOORS,
         Topic.HEARING,
         page = true,
-        absentOn = NO_HEARING_SERVICE,
+        onDisplay = false,
     ),
-    // setupForHCModes refuses "HC is not supported on this device" (INVALID_DEVICE) while the first is off. The second
-    // is the version pass Meta's server sets beside it ("update your device"). Both apply at once on the glasses.
+    // Off, the glasses refuse with INVALID_DEVICE; both apply at once.
     HEARING_CORRECTION(
         "hearing_correction", R.string.feature_hc, R.string.feature_hc_about, R.string.feature_hc_use, VisorIcons.HearingAid,
         listOf(
@@ -95,10 +82,10 @@ enum class Feature(
         ),
         Topic.HEARING,
         page = true,
-        absentOn = NO_HEARING_SERVICE + ONE_CHANNEL_HEARING,
+        absentOn = ONE_CHANNEL_HEARING,
+        onDisplay = false,
     ),
-    // The group app's MainActivity finishes unless the first two are on; enable_aurachat starts aurachat through
-    // sysprop_map. Without Meta's signed key material the group key is AurachatKeyManager's all-zero DEBUG_KEY.
+    // The group app needs the first two; enable_aurachat starts aurachat; without Meta's key the group key is all zeros.
     GROUP_CONVERSATIONS(
         "group_conversations", R.string.feature_gc, R.string.feature_gc_about, R.string.feature_gc_use, VisorIcons.People,
         listOf(
@@ -108,15 +95,16 @@ enum class Feature(
         ),
         Topic.HEARING,
         // The Display ships neither aurachat nor the group app.
-        absentOn = DISPLAY,
+        onDisplay = false,
+        note = R.string.feature_gc_unencrypted,
     ),
-    // The glasses' TAR gate (isSgAlarmMCEnabled); Visor's timer service keeps the alarms Meta's app refuses.
+    // The glasses' alarms gate; Visor's timer service keeps the alarms.
     ALARMS(
         "alarms", R.string.feature_alarms, R.string.feature_alarms_about, R.string.feature_alarms_use, VisorIcons.Timer,
         listOf(Gate.Config("assistant_on_sn.sg_alarms_enabled", true)),
         Topic.META_AI,
     ),
-    // SgAudioServerController applies spatial_media_enabled only while xn_spatial_media is on, else logs a no-op.
+    // spatial_media_enabled works only while xn_spatial_media is on.
     SPATIAL_AUDIO(
         "spatial_audio", R.string.feature_spatial, R.string.feature_spatial_about, R.string.feature_spatial_use, VisorIcons.Speaker,
         listOf(Gate.Config("audio_on_xn.xn_spatial_media", true, live = true), Gate.Setting("spatial_media_enabled", "1", off = "0")),
@@ -138,7 +126,7 @@ enum class Feature(
     fun gatesFor(device: String?): List<Gate> = gates.filter { it !is Gate.Config || it.device == null || it.device == device }
 
     /** Whether [product] has it at all; unknown glasses are given the benefit. */
-    fun on(product: Int?): Boolean = product == null || product !in absentOn
+    fun offeredOn(product: Int?): Boolean = product == null || (product !in absentOn && (onDisplay || !isDisplayProduct(product)))
 
     companion object {
         fun byId(id: String): Feature? = entries.firstOrNull { it.id == id }

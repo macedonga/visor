@@ -1,5 +1,4 @@
-// Plugins are declared here so every module resolves the same version. Module build files
-// apply the convention plugins in build-logic rather than these directly.
+// Each plugin's version, declared once for every module.
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.android.library) apply false

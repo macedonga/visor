@@ -2,6 +2,7 @@ package com.macedonga.visor.settings
 
 import android.content.Context
 import com.macedonga.visor.R
+import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.media.LiveSettingsStore
@@ -54,6 +55,22 @@ class Pins @Inject constructor(@ApplicationContext context: Context) {
     }
 }
 
+/** A pin id taken apart. */
+sealed interface Pin
+
+data class GlassesPin(val key: String) : Pin
+
+data class TogglePin(val id: String) : Pin
+
+data class FeaturePin(val id: String) : Pin
+
+fun pinOf(id: String): Pin? = when {
+    id.startsWith("g:") -> GlassesPin(id.drop(2))
+    id.startsWith("v:") -> TogglePin(id.drop(2))
+    id.startsWith("f:") -> FeaturePin(id.drop(2))
+    else -> null
+}
+
 /** One of Visor's own switches, as a tile or a search result can show it. */
 class VisorToggle(
     val id: String,
@@ -82,11 +99,11 @@ class VisorToggles @Inject constructor(
             assistant.config.on { it.enabled }, { on -> assistant.update { it.copy(enabled = on) } },
         ),
         VisorToggle(
-            "vision", R.string.ai_vision, R.string.ai_vision_sub, Topic.META_AI,
+            "vision", R.string.ai_vision, null, Topic.META_AI,
             assistant.config.on { it.vision }, { on -> assistant.update { it.copy(vision = on) } },
         ),
         VisorToggle(
-            "voice_photos", R.string.ai_voice_photos, R.string.ai_voice_photos_sub, Topic.META_AI,
+            "voice_photos", R.string.ai_voice_photos, null, Topic.META_AI,
             assistant.config.on { it.voicePhotos }, { on -> assistant.update { it.copy(voicePhotos = on) } },
         ),
         VisorToggle(
@@ -94,18 +111,23 @@ class VisorToggles @Inject constructor(
             assistant.config.on { it.glassesVoice }, { on -> assistant.update { it.copy(glassesVoice = on) } },
         ),
         VisorToggle(
-            "quiet_actions", R.string.ai_quiet_actions, R.string.ai_quiet_actions_sub, Topic.META_AI,
+            "quiet_actions", R.string.ai_quiet_actions, null, Topic.META_AI,
             assistant.config.on { it.quietAfterActions }, { on -> assistant.update { it.copy(quietAfterActions = on) } },
         ),
         VisorToggle(
-            "web", R.string.ai_web, R.string.ai_web_sub, Topic.META_AI,
-            assistant.config.on { it.webSearch && it.provider == Provider.CLAUDE }, { on -> assistant.update { it.copy(webSearch = on) } },
+            "web", R.string.ai_web, null, Topic.META_AI,
+            assistant.config.on { it.webSearch }, { on -> assistant.update { it.copy(webSearch = on) } },
         ),
         VisorToggle(
-            "live_auto", R.string.live_auto, R.string.live_settings_auto_sub, Topic.LIVE,
+            "live_auto", R.string.live_auto_quality, null, Topic.LIVE,
             live.settings.on { !it.manual }, { auto -> live.update { it.copy(manual = !auto) } },
         ),
     )
+
+    /** The switches the chosen provider has no use for: web search is Claude's alone. */
+    val unoffered: StateFlow<Set<String>> = assistant.config.map(::unofferedOf).stateIn(scope, SharingStarted.Eagerly, unofferedOf(assistant.config.value))
+
+    private fun unofferedOf(c: AssistantConfig): Set<String> = if (c.provider == Provider.CLAUDE) emptySet() else setOf("web")
 
     fun byId(id: String): VisorToggle? = all.firstOrNull { it.id == id }
 }

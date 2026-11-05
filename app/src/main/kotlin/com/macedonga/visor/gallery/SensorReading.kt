@@ -11,10 +11,7 @@ import kotlin.math.atan2
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/**
- * What the glasses' sensors said about one capture, read from its two logs. Y is up (gravity reads +9.8 on it with
- * the head level); roll and pitch come from the accelerometer around the shutter, or across a video.
- */
+/** A capture's sensor logs, read; Y is up, roll and pitch come from the accelerometer. */
 class SensorReading(
     val samples: Int,
     val rateHz: Float,
@@ -74,7 +71,7 @@ class SensorReading(
                 shutterAt = shutter?.let(::at),
                 clip = frames.takeIf { it.size > 1 }?.let { at(it.first().timeNs)..at(it.last().timeNs) },
                 exposuresNs = frames.map(FrameRecord::exposureNs).filter { it > 0 },
-                peakDps = imu.maxOf { deg(sqrt(it.gx * it.gx + it.gy * it.gy + it.gz * it.gz)) },
+                peakDps = imu.maxOf { it.speedDps() },
             )
         }
 
@@ -84,18 +81,20 @@ class SensorReading(
             val count = IntArray(MOTION_POINTS)
             for (s in imu) {
                 val i = (((s.timeNs - t0).toDouble() / span) * (MOTION_POINTS - 1)).toInt().coerceIn(0, MOTION_POINTS - 1)
-                sum[i] += deg(sqrt(s.gx * s.gx + s.gy * s.gy + s.gz * s.gz))
+                sum[i] += s.speedDps()
                 count[i]++
             }
             return FloatArray(MOTION_POINTS) { if (count[it] > 0) sum[it] / count[it] else 0f }
         }
 
         private fun deg(radPerS: Float) = Math.toDegrees(radPerS.toDouble()).toFloat()
+
+        private fun ImuSample.speedDps() = deg(sqrt(gx * gx + gy * gy + gz * gz))
     }
 }
 
-/** 1/60 s, or 0.5 s for the long ones. */
-fun exposureWords(ns: Long): String {
+/** 1/60 s, or 0.5 s for the long ones, in the unit [seconds]. */
+fun exposureWords(ns: Long, seconds: String): String {
     val s = ns / 1e9
-    return if (s >= 0.3) "%.1f s".format(s) else "1/%d s".format((1 / s).roundToInt().coerceAtLeast(1))
+    return if (s >= 0.3) "%.1f %s".format(s, seconds) else "1/%d %s".format((1 / s).roundToInt().coerceAtLeast(1), seconds)
 }

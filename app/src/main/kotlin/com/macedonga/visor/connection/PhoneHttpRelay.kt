@@ -9,7 +9,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -26,9 +25,9 @@ import kotlinx.coroutines.launch
 @Singleton
 class PhoneHttpRelay @Inject constructor(
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Internet: a request failed: $e") })
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.add("Internet: a request failed: $e") })
     // Requests whose body the Display streams after them, by channel.
     private val streaming = ConcurrentHashMap<Int, Streamed>()
 
@@ -57,13 +56,17 @@ class PhoneHttpRelay @Inject constructor(
         streaming.remove(channel)
     }
 
+    fun clear() = streaming.clear()
+
     private suspend fun serve(channel: Int, request: Request, body: ByteArray?, mux: DataXConnection) {
-        val id = requests.start(request.url, SOURCE_TUNNEL, request.method)
+        val id = requests.start(request.url, RequestSource.TUNNEL, request.method)
         val reply = DataXConnection.mirror(channel)
+        var conn: HttpURLConnection? = null
         try {
             val url = URL(request.url)
             require(url.protocol == "http" || url.protocol == "https") { "not an http link" }
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            conn = url.openConnection() as HttpURLConnection
+            conn.apply {
                 requestMethod = request.method
                 instanceFollowRedirects = !request.disableRedirects
                 connectTimeout = CONNECT_MS
@@ -90,6 +93,7 @@ class PhoneHttpRelay @Inject constructor(
             requests.finish(id, "HTTP $code", failed = code >= 400, bytes = sent)
         } catch (e: Exception) {
             requests.finish(id, "failed: ${e.message}", failed = true)
+            conn?.disconnect()
             failed(channel, mux)
         }
     }
@@ -100,10 +104,10 @@ class PhoneHttpRelay @Inject constructor(
     }
 
     private fun response(code: Int, message: String, conn: HttpURLConnection): ByteArray {
-        var out = Wire.fieldVarint(1, code.toLong()) + Wire.fieldBytes(2, message.toByteArray())
+        var out = Wire.fieldVarint(1, code.toLong()) + Wire.fieldString(2, message)
         for ((name, values) in conn.headerFields) {
             if (name == null) continue
-            for (value in values) out += Wire.fieldBytes(3, Wire.fieldBytes(1, name.toByteArray()) + Wire.fieldBytes(2, value.toByteArray()))
+            for (value in values) out += Wire.fieldBytes(3, Wire.fieldString(1, name) + Wire.fieldString(2, value))
         }
         return out
     }
@@ -146,7 +150,5 @@ class PhoneHttpRelay @Inject constructor(
         private const val CHUNK = 1024
         private const val CONNECT_MS = 10_000
         private const val READ_MS = 30_000
-        // The request log's source for traffic of the tunnel rather than of the data fetcher.
-        private const val SOURCE_TUNNEL = -1
     }
 }

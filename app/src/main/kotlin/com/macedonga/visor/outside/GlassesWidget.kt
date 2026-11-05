@@ -11,9 +11,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Shader
-import android.os.Build
 import android.os.Bundle
-import android.text.format.DateUtils
 import android.util.Log
 import android.util.Size
 import android.util.SizeF
@@ -25,6 +23,8 @@ import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.VisorColors
 import com.macedonga.visor.home.PhoneShot
+import com.macedonga.visor.home.countWords
+import com.macedonga.visor.home.momentDay
 import com.macedonga.visor.home.moodWords
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.lookOf
@@ -67,12 +67,7 @@ suspend fun showWidgets(context: Context, glimpse: Glimpse) {
     if (ids.isEmpty()) return
     val cover = coverOf(context, glimpse.moment)
     for (id in ids) {
-        val views = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            RemoteViews(mapOf(SizeF(110f, 110f) to views(context, glimpse, null), SizeF(WIDE_DP, 110f) to views(context, glimpse, cover)))
-        } else {
-            val wide = manager.getAppWidgetOptions(id).getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) >= WIDE_DP
-            views(context, glimpse, if (wide) cover else null)
-        }
+        val views = RemoteViews(mapOf(SizeF(110f, 110f) to views(context, glimpse, null), SizeF(WIDE_DP, 110f) to views(context, glimpse, cover)))
         runCatching { manager.updateAppWidget(id, views) }.onFailure { Log.w("Visor", "widget update failed", it) }
     }
 }
@@ -88,6 +83,7 @@ private fun views(context: Context, g: Glimpse, cover: Cover?): RemoteViews {
     if (battery != null) {
         v.setViewVisibility(R.id.battery_row, View.VISIBLE)
         v.setTextViewText(R.id.battery, "$battery%")
+        v.setContentDescription(R.id.battery, if (g.charging) context.getString(R.string.glasses_battery_charging, battery) else "$battery%")
         // A number from before, asleep or docked, is shown but dimmed, as on the home.
         v.setTextColor(R.id.battery, context.getColor(if (g.here) R.color.text_primary else R.color.text_dim))
         v.setViewVisibility(R.id.bolt, if (g.charging) View.VISIBLE else View.GONE)
@@ -104,7 +100,7 @@ private fun views(context: Context, g: Glimpse, cover: Cover?): RemoteViews {
     v.setViewVisibility(R.id.detail, if (case != null && battery != null) View.VISIBLE else View.GONE)
     if (case != null) v.setTextViewText(R.id.detail, context.getString(R.string.widget_case, case))
     v.setOnClickPendingIntent(R.id.status, open(context, null))
-    if (wide) moment(context, v, g.moment, cover!!)
+    cover?.let { moment(context, v, g.moment, it) }
     return v
 }
 
@@ -120,17 +116,10 @@ private fun moment(context: Context, v: RemoteViews, moment: List<PhoneShot>, co
     }
     v.setImageViewBitmap(R.id.photo, cover.bitmap)
     v.setViewVisibility(R.id.scrim, View.VISIBLE)
-    val day = DateUtils.getRelativeTimeSpanString(shot.takenAt, System.currentTimeMillis(), DateUtils.DAY_IN_MILLIS).toString() +
-        ", " + DateUtils.formatDateTime(context, shot.takenAt, DateUtils.FORMAT_SHOW_TIME)
-    v.setTextViewText(R.id.moment_day, day.replaceFirstChar { it.titlecase() })
+    v.setTextViewText(R.id.moment_day, momentDay(context, shot.takenAt))
     v.setTextColor(R.id.moment_day, context.getColor(R.color.text_primary))
     val photos = moment.count { !it.video }
-    val videos = moment.size - photos
-    val counts = listOfNotNull(
-        photos.takeIf { it > 0 }?.let { context.resources.getQuantityString(R.plurals.home_photos, it, it) },
-        videos.takeIf { it > 0 }?.let { context.resources.getQuantityString(R.plurals.home_videos, it, it) },
-    ).joinToString(" · ")
-    v.setTextViewText(R.id.moment_counts, counts)
+    v.setTextViewText(R.id.moment_counts, countWords(context.resources, photos, moment.size - photos).joinToString(" · "))
     v.setViewVisibility(R.id.moment_counts, View.VISIBLE)
     v.setOnClickPendingIntent(R.id.moment, open(context, MainActivity.OPEN_GALLERY))
 }
@@ -158,10 +147,7 @@ private suspend fun coverOf(context: Context, moment: List<PhoneShot>): Cover {
 
 private val glows = ConcurrentHashMap<Pair<Mood, Boolean>, Bitmap>()
 
-/**
- * The stage's pool for [mood], from above: its colour at the heart and the rim, its strength. Wide, it sits over
- * the words on the left. Small, since a soft gradient scales up without showing it.
- */
+/** [mood]'s stage light as a 96 px pool, left of centre when [wide]; the launcher scales it up. */
 private fun glow(mood: Mood, wide: Boolean): Bitmap = glows.getOrPut(mood to wide) {
     val look = lookOf(mood, VisorColors())
     val h = 96

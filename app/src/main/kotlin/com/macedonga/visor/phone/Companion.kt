@@ -1,6 +1,7 @@
 package com.macedonga.visor.phone
 
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.companion.AssociationRequest
 import android.companion.BluetoothDeviceFilter
 import android.companion.CompanionDeviceManager
@@ -22,6 +23,11 @@ fun companionAssociated(context: Context): Boolean = runCatching {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) cdm.myAssociations.isNotEmpty() else cdm.associations.isNotEmpty()
 }.getOrDefault(false)
 
+/** Android lets Visor open another app while one of its activities is in front, or as the glasses' companion. */
+fun mayOpenApps(context: Context): Boolean = ActivityManager.RunningAppProcessInfo()
+    .also(ActivityManager::getMyMemoryState).importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+    companionAssociated(context)
+
 /** Asks once per pair, the first time Visor is in front with it connected; Phone access asks again at any time. */
 fun askCompanionOnce(context: Context, address: String, ask: (IntentSender) -> Unit) {
     if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_COMPANION_DEVICE_SETUP) || companionAssociated(context)) return
@@ -36,8 +42,8 @@ fun askCompanionOnce(context: Context, address: String, ask: (IntentSender) -> U
  * Asks Android to make the glasses at [address] Visor's companion device, or whichever device the person picks when the
  * address is not known. Android's own dialog comes through [ask].
  */
-fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -> Unit, failed: (String) -> Unit) {
-    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return failed("this phone has no companion devices")
+fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -> Unit, failed: () -> Unit) {
+    val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return failed()
     val request = AssociationRequest.Builder()
         .apply { if (address != null) addDeviceFilter(BluetoothDeviceFilter.Builder().setAddress(address).build()) }
         .setSingleDevice(address != null)
@@ -49,7 +55,7 @@ fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -
 
         override fun onAssociationPending(intentSender: IntentSender) = ask(intentSender)
 
-        override fun onFailure(error: CharSequence?) = failed(error?.toString().orEmpty())
+        override fun onFailure(error: CharSequence?) = failed()
     }
     @Suppress("DEPRECATION")
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) cdm.associate(request, context.mainExecutor, callback)
@@ -61,7 +67,6 @@ fun associateCompanion(context: Context, address: String?, ask: (IntentSender) -
  * Called at every start of the app; repeating it is harmless.
  */
 fun observeCompanions(context: Context, log: EventLog) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
     val cdm = context.getSystemService(CompanionDeviceManager::class.java) ?: return
     runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {

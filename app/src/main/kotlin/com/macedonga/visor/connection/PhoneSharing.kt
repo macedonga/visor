@@ -2,20 +2,23 @@ package com.macedonga.visor.connection
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.ExtraFiles
 import com.macedonga.visor.core.media.NAMESPACE_SHARING
 import com.macedonga.visor.core.media.Offer
 import com.macedonga.visor.core.media.Received
 import com.macedonga.visor.core.protocol.Wire
+import com.macedonga.visor.core.protocol.uuidText
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
-import com.macedonga.visor.settings.hasDisplay
+import com.macedonga.visor.log.responderScope
+import com.macedonga.visor.notify.GlassesNotification
+import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -23,10 +26,7 @@ import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -43,23 +43,28 @@ import kotlinx.coroutines.withTimeoutOrNull
 @Singleton
 class PhoneSharing @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val connection: Provider<GlassesConnection>,
+    private val glasses: Provider<GlassesConnection>,
     private val airship: AirshipReceiver,
     private val messages: PhoneMessages,
     private val kind: LinkKind,
     private val requests: RequestLog,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder, ExtraFiles {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> log.get().add("Sharing: failed: $e") })
+    private val scope = responderScope(log, "Sharing")
     private val files = ConcurrentHashMap<String, CompletableDeferred<File>>()
 
-    fun start(scope: CoroutineScope) {
-        scope.launch {
-            connection.get().state.map { it.link == LinkState.READY }.distinctUntilChanged().collect { ready ->
+    // Photos an earlier run kept for a media intent that never came.
+    init {
+        scope.launch { File(context.cacheDir, SHARE_DIR).deleteRecursively() }
+    }
+
+    fun start(owner: CoroutineScope) {
+        owner.launch {
+            glasses.get().state.map { it.link == LinkState.READY }.distinctUntilChanged().collect { ready ->
                 // Only the Display's sharing is used; other glasses keep their own.
-                if (!ready || !hasDisplay(connection.get().state.value.info?.build)) return@collect
+                if (!ready || !isDisplayBuild(glasses.get().state.value.info?.build)) return@collect
                 if (this@PhoneSharing !in airship.extras) airship.extras.add(0, this@PhoneSharing)
-                connection.get().submit { it.sendOnService(SVC, MT_ENUMERATE_REQUEST, ByteArray(0)) }
+                glasses.get().submit { it.sendOnService(SVC, MT_ENUMERATE_REQUEST, ByteArray(0)) }
             }
         }
     }
@@ -67,10 +72,8 @@ class PhoneSharing @Inject constructor(
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         if (message.payload.isEmpty() && message.info.flags.isClosed) return
         val type = message.info.messageType
-        // The channel is Visor's own: the glasses answer on it without the originator bit, and Visor writes it with.
-        val reply = message.info.channelId xor 0x8000
+        val reply = DataXConnection.own(message.info.channelId)
         val f = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
-        log.get().add("Sharing: type $type, ${message.payload.size} bytes, fields ${f.fieldNumbers()}")
         when (type) {
             MT_MEDIA_OFFER, MT_MEDIA_OFFER_LAST -> {
                 val uuid = f.bytes(1)
@@ -85,12 +88,11 @@ class PhoneSharing @Inject constructor(
 
     override fun wants(offer: Offer): Boolean = offer.namespace == NAMESPACE_SHARING && files.containsKey(offer.uuid)
 
-    // The receiver deletes its file afterwards, so the photo is copied; the assistant may want it too.
+    // The receiver deletes its file afterwards, so the photo is copied.
     override fun take(received: Received) {
-        val kept = File(File(context.cacheDir, "share").apply { mkdirs() }, received.offer.uuid)
+        val kept = File(File(context.cacheDir, SHARE_DIR).apply { mkdirs() }, received.offer.uuid)
         received.file.copyTo(kept, overwrite = true)
         files[received.offer.uuid]?.complete(kept)
-        airship.extras.filter { it !== this && it.wants(received.offer) }.forEach { runCatching { it.take(received) } }
     }
 
     /** MediaIntent {1 uuid, 2 media uuid, 4 ShareIntent, 8 AssistantOffloadIntent}: answered with MediaIntentResponse. */
@@ -106,14 +108,14 @@ class PhoneSharing @Inject constructor(
                     } catch (e: Exception) {
                         SHARE_ERROR_APP to (e.message ?: e.toString())
                     }
-                    val response = (error?.let { Wire.fieldBytes(1, it.encodeToByteArray()) } ?: ByteArray(0)) + Wire.fieldVarint(2, result) +
+                    val response = (error?.let { Wire.fieldString(1, it) } ?: ByteArray(0)) + Wire.fieldVarint(2, result) +
                         (if (result == SHARE_SUCCESS) Wire.fieldVarint(3, System.currentTimeMillis()) else ByteArray(0))
                     mux.send(reply, Wire.fieldBytes(1, uuid) + Wire.fieldBytes(RESPONSE_SHARE, response), messageType = MT_MEDIA_INTENT_RESPONSE)
                 }
                 // The assistant has the photo from the airship transfer.
                 f.has(INTENT_ASSISTANT_OFFLOAD) ->
                     mux.send(reply, Wire.fieldBytes(1, uuid) + Wire.fieldBytes(RESPONSE_ASSISTANT_OFFLOAD, Wire.fieldVarint(1, OFFLOAD_SUCCESS)), messageType = MT_MEDIA_INTENT_RESPONSE)
-                else -> log.get().add("Sharing: intent ${f.fieldNumbers()} not served")
+                else -> log.add("Sharing: intent ${f.fieldNumbers()} not served")
             }
         } finally {
             files.remove(media)?.let { d -> if (d.isCompleted) runCatching { d.getCompleted().delete() } }
@@ -123,16 +125,16 @@ class PhoneSharing @Inject constructor(
     /** ShareIntent {2 ShareDestination {1 provider, 3 thread, 6 numbers}, 5 text, 8 share id}: the result and why not. */
     private suspend fun share(share: Wire.Fields, media: String): Pair<Long, String?> {
         val destination = Wire.parse(share.bytes(2))
-        val id = requests.start("mms://share/${share.bytes(8).decodeToString()}", SOURCE_SMS)
-        val provider = destination.varint(1)
-        val outcome: Pair<Long, String?> = if (provider != PROVIDER_NATIVE) {
+        val id = requests.start("mms://share/${share.bytes(8).decodeToString()}", RequestSource.SMS)
+        val provider = destination.varint(1).toInt()
+        val outcome: Pair<Long, String?> = if (provider != GlassesNotification.PROVIDER_NATIVE) {
             SHARE_ERROR_APP to "Only the phone's texts can be sent through Visor"
         } else {
             val numbers = destination.repeatedBytes(6).map { Wire.parse(it).bytes(1).decodeToString() }.filter { it.isNotBlank() }
             val to = numbers.ifEmpty { messages.addressesOf(destination.bytes(3).decodeToString()) }
             val file = files[media]?.let { withTimeoutOrNull(FILE_WAIT_MS) { it.await() } }
             when {
-                context.checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED -> SHARE_ERROR_NATIVE_DISABLED to "SMS not allowed in Visor"
+                !context.allows(Manifest.permission.SEND_SMS) -> SHARE_ERROR_NATIVE_DISABLED to "SMS not allowed in Visor"
                 to.isEmpty() -> SHARE_ERROR_APP to "No recipient"
                 to.size > 1 -> SHARE_ERROR_APP to "Group messages are not supported"
                 file == null -> SHARE_ERROR_MEDIA_PROCESSING to "The picture did not arrive"
@@ -141,12 +143,6 @@ class PhoneSharing @Inject constructor(
         }
         requests.finish(id, outcome.second ?: "sent as MMS", failed = outcome.second != null)
         return outcome
-    }
-
-    private fun uuidText(raw: ByteArray): String {
-        val h = raw.joinToString("") { "%02x".format(it) }
-        if (raw.size != 16) return h
-        return "${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}"
     }
 
     companion object {
@@ -167,12 +163,11 @@ class PhoneSharing @Inject constructor(
         private const val RESPONSE_SHARE = 2
         private const val RESPONSE_ASSISTANT_OFFLOAD = 5
         private const val OFFLOAD_SUCCESS = 1L
-        private const val PROVIDER_NATIVE = 3L
         private const val SHARE_SUCCESS = 1L
         private const val SHARE_ERROR_MEDIA_PROCESSING = 2L
         private const val SHARE_ERROR_APP = 5L
         private const val SHARE_ERROR_NATIVE_DISABLED = 8L
         private const val FILE_WAIT_MS = 90_000L
-        private const val SOURCE_SMS = -4
+        private const val SHARE_DIR = "share"
     }
 }

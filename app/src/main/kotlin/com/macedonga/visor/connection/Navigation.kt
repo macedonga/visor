@@ -1,48 +1,44 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
+import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
-import com.macedonga.visor.settings.hasDisplay
+import com.macedonga.visor.log.responderScope
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.max
 import kotlin.math.roundToLong
-import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/**
- * svc42, smartglasses_navigation, on the Display. The phone opens the channel and sends NavInitChannelRequest (type 0,
- * {1 platform, Android 1}); the glasses answer (type 1), then both sides send NavMessage (type 2) {1 msgType, and a
- * oneof whose case is the field number}. The glasses ask for a route (ROUTE_REQUEST, 0) and for guidance (NAV_REQUEST,
- * 2); Visor answers with ROUTE_RESPONSE (1), then NAV_UPDATE (3) each second with the phone's snapped position, a
- * MANEUVER_NOTIFICATION (8) per turn, REROUTE_UPDATE (7) after a re-route, and KEEPALIVE (17) on a timer. The route
- * is OpenStreetMap's (see [OsrmRouter]); its line goes out as that router's encoded polyline. The map tiles are the
- * glasses' own.
- */
+/** svc42, the Display's turn-by-turn: a route from [OsrmRouter], then a NAV_UPDATE each second and a notice per maneuver. */
 @Singleton
 class Navigation @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val glasses: Provider<GlassesConnection>,
     private val position: PhonePosition,
     private val router: OsrmRouter,
     private val requests: RequestLog,
     private val maps: Provider<MapsConstellation>,
-    private val log: Provider<EventLog>,
+    private val log: EventLog,
 ) : Responder {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> log.get().add("Navigation: failed: $e") })
+    private val scope = responderScope(log, "Navigation", Dispatchers.Default)
 
     @Volatile
     private var session: Session? = null
@@ -50,7 +46,7 @@ class Navigation @Inject constructor(
     /** Opens the channel once a Display is linked, and drops the session when the link goes. */
     fun start(owner: CoroutineScope) {
         owner.launch {
-            glasses.get().state.map { it.link == LinkState.READY && hasDisplay(it.info?.build) }.distinctUntilChanged().collect { ready ->
+            glasses.get().state.map { it.link == LinkState.READY && isDisplayBuild(it.info?.build) }.distinctUntilChanged().collect { ready ->
                 if (ready) {
                     glasses.get().submit { it.sendOnService(SVC, MT_INIT_REQUEST, Wire.fieldVarint(1, PLATFORM_ANDROID)) }
                 } else {
@@ -61,11 +57,13 @@ class Navigation @Inject constructor(
     }
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
-        if (message.info.flags.isClosed) return endSession()
         if (message.info.messageType != MT_NAV_MESSAGE) return
         val f = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
-        // The channel is Visor's own: the glasses answer on it without the originator bit, and Visor writes it with.
-        val s = session ?: Session(connection, message.info.channelId xor 0x8000).also { session = it }
+        val s = session?.takeIf { it.mux === connection } ?: run {
+            endSession()
+            // The bit flipped: set on Visor's own channel, cleared on one the glasses opened.
+            Session(connection, message.info.channelId xor DataXConnection.ORIGINATOR_BIT).also { session = it }
+        }
         when (f.varint(1).toInt()) {
             MSG_ROUTE_REQUEST -> scope.launch { routeRequest(f, s) }
             MSG_NAV_REQUEST -> startGuidance(s)
@@ -75,6 +73,11 @@ class Navigation @Inject constructor(
         }
     }
 
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        val s = session ?: return
+        if (s.mux === connection && DataXConnection.mirror(s.reply) == DataXConnection.mirror(channelId)) endSession()
+    }
+
     private suspend fun routeRequest(f: Wire.Fields, s: Session) {
         val req = Wire.parse(f.bytes(2))
         val requestId = req.bytes(2)
@@ -82,14 +85,14 @@ class Navigation @Inject constructor(
         val geo = Wire.parse(place.bytes(4))
         val title = place.bytes(1).decodeToString().ifBlank { "place" }
         val to = if (geo.has(1)) LatLng(geo.double(1), geo.double(2)) else null
-        val logId = requests.start("route://$title", SOURCE_MAPS, "walking")
-        if (s.guiding) return answerRoute(s, requestId, null, "Error: Navigation in progress.", logId)
+        val logId = requests.start("route://$title", RequestSource.MAPS, "walking")
+        if (s.guiding.get()) return answerRoute(s, requestId, null, "Error: Navigation in progress.", logId)
         val from = position.current()
-        if (to == null || from == null) return answerRoute(s, requestId, null, "No phone location or destination", logId)
+        if (to == null || from == null) return answerRoute(s, requestId, null, context.getString(R.string.nav_err_no_position), logId)
         val route = try {
             router.route(from, to)
         } catch (e: Exception) {
-            return answerRoute(s, requestId, null, "No route found", logId, e.message)
+            return answerRoute(s, requestId, null, context.getString(R.string.nav_err_no_route), logId, e.message)
         }
         s.route = route
         s.destination = to
@@ -102,25 +105,24 @@ class Navigation @Inject constructor(
         val body = if (route != null) {
             Wire.fieldVarint(1, RESULT_SUCCESS) + Wire.fieldVarint(2, SOURCE_GLASS) + Wire.fieldBytes(3, routeDetails(route)) + Wire.fieldBytes(6, requestId)
         } else {
-            Wire.fieldVarint(1, RESULT_ERROR) + Wire.fieldVarint(2, SOURCE_MWA) + Wire.fieldBytes(4, (error ?: "").encodeToByteArray()) + Wire.fieldBytes(6, requestId)
+            Wire.fieldVarint(1, RESULT_ERROR) + Wire.fieldVarint(2, SOURCE_MWA) + Wire.fieldString(4, error ?: "") + Wire.fieldBytes(6, requestId)
         }
         s.mux.send(s.reply, nav(MSG_ROUTE_RESPONSE, CASE_ROUTE_RESPONSE, body), MT_NAV_MESSAGE)
         if (route != null) {
-            requests.finish(logId, "${route.steps.size} steps, ${(route.metres / 100).roundToLong() / 10.0} km", failed = false)
-            log.get().add("Navigation: route to ${s.title}, ${route.steps.size} maneuvers")
+            requests.finish(logId, "${route.steps.size} steps, ${route.km} km", failed = false)
+            log.add("Navigation: route to ${s.title}, ${route.steps.size} maneuvers")
         } else {
             requests.finish(logId, detail ?: error.orEmpty(), failed = true)
-            log.get().add("Navigation: no route: ${error.orEmpty()}")
+            log.add("Navigation: no route: ${error.orEmpty()}")
         }
     }
 
     private suspend fun startGuidance(s: Session) {
-        val route = s.route ?: return log.get().add("Navigation: guidance asked with no route")
-        if (s.guiding) return
-        s.guiding = true
+        val route = s.route ?: return log.add("Navigation: guidance asked with no route")
+        if (!s.guiding.compareAndSet(false, true)) return
         s.notified = -1
         s.offTicks = 0
-        s.logId = requests.start("guide://${s.title}", SOURCE_MAPS, "walking")
+        s.logId = requests.start("guide://${s.title}", RequestSource.MAPS, "walking")
         position.use()
         s.spot = Spot(route.line[0], 0, 0.0)
         sendUpdate(s, route, STATE_STARTED, NAVIGATOR_ON_ROUTE, 0)
@@ -134,7 +136,7 @@ class Navigation @Inject constructor(
 
     /** One second of guidance. Returns false once guidance has ended. */
     private suspend fun tick(s: Session): Boolean {
-        if (!s.guiding) return false
+        if (!s.guiding.get()) return false
         val route = s.route ?: return false
         // The Display's Maps guides from svc11004 then; this one stays quiet so turns are not told twice.
         if (maps.get().guiding) return true
@@ -144,20 +146,20 @@ class Navigation @Inject constructor(
             return true
         }
         val snap = route.snap(here)
-        val offRoute = snap.off > OFF_ROUTE_M
+        val offRoute = snap.offRoute
         s.offTicks = if (offRoute) s.offTicks + 1 else 0
         if (s.offTicks >= REROUTE_TICKS) {
             reroute(s, here)
-            return s.guiding
+            return s.guiding.get()
         }
         s.spot = Spot(snap.at, snap.index, snap.along)
-        if (route.metres - snap.along < ARRIVE_M) {
+        if (route.arrived(snap.along)) {
             sendUpdate(s, route, STATE_ARRIVED, NAVIGATOR_STOPPED, route.steps.lastIndex)
             finish(s, "arrived")
             return false
         }
         val steps = route.steps
-        val next = steps.indexOfFirst { snap.along < it.along + PASSED_M }.let { if (it < 0) steps.lastIndex else it }
+        val next = route.nextStep(snap.along)
         sendUpdate(s, route, STATE_IN_PROGRESS, if (offRoute) NAVIGATOR_OFF_ROUTE else NAVIGATOR_ON_ROUTE, next)
         if (next != s.notified) {
             s.notified = next
@@ -173,7 +175,7 @@ class Navigation @Inject constructor(
         val fresh = try {
             router.route(here, to)
         } catch (e: Exception) {
-            log.get().add("Navigation: reroute failed: ${e.message}")
+            log.add("Navigation: reroute failed: ${e.message}")
             s.mux.send(s.reply, nav(MSG_REROUTE_UPDATE, CASE_REROUTE, Wire.fieldVarint(1, RESULT_ERROR)), MT_NAV_MESSAGE)
             return
         }
@@ -181,23 +183,26 @@ class Navigation @Inject constructor(
         s.spot = Spot(fresh.line[0], 0, 0.0)
         s.notified = -1
         s.mux.send(s.reply, nav(MSG_REROUTE_UPDATE, CASE_REROUTE, Wire.fieldVarint(1, RESULT_SUCCESS) + Wire.fieldBytes(2, routeDetails(fresh))), MT_NAV_MESSAGE)
-        log.get().add("Navigation: rerouted, ${fresh.steps.size} maneuvers")
+        log.add("Navigation: rerouted, ${fresh.steps.size} maneuvers")
     }
 
     private suspend fun stopGuidance(s: Session, outcome: String) {
-        if (!s.guiding) return
+        if (!s.guiding.get()) return
         s.ticker?.cancel()
         s.ticker = null
-        s.route?.let { sendUpdate(s, it, STATE_STOPPED, NAVIGATOR_STOPPED, max(s.notified, 0)) }
-        finish(s, outcome)
+        try {
+            s.route?.let { sendUpdate(s, it, STATE_STOPPED, NAVIGATOR_STOPPED, max(s.notified, 0)) }
+        } finally {
+            finish(s, outcome)
+        }
     }
 
-    /** Ends guidance's bookkeeping. Only called while guidance runs. */
+    /** Ends guidance's bookkeeping, once per guidance. */
     private fun finish(s: Session, outcome: String) {
-        s.guiding = false
+        if (!s.guiding.compareAndSet(true, false)) return
         position.release()
         requests.finish(s.logId, outcome, failed = false)
-        log.get().add("Navigation: $outcome")
+        log.add("Navigation: $outcome")
     }
 
     private fun keepAlive(s: Session) {
@@ -232,7 +237,7 @@ class Navigation @Inject constructor(
             Wire.fieldVarint(6, remaining.roundToLong()) +
             Wire.fieldVarint(7, (toNext * perMetre).roundToLong()) +
             Wire.fieldVarint(8, toNext.roundToLong()) +
-            Wire.fieldBytes(10, (next?.text ?: "").encodeToByteArray()) +
+            Wire.fieldString(10, next?.text ?: "") +
             Wire.fieldVarint(13, navigator)
         s.mux.send(s.reply, nav(MSG_NAV_UPDATE, CASE_NAV_UPDATE, body), MT_NAV_MESSAGE)
     }
@@ -240,18 +245,18 @@ class Navigation @Inject constructor(
     private fun routeDetails(r: Route): ByteArray {
         var b = Wire.fieldVarint(1, ROUTE_ID) + Wire.fieldVarint(2, r.seconds.roundToLong()) + Wire.fieldVarint(3, r.metres.roundToLong())
         for (step in r.steps) b += Wire.fieldBytes(4, maneuver(step))
-        return b + Wire.fieldBytes(5, r.encoded.encodeToByteArray())
+        return b + Wire.fieldString(5, r.encoded)
     }
 
     private fun maneuver(step: Step): ByteArray =
         Wire.fieldVarint(1, step.direction.toLong()) +
-            Wire.fieldBytes(2, step.street.encodeToByteArray()) +
+            Wire.fieldString(2, step.street) +
             Wire.fieldVarint(3, step.metres.toLong()) +
             Wire.fieldVarint(4, step.seconds.toLong()) +
-            Wire.fieldBytes(5, step.text.encodeToByteArray())
+            Wire.fieldString(5, step.text)
 
     private fun notification(step: Step): ByteArray =
-        Wire.fieldBytes(1, maneuver(step)) + Wire.fieldBytes(2, "HNNAV-${UUID.randomUUID().toString().take(8)}".encodeToByteArray())
+        Wire.fieldBytes(1, maneuver(step)) + Wire.fieldString(2, "HNNAV-${UUID.randomUUID().toString().take(8)}")
 
     private fun nav(type: Int, case: Int = 0, body: ByteArray = ByteArray(0)): ByteArray =
         Wire.fieldVarint(1, type.toLong()) + if (case == 0) ByteArray(0) else Wire.fieldBytes(case, body)
@@ -263,7 +268,7 @@ class Navigation @Inject constructor(
         @Volatile var route: Route? = null
         @Volatile var destination: LatLng? = null
         @Volatile var title = ""
-        @Volatile var guiding = false
+        val guiding = AtomicBoolean(false)
         @Volatile var logId = 0L
         @Volatile var spot = Spot(LatLng(0.0, 0.0), 0, 0.0)
         @Volatile var notified = -1
@@ -274,7 +279,6 @@ class Navigation @Inject constructor(
 
     companion object {
         const val SVC = 42
-        private const val SOURCE_MAPS = -6
         private const val MT_INIT_REQUEST = 0
         private const val MT_NAV_MESSAGE = 2
         private const val PLATFORM_ANDROID = 1L
@@ -313,12 +317,9 @@ class Navigation @Inject constructor(
         private const val NAVIGATOR_REROUTING = 4L
         private const val NAVIGATOR_STOPPED = 5L
 
-        /** The Meta app's keepalive period was not found; this is a guess. */
+        /** Not known from the glasses; a guess. */
         private const val KEEPALIVE_MS = 5_000L
         private const val TICK_MS = 1_000L
-        private const val OFF_ROUTE_M = 50.0
         private const val REROUTE_TICKS = 10
-        private const val PASSED_M = 15.0
-        private const val ARRIVE_M = 25.0
     }
 }

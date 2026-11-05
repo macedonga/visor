@@ -13,10 +13,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/**
- * The Meta AI app's native Bloks channel: `FrlBloksAppRootQuery` opens a screen, `FrlBloksAsyncActionQuery` runs a
- * server action. Both are persisted GraphQL queries on meta.graph.meta.com, signed with the app's logged-out token.
- */
+/** Meta AI's Bloks GraphQL queries (screen, action, component), signed with the app's logged-out token. */
 class BloksClient(
     private val token: String,
     private val locale: String,
@@ -24,24 +21,29 @@ class BloksClient(
     private val apiLevel: Int,
     private val http: HttpPost = UrlConnectionPost,
 ) {
-    class BloksError(message: String) : Exception(message)
-
-    fun screen(appId: String, params: String): Payload =
-        Payload.parse(query(SCREEN_DOC, "FrlBloksAppRootQuery", appId, params, screen = true))
-
-    fun action(appId: String, params: String): Payload =
-        Payload.parse(query(ACTION_DOC, "FrlBloksAsyncActionQuery", appId, params, screen = false))
-
-    /** A screen_query app, the way bk.action.screen.Open loads one: its first component is the screen. */
-    fun component(appId: String, params: String): Payload {
-        val bundle = Json.parseToJsonElement(query(COMPONENT_DOC, "FrlBloksAsyncComponentQuery", appId, params, screen = false, component = true)).jsonObject
-        val response = bundle["component_query_responses"]!!.jsonArray.first().jsonObject
-        val components = Json.parseToJsonElement(response["payload"]!!.jsonPrimitive.content).jsonObject["components"]!!.jsonArray
-        return Payload.of(components.first().jsonObject["payload"]!!.jsonObject)
+    private enum class Kind(val doc: String, val queryName: String) {
+        SCREEN("6165507603411378493763367459", "FrlBloksAppRootQuery"),
+        ACTION("25388939413601934797287790300", "FrlBloksAsyncActionQuery"),
+        COMPONENT("26656874278801481548161588323", "FrlBloksAsyncComponentQuery"),
     }
 
-    private fun query(doc: String, query: String, appId: String, params: String, screen: Boolean, component: Boolean = false): String {
-        if (token.isEmpty()) throw BloksError("This build has no Meta app token. Add VISOR_META_FRL_TOKEN to local.properties and build again.")
+    fun screen(appId: String, params: String): Payload = Payload.parse(query(Kind.SCREEN, appId, params))
+
+    fun action(appId: String, params: String): Payload = Payload.parse(query(Kind.ACTION, appId, params))
+
+    /** An async component query (screen.Open, component_queries): its first component's payload. */
+    fun component(appId: String, params: String): Payload {
+        val bundle = Json.parseToJsonElement(query(Kind.COMPONENT, appId, params)).jsonObject
+        val response = bundle["component_query_responses"]?.jsonArray?.firstOrNull()?.jsonObject
+            ?: throw BloksException("$appId answered no component_query_responses")
+        val inner = response["payload"]?.jsonPrimitive?.content ?: throw BloksException("$appId answered no component payload")
+        val first = Json.parseToJsonElement(inner).jsonObject["components"]?.jsonArray?.firstOrNull()?.jsonObject?.get("payload")?.jsonObject
+            ?: throw BloksException("$appId answered no components")
+        return Payload.of(first)
+    }
+
+    private fun query(kind: Kind, appId: String, params: String): String {
+        if (token.isEmpty()) throw BloksException("This build has no Meta app token. Add VISOR_META_FRL_TOKEN to local.properties and build again.")
         val variables = buildJsonObject {
             put("params", buildJsonObject {
                 put("app_id", appId)
@@ -54,21 +56,21 @@ class BloksClient(
                 put("android_device_performance_class", JsonNull)
                 put("android_os_api_level", apiLevel)
                 put("gpu_memory_mb", 4096)
-                if (screen) put("pixel_ratio", 3.0)
+                if (kind == Kind.SCREEN) put("pixel_ratio", PIXEL_RATIO)
             })
         }
-        val name = "$query-$appId"
+        val name = "${kind.queryName}-$appId"
         val body = listOf(
             "method" to "post",
             "format" to "json",
             "server_timestamps" to "true",
             "locale" to locale,
             "fb_api_req_friendly_name" to name,
-            "client_doc_id" to doc,
+            "client_doc_id" to kind.doc,
             "variables" to variables.toString(),
         ).joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, "UTF-8")}" }
         val reply = http.post(
-            "$ENDPOINT?locale=$locale",
+            "$ENDPOINT?locale=${URLEncoder.encode(locale, "UTF-8")}",
             mapOf(
                 "Authorization" to "OAuth $token",
                 "Content-Type" to "application/x-www-form-urlencoded",
@@ -78,24 +80,22 @@ class BloksClient(
             body.toByteArray(),
         )
         val text = String(reply.body, Charsets.UTF_8)
-        if (reply.status != 200) throw BloksError("$query for $appId answered HTTP ${reply.status}: ${text.take(300)}")
+        if (reply.status != 200) throw BloksException("${kind.queryName} for $appId answered HTTP ${reply.status}: ${text.take(300)}")
         val data = Json.parseToJsonElement(text).jsonObject["data"] as? JsonObject
-            ?: throw BloksError("$query for $appId answered without data: ${text.take(300)}")
-        val bundle = if (component) {
-            data["bloks_component_query"]?.jsonObject?.get("bloks_bundle_component_query")
-        } else if (screen) {
-            data["bloks_app"]?.jsonObject?.get("bloks_bundle")?.jsonObject?.get("bloks_bundle_tree")
-        } else {
-            data["bloks_action"]?.jsonObject?.get("action")?.jsonObject?.get("action_bundle")?.jsonObject?.get("bloks_bundle_action")
+            ?: throw BloksException("${kind.queryName} for $appId answered without data: ${text.take(300)}")
+        val bundle = when (kind) {
+            Kind.COMPONENT -> data["bloks_component_query"]?.jsonObject?.get("bloks_bundle_component_query")
+            Kind.SCREEN -> data["bloks_app"]?.jsonObject?.get("bloks_bundle")?.jsonObject?.get("bloks_bundle_tree")
+            Kind.ACTION -> data["bloks_action"]?.jsonObject?.get("action")?.jsonObject?.get("action_bundle")?.jsonObject?.get("bloks_bundle_action")
         }
-        return (bundle as? JsonPrimitive)?.content ?: throw BloksError("$query for $appId answered no bundle: ${text.take(300)}")
+        return (bundle as? JsonPrimitive)?.content ?: throw BloksException("${kind.queryName} for $appId answered no bundle: ${text.take(300)}")
     }
 
     companion object {
         private const val ENDPOINT = "https://meta.graph.meta.com/graphql"
-        private const val ACTION_DOC = "25388939413601934797287790300"
-        private const val SCREEN_DOC = "6165507603411378493763367459"
-        private const val COMPONENT_DOC = "26656874278801481548161588323"
+
+        /** The pixel ratio the screen query declares; px sizes in its answers are at this scale. */
+        internal const val PIXEL_RATIO = 3f
 
         // The Bloks runtime version of Meta AI 294; the server shapes its scripts to it.
         private const val VERSIONING_ID = "563d6e0947a986c84a526eed86f47bc9f456d52f386d4757475b045e577e0541"

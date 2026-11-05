@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="classic_bond_title">Accoppiamento classico per le chiamate</string>
+    <string name="classic_bond_undo">Annulla l\'accoppiamento classico</string>
+    <string name="classic_bond_running">Nuovo accoppiamento…</string>
+    <string name="classic_bond_present">Accoppiamento classico presente</string>
+    <string name="classic_bond_calls_on">Chiamate collegate</string>
+    <string name="classic_bond_calls_off">Chiamate non collegate</string>
+    <string name="classic_bond_unreachable">Modalità di accoppiamento non raggiungibile</string>
+    <string name="classic_bond_ready">Nuovo accoppiamento possibile</string>
+    <string name="classic_bond_confirm_title">Accoppiare di nuovo gli occhiali?</string>
+    <string name="classic_bond_undo_title">Tornare all\'accoppiamento LE?</string>
+    <string name="classic_bond_confirm_text">Gli occhiali si disaccoppiano da questo telefono e si accoppiano di nuovo. Tienili aperti e vicini al telefono e accetta la richiesta di accoppiamento. Se non riescono entrambi gli accoppiamenti, gli occhiali vanno ripristinati.</string>
+    <string name="classic_bond_confirm">Accoppia di nuovo</string>
+    <string name="classic_bond_fail_unsupported">Non disponibile</string>
+    <string name="classic_bond_fail_busy">Non durante una chiamata, la visione live o un\'importazione</string>
+    <string name="classic_bond_fail_companion">Nessun dispositivo associato</string>
+    <string name="classic_bond_fail_refused">Rifiutato (%1$s)</string>
+    <string name="classic_bond_fail_unpair">Il telefono ha tenuto il vecchio accoppiamento</string>
+    <string name="classic_bond_fail_restored">Non accoppiati, ripristinato l\'accoppiamento precedente</string>
+    <string name="classic_bond_fail_lost">Non accoppiati, potrebbe servire un ripristino degli occhiali</string>
+    <string name="classic_bond_fail">Non riuscito: %1$s</string>
+</resources>

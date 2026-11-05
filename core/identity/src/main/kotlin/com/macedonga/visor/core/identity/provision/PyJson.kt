@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Python's `json.dumps(value)` with its defaults, for the two places `provision.py` calls it. */
+/** Python's `json.dumps(value)` with its defaults: `, ` and `: ` separators, ensure_ascii. */
 internal fun pyJsonDumps(element: JsonElement): String = StringBuilder().also { write(element, it) }.toString()
 
 private fun write(element: JsonElement, out: StringBuilder) {

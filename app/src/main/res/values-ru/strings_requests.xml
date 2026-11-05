@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="requests_title">Запросы</string>
+    <string name="requests_empty">Запросов пока нет</string>
+    <string name="requests_copied">Ссылка скопирована</string>
+    <string name="requests_running">выполняется</string>
+    <string name="requests_source">источник %1$d</string>
+    <string name="requests_tunnel">туннель</string>
+    <string name="requests_meta">Meta</string>
+    <string name="requests_location">местоположение</string>
+    <string name="requests_sms">SMS</string>
+    <string name="requests_calls">звонки</string>
+    <string name="requests_maps">карты</string>
+</resources>

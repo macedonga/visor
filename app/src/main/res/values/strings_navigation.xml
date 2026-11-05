@@ -1,4 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="navigation_requests_maps">maps</string>
+    <string name="nav_start">Start</string>
+    <string name="nav_start_on">Start on %1$s</string>
+    <string name="nav_left">Turn left</string>
+    <string name="nav_left_onto">Turn left onto %1$s</string>
+    <string name="nav_right">Turn right</string>
+    <string name="nav_right_onto">Turn right onto %1$s</string>
+    <string name="nav_slight_left">Bear left</string>
+    <string name="nav_slight_left_onto">Bear left onto %1$s</string>
+    <string name="nav_slight_right">Bear right</string>
+    <string name="nav_slight_right_onto">Bear right onto %1$s</string>
+    <string name="nav_sharp_left">Turn sharp left</string>
+    <string name="nav_sharp_left_onto">Turn sharp left onto %1$s</string>
+    <string name="nav_sharp_right">Turn sharp right</string>
+    <string name="nav_sharp_right_onto">Turn sharp right onto %1$s</string>
+    <string name="nav_keep_left">Keep left</string>
+    <string name="nav_keep_left_onto">Keep left onto %1$s</string>
+    <string name="nav_keep_right">Keep right</string>
+    <string name="nav_keep_right_onto">Keep right onto %1$s</string>
+    <string name="nav_u_turn">Make a U-turn</string>
+    <string name="nav_junction">Go through the junction</string>
+    <string name="nav_junction_onto">Go through the junction onto %1$s</string>
+    <string name="nav_continue">Continue straight</string>
+    <string name="nav_continue_on">Continue on %1$s</string>
+    <string name="nav_arrived">You have arrived</string>
+    <string name="nav_arrived_left">You have arrived, on the left</string>
+    <string name="nav_arrived_right">You have arrived, on the right</string>
+    <string name="nav_err_no_position">No phone location or destination</string>
+    <string name="nav_err_no_route">No route found</string>
 </resources>
