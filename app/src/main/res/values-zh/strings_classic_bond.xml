@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Chinese translation. Mirrors the file layout of values/ so each
+    source file has its own translation to keep in step with upstream.
+-->
+<resources>
+    <string name="classic_bond_title">通话用的经典配对</string>
+    <string name="classic_bond_undo">撤销经典配对</string>
+    <string name="classic_bond_running">正在重新配对…</string>
+    <string name="classic_bond_present">已有经典配对</string>
+    <string name="classic_bond_calls_on">通话已连接</string>
+    <string name="classic_bond_calls_off">通话未连接</string>
+    <string name="classic_bond_unreachable">无法进入配对模式</string>
+    <string name="classic_bond_ready">可以重新配对</string>
+    <string name="classic_bond_confirm_title">要重新配对眼镜吗？</string>
+    <string name="classic_bond_undo_title">要重新通过 LE 配对吗？</string>
+    <string name="classic_bond_confirm_text">眼镜会先与这台手机取消配对，然后重新配对。请让眼镜保持开启并靠近手机，然后接受配对请求。如果两次配对都失败，眼镜需要重置。</string>
+    <string name="classic_bond_confirm">重新配对</string>
+    <string name="classic_bond_fail_unsupported">不可用</string>
+    <string name="classic_bond_fail_busy">通话、实时画面或导入期间无法配对</string>
+    <string name="classic_bond_fail_companion">没有配套设备</string>
+    <string name="classic_bond_fail_refused">被拒绝（%1$s）</string>
+    <string name="classic_bond_fail_unpair">手机保留了原来的配对</string>
+    <string name="classic_bond_fail_restored">未配对，已恢复原来的配对</string>
+    <string name="classic_bond_fail_lost">未配对，眼镜可能需要重置</string>
+    <string name="classic_bond_fail">失败：%1$s</string>
+</resources>

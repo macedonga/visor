@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Chinese translation. Mirrors the file layout of values/ so each
+    source file has its own translation to keep in step with upstream.
+-->
+<resources>
+    <string name="nav_start">开始</string>
+    <string name="nav_start_on">从 %1$s 出发</string>
+    <string name="nav_left">左转</string>
+    <string name="nav_left_onto">左转进入 %1$s</string>
+    <string name="nav_right">右转</string>
+    <string name="nav_right_onto">右转进入 %1$s</string>
+    <string name="nav_slight_left">稍向左</string>
+    <string name="nav_slight_left_onto">稍向左进入 %1$s</string>
+    <string name="nav_slight_right">稍向右</string>
+    <string name="nav_slight_right_onto">稍向右进入 %1$s</string>
+    <string name="nav_sharp_left">向左急转</string>
+    <string name="nav_sharp_left_onto">向左急转进入 %1$s</string>
+    <string name="nav_sharp_right">向右急转</string>
+    <string name="nav_sharp_right_onto">向右急转进入 %1$s</string>
+    <string name="nav_keep_left">靠左</string>
+    <string name="nav_keep_left_onto">靠左进入 %1$s</string>
+    <string name="nav_keep_right">靠右</string>
+    <string name="nav_keep_right_onto">靠右进入 %1$s</string>
+    <string name="nav_u_turn">掉头</string>
+    <string name="nav_junction">通过路口</string>
+    <string name="nav_junction_onto">通过路口进入 %1$s</string>
+    <string name="nav_continue">直行</string>
+    <string name="nav_continue_on">沿 %1$s 继续行驶</string>
+    <string name="nav_arrived">已到达</string>
+    <string name="nav_arrived_left">已到达，目的地在左侧</string>
+    <string name="nav_arrived_right">已到达，目的地在右侧</string>
+    <string name="nav_err_no_position">缺少手机定位或目的地</string>
+    <string name="nav_err_no_route">未找到路线</string>
+</resources>
