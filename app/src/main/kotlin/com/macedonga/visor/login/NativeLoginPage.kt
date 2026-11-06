@@ -101,6 +101,7 @@ import com.macedonga.visor.settings.ActionPill
 import com.macedonga.visor.settings.ProgressRing
 import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetAnswers
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.WidePill
@@ -348,10 +349,7 @@ private fun DateAsked(model: NativeLoginViewModel) {
     }
     VisorSheet({ answer(null) }, full = true) {
         DatePicker(picker, title = null, headline = null, showModeToggle = false, colors = DatePickerDefaults.colors(containerColor = Visor.colors.surface))
-        Row(Modifier.padding(horizontal = SIDE).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionPill(stringResource(R.string.settings_save), { answer(picker.selectedDateMillis?.div(1000)) })
-            ActionPill(stringResource(R.string.cancel), { answer(null) }, quiet = true)
-        }
+        SheetAnswers(stringResource(R.string.settings_save), { answer(picker.selectedDateMillis?.div(1000)) }, stringResource(R.string.cancel), { answer(null) })
     }
 }
 

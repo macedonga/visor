@@ -755,6 +755,7 @@
     <string name="event_log_clear_title">Clear the log?</string>
     <string name="event_log_empty">Nothing has happened yet</string>
     <string name="event_log_bug_report">Get a bug report from the glasses</string>
+    <string name="bug_report_asked">Bug report on its way to Download/Visor</string>
 
     <!-- Onboarding -->
     <string name="onboard_begin">Begin</string>

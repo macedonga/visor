@@ -286,13 +286,10 @@ private fun TimeButton(label: String, time: String, enabled: Boolean, onSet: (St
     val state = rememberTimePickerState(initialHour = h.coerceIn(0, 23), initialMinute = m.coerceIn(0, 59), is24Hour = DateFormat.is24HourFormat(LocalContext.current))
     VisorSheet({ picking = false }) {
         TimePicker(state, Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 16.dp))
-        Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
-            ActionPill(stringResource(R.string.cancel), { picking = false }, quiet = true)
-            ActionPill(stringResource(R.string.adv_set), {
-                picking = false
-                onSet(String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
-            })
-        }
+        SheetAnswers(stringResource(R.string.adv_set), {
+            picking = false
+            onSet(String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))
+        }, stringResource(R.string.cancel), { picking = false })
     }
 }
 

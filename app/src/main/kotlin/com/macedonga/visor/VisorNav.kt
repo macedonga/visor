@@ -280,7 +280,7 @@ fun VisorNav(opens: Flow<String>, markAtLaunch: Boolean) {
                         )
                     }
                     entry<LoginKey> { NativeLoginPage(onDone = back) }
-                    entry<EventLogKey> { EventLogScreen(onRequests = { backStack.add(RequestLogKey) }) }
+                    entry<EventLogKey> { EventLogScreen() }
                     entry<RequestLogKey> { RequestLogScreen() }
                     entry<MediaKey> { GalleryScreen() }
                     entry<SettingsKey>(metadata = crossFade(SETTINGS_FADE_MS)) { SettingsScreen(open) }

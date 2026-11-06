@@ -90,6 +90,9 @@ class Spot internal constructor(internal val place: StagePlace.() -> Unit) {
         internal set
     var liveliness by mutableFloatStateOf(1f)
         internal set
+    /** The pair stands here as a see-through ghost: a place for glasses not set up yet. */
+    var ghost by mutableStateOf(false)
+        internal set
 }
 
 /** A screen's wish for the light while it is composed. */
@@ -100,13 +103,14 @@ class LookRequest internal constructor(look: LightLook) {
 
 /** Puts the pair on this screen, placed by [place] every frame; the newest ask has it, and [StageHolder.shown] follows its trip. */
 @Composable
-fun stageSpot(closed: Boolean, liveliness: Float, place: StagePlace.() -> Unit): Spot {
+fun stageSpot(closed: Boolean, liveliness: Float, ghost: Boolean = false, place: StagePlace.() -> Unit): Spot {
     val stage = LocalStage.current
     val current = rememberUpdatedState(place)
-    val spot = remember { Spot { current.value(this) }.also { it.closed = closed; it.liveliness = liveliness } }
+    val spot = remember { Spot { current.value(this) }.also { it.closed = closed; it.liveliness = liveliness; it.ghost = ghost } }
     SideEffect {
         spot.closed = closed
         spot.liveliness = liveliness
+        spot.ghost = ghost
     }
     DisposableEffect(spot) {
         stage.arrive(spot)
@@ -225,8 +229,8 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
     LaunchedEffect(stage) { snapshotFlow { stage.yaw.value }.collect { stage.pose.yawDegrees = it; stage.renderer.invalidate() } }
     LaunchedEffect(stage) { snapshotFlow { stage.slide.value }.collect { stage.pose.slide = it; stage.renderer.invalidate() } }
     // At once, not faded: a page changes while the pair is out of sight, and a fade would show both as it slides in.
-    val picture = stage.picture.takeIf { !stage.vacant }
-    val hidden = picture != null || stage.vacant
+    val picture = stage.picture
+    val hidden = picture != null
     val curtain by animateFloatAsState(if (shown && newest != null) 1f else 0f, if (shown) snap() else tween(CURTAIN_MS), label = "stage")
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -255,14 +259,14 @@ fun SharedStage(stage: StageHolder, shown: Boolean) {
                         transformOrigin = TransformOrigin(p.pivotX, p.pivotY)
                         translationY = p.shift
                         alpha = p.alpha
-                        // Nothing is drawn while the model is out of sight: behind another screen, under the Live's picture, Meta's picture or the add page.
+                        // Nothing is drawn while the model is out of sight: behind another screen, under the Live's picture or Meta's picture.
                         stage.renderer.paused = curtain == 0f || p.alpha <= 0f || hidden
                     },
             ) {
                 LightPool(stage.light, Offset(0.5f, POOL_Y), Size(0.21f, 0.058f), Size(0.17f, 0.02f), Modifier.fillMaxSize())
                 GlassesStage(
                     liveliness = newest?.liveliness ?: 0.25f, active = curtain > 0f && !hidden,
-                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (hidden) 0f else 1f },
+                    modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (hidden) 0f else 1f - stage.ghost() * (1f - GHOST_ALPHA) },
                 )
                 picture?.let { PairPicture(it, stage, Modifier.fillMaxSize()) }
             }
@@ -291,6 +295,7 @@ private fun PairPicture(picture: ImageBitmap, stage: StageHolder, modifier: Modi
 internal val SETTLE_EASE = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 internal const val HANDOVER_NS = 640_000_000L
 private const val CURTAIN_MS = 180
+private const val GHOST_ALPHA = 0.28f
 // As wide as the model looks on the home, and low enough that it ends in the light where the model's temples do.
 private const val PICTURE_WIDTH = 0.56f
 private const val PICTURE_Y = 0.1f

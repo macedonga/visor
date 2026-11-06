@@ -22,6 +22,7 @@ import com.macedonga.visor.DeviceKey
 import com.macedonga.visor.EventLogKey
 import com.macedonga.visor.FlagsKey
 import com.macedonga.visor.R
+import com.macedonga.visor.RequestLogKey
 import com.macedonga.visor.SettingsGroupKey
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
@@ -70,6 +71,8 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     { NavRow(VisorIcons.Flag, stringResource(R.string.settings_flags), null, onClick = { open(FlagsKey) }, onCard = true) },
                     { NavRow(VisorIcons.Pulse, stringResource(R.string.settings_diagnostics), null, onClick = { open(DeviceKey) }, onCard = true) },
                     { NavRow(VisorIcons.Lines, stringResource(R.string.settings_event_log), null, onClick = { open(EventLogKey) }, onCard = true) },
+                    { NavRow(VisorIcons.Globe, stringResource(R.string.requests_title), null, onClick = { open(RequestLogKey) }, onCard = true) },
+                    { BugReportRow(model) },
                 )
                 Spacer(Modifier.height(12.dp))
                 Rows(
@@ -82,6 +85,21 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
             }
         }
     }
+}
+
+/** Asks the glasses for a bug report; it lands in Download/Visor. */
+@Composable
+private fun BugReportRow(model: SettingsViewModel) {
+    val host = LocalHost.current
+    val asked = stringResource(R.string.bug_report_asked)
+    NavRow(
+        VisorIcons.Download, stringResource(R.string.event_log_bug_report), null,
+        onClick = {
+            model.media.requestBugReport()
+            host.notice.show(asked)
+        },
+        onCard = true, enabled = host.ready, chevron = false,
+    )
 }
 
 /** Developer mode's token: copy it, or replace it after a confirm. */

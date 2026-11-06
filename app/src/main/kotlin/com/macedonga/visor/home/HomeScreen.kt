@@ -106,6 +106,7 @@ import com.macedonga.visor.stage.StageDebug
 import com.macedonga.visor.stage.StageLight
 import com.macedonga.visor.stage.StagePages
 import com.macedonga.visor.stage.closedOf
+import com.macedonga.visor.stage.ghostLook
 import com.macedonga.visor.stage.liveliness
 import com.macedonga.visor.stage.lookOf
 import com.macedonga.visor.stage.modelled
@@ -376,7 +377,7 @@ fun HomeScreen(
     val colors = Visor.colors
     // At launch the light comes up from dark.
     LaunchedEffect(stage) { if (firstVisit) stage.light.dark() }
-    StageLight(lookOf(mood, colors))
+    StageLight(if (adding) ghostLook(colors) else lookOf(mood, colors))
     val look by model.looks.look.collectAsStateWithLifecycle()
     val shownLook = if (other) shown?.let { looks[it.serial] } else look
     // The model is a Wayfarer: another frame, or a pair not connected, shows as Meta pictures it, once Meta has.
@@ -387,17 +388,14 @@ fun HomeScreen(
         else -> null
     }
     SideEffect {
-        stage.pose.variants = variant?.let(::listOf) ?: variantsOf(shownLook)
-        stage.picture = picture
-        stage.vacant = adding
+        // The ghost is any new pair: the plain frame, not this pair's.
+        stage.pose.variants = variant?.let(::listOf) ?: variantsOf(shownLook.takeIf { !adding })
+        stage.picture = picture.takeIf { !adding }
     }
-    // Other screens show the pair Visor is for.
-    val leavingPicture = rememberUpdatedState(currentPicture)
+    // Other screens show the pair Visor is for; from the add page, a new pair's setup, where the ghost fills in as the model.
+    val leavingPicture = rememberUpdatedState(currentPicture.takeIf { !adding })
     DisposableEffect(Unit) {
-        onDispose {
-            stage.picture = leavingPicture.value
-            stage.vacant = false
-        }
+        onDispose { stage.picture = leavingPicture.value }
     }
     // A pair shown that is not connected gets a quick look at its batteries.
     LaunchedEffect(shown?.serial, other) {
@@ -433,7 +431,15 @@ fun HomeScreen(
             if (list.firstVisibleItemIndex == 0) list.firstVisibleItemScrollOffset.toFloat() else fullPx
         }
         // Folded, the pair sits small in the middle of the strip, clear of the camera cut-out; at launch it fades in.
-        val spot = stageSpot(if (elsewhere) closedOf(GlassesState(), mood, shownSeen?.folded ?: true) else closedOf(state, mood, lastPosture.folded), liveliness(mood)) {
+        val spot = stageSpot(
+            closed = when {
+                adding -> false
+                elsewhere -> closedOf(GlassesState(), mood, shownSeen?.folded ?: true)
+                else -> closedOf(state, mood, lastPosture.folded)
+            },
+            liveliness = if (adding) GHOST_LIVELINESS else liveliness(mood),
+            ghost = adding,
+        ) {
             folding(fullPx, stripPx, fold, HOME_STRIP_SCALE, topPx + (stripPx - topPx) / 2)
             alpha = entranceAlpha(entrance, STAGE_FADE_FROM_MS, STAGE_FADE_MS)
         }
@@ -646,4 +652,6 @@ private const val REFRESH_MS = 60_000L
 
 /** The home's page after the last pair, for setting up another. */
 private const val ADD_PAGE = "+"
+// The ghost on the add page sways more than a pair at rest.
+private const val GHOST_LIVELINESS = 1f
 private const val STAR_DELAY_MS = 4_000L

@@ -750,6 +750,7 @@
     <string name="event_log_clear_title">Svuotare il registro?</string>
     <string name="event_log_empty">Non è ancora successo niente</string>
     <string name="event_log_bug_report">Scarica un bug report dagli occhiali</string>
+    <string name="bug_report_asked">Bug report in arrivo in Download/Visor</string>
 
     <!-- Onboarding -->
     <string name="onboard_begin">Inizia</string>

@@ -813,9 +813,9 @@ fun SliderRow(
     }
 }
 
-/** A row that leads to a page; [onCard] when it sits inside [Rows]. */
+/** A row that leads to a page, or with no [chevron] does something there and then; [onCard] when it sits inside [Rows]. */
 @Composable
-fun NavRow(icon: ImageVector?, title: String, summary: String?, onClick: () -> Unit, dim: Boolean = false, onCard: Boolean = false, enabled: Boolean = true) {
+fun NavRow(icon: ImageVector?, title: String, summary: String?, onClick: () -> Unit, dim: Boolean = false, onCard: Boolean = false, enabled: Boolean = true, chevron: Boolean = true) {
     val colors = Visor.colors
     Row(
         Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = if (onCard) 16.dp else SIDE, vertical = if (onCard) 12.dp else 11.dp).alpha(if (dim || !enabled) 0.45f else 1f),
@@ -831,7 +831,7 @@ fun NavRow(icon: ImageVector?, title: String, summary: String?, onClick: () -> U
             Text(title, style = Visor.type.body, color = colors.textPrimary)
             if (!summary.isNullOrEmpty()) Text(summary, style = Visor.type.label, color = colors.textSecondary, maxLines = lineLimit(1), overflow = TextOverflow.Ellipsis)
         }
-        Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = colors.textTertiary)
+        if (chevron) Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = colors.textTertiary)
     }
 }
 
@@ -973,13 +973,19 @@ fun SheetTitle(title: String, sub: String? = null) {
 fun ConfirmSheet(title: String, text: String?, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, dismiss: String = stringResource(R.string.cancel)) {
     VisorSheet(onDismiss) {
         SheetTitle(title, text)
-        Row(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionPill(confirm, {
-                onDismiss()
-                onConfirm()
-            })
-            ActionPill(dismiss, onDismiss, quiet = true)
-        }
+        SheetAnswers(confirm, {
+            onDismiss()
+            onConfirm()
+        }, dismiss, onDismiss)
+    }
+}
+
+/** A sheet's two answers across its foot, in reach of a thumb: the way back on the left, the answer on the right. */
+@Composable
+fun SheetAnswers(answer: String, onAnswer: () -> Unit, back: String, onBack: () -> Unit, enabled: Boolean = true) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        WidePill(back, onBack, Modifier.weight(1f), quiet = true)
+        WidePill(answer, onAnswer, Modifier.weight(1f), enabled = enabled)
     }
 }
 

@@ -36,8 +36,6 @@ class StageHolder(private val context: Context, markAtLaunch: Boolean) {
     val slide = Animatable(0f)
     /** A pair Visor has no model for, or one not connected, shows as Meta pictures it; null shows the model. */
     var picture by mutableStateOf<ImageBitmap?>(null)
-    /** Nothing under the light: the home's page for adding another pair. */
-    var vacant by mutableStateOf(false)
 
     /** The pair slides out [direction] (1 to the left), [swap] puts the next one up, and it slides in from the far side. */
     suspend fun page(direction: Int, swap: () -> Unit) {
@@ -63,6 +61,9 @@ class StageHolder(private val context: Context, markAtLaunch: Boolean) {
     private val handover = mutableFloatStateOf(1f)
     private var startedAt = 0L
     private var started = false
+    // How much of a ghost the pair was when the newest spot took it, and is now: 0 solid, 1 a ghost.
+    private var ghostFrom = 0f
+    private var ghostNow = 0f
 
     private var made: GlassesRenderer? = null
 
@@ -86,6 +87,7 @@ class StageHolder(private val context: Context, markAtLaunch: Boolean) {
 
     private fun startHandover() {
         from.set(now)
+        ghostFrom = ghostNow
         handover.floatValue = 0f
         started = false
     }
@@ -115,6 +117,15 @@ class StageHolder(private val context: Context, markAtLaunch: Boolean) {
         val t = handover.floatValue
         if (t >= 1f) now.set(target) else now.mix(from, target, t)
         return now
+    }
+
+    /** How much of a ghost the pair is this frame: it fills in or fades out as it travels between spots. */
+    internal fun ghost(): Float {
+        val newest = spots.lastOrNull() ?: return ghostNow
+        val target = if (newest.ghost) 1f else 0f
+        val t = handover.floatValue
+        ghostNow = if (t >= 1f) target else ghostFrom + (target - ghostFrom) * t
+        return ghostNow
     }
 
     /** A point of the pair's view, as fractions of the stage, on the window: where the stage is now, [widthPx] wide. */

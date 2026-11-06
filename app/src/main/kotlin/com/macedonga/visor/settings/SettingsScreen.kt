@@ -121,6 +121,7 @@ import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveSettingsStore
+import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.settings.Control
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
@@ -190,6 +191,7 @@ class SettingsViewModel @Inject constructor(
     val bandSetup: BandSetup,
     val bandUpdate: BandUpdate,
     val developer: DeveloperMode,
+    val media: MediaImport,
 ) : ViewModel()
 
 /** Settings: the lit pair on the stage, and a sheet with search, pinned tiles and topics that folds the stage as it scrolls. */

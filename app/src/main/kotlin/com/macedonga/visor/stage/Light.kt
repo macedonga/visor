@@ -65,6 +65,10 @@ fun lookOf(mood: Mood, c: VisorColors): LightLook = when (mood) {
     )
 }
 
+/** The add page: a cool light, breathing slowly under the ghost of a pair. */
+fun ghostLook(c: VisorColors): LightLook =
+    LightLook(c.lightCold, c.lightCold, level = 0.32f, spread = 0.8f, breathSeconds = 5f, breathDepth = 0.35f, warp = 0.16f)
+
 private val HUE_SEARCHING = Color(0xFF8FB0FF)
 private val HUE_CHARGING = Color(0xFF9DF0B4)
 private val HUE_LOW = Color(0xFFFFA43A)

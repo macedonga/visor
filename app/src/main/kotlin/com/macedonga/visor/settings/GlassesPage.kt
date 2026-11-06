@@ -2,6 +2,7 @@ package com.macedonga.visor.settings
 
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -355,20 +356,20 @@ internal fun FirmwareSheet(
         )
         val asking = confirming && offer != null && !installing
         val line = if (asking) stringResource(confirm, offer.orEmpty()) else status
-        Column(Modifier.padding(horizontal = SIDE).padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (line != null) Text(line, style = Visor.type.label, color = if (failed && !asking) Visor.colors.signal else Visor.colors.textSecondary)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                when {
-                    installing -> ActionPill(stringResource(R.string.cancel), onCancel, quiet = true)
-                    asking -> {
-                        ActionPill(stringResource(R.string.firmware_install), { confirming = false; onInstall() })
-                        ActionPill(stringResource(R.string.cancel), { confirming = false }, quiet = true)
-                    }
-                    else -> {
-                        ActionPill(stringResource(R.string.firmware_check), onCheck, quiet = true, enabled = !checking)
-                        if (offer != null) ActionPill(stringResource(R.string.firmware_install), { confirming = true })
-                    }
-                }
+        if (line != null) {
+            Text(
+                line, style = Visor.type.label, color = if (failed && !asking) Visor.colors.signal else Visor.colors.textSecondary,
+                modifier = Modifier.padding(horizontal = SIDE).padding(top = 16.dp, bottom = 4.dp),
+            )
+        }
+        when {
+            installing -> Box(Modifier.padding(horizontal = SIDE).padding(top = 8.dp)) {
+                WidePill(stringResource(R.string.cancel), onCancel, Modifier.fillMaxWidth(), quiet = true)
+            }
+            asking -> SheetAnswers(stringResource(R.string.firmware_install), { confirming = false; onInstall() }, stringResource(R.string.cancel), { confirming = false })
+            offer != null -> SheetAnswers(stringResource(R.string.firmware_install), { confirming = true }, stringResource(R.string.firmware_check), onCheck)
+            else -> Box(Modifier.padding(horizontal = SIDE).padding(top = 8.dp)) {
+                WidePill(stringResource(R.string.firmware_check), onCheck, Modifier.fillMaxWidth(), quiet = true, busy = checking)
             }
         }
     }

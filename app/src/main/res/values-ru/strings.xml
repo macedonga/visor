@@ -788,6 +788,7 @@
     <string name="event_log_clear_title">Очистить журнал?</string>
     <string name="event_log_empty">Пока ничего не произошло</string>
     <string name="event_log_bug_report">Получить отчёт об ошибке с очков</string>
+    <string name="bug_report_asked">Отчёт об ошибке придёт в Download/Visor</string>
 
     <!-- Onboarding -->
     <string name="onboard_begin">Начать</string>

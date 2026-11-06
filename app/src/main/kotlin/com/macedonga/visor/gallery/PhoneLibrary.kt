@@ -143,19 +143,22 @@ class PhoneLibrary @Inject constructor(@ApplicationContext private val context: 
             add(MediaStore.MediaColumns.DURATION)
             add(MediaStore.MediaColumns.DISPLAY_NAME)
             add(MediaStore.MediaColumns.IS_FAVORITE)
+            add(MediaStore.MediaColumns.ORIENTATION)
         }.toTypedArray()
         val out = ArrayList<PhoneItem>()
         runCatching {
             context.contentResolver.query(collection, columns, Albums.MATCH, arrayOf(path), null)?.use { c ->
                 while (c.moveToNext()) {
                     val taken = c.getLong(1).takeIf { it > 0 } ?: (c.getLong(2) * 1000)
+                    // A video keeps its frame unturned and plays it turned by ORIENTATION: a quarter turn swaps the sides.
+                    val turned = video && c.getInt(9) % 180 != 0
                     out += PhoneItem(
                         uri = ContentUris.withAppendedId(collection, c.getLong(0)),
                         video = video,
                         takenAt = taken,
                         size = c.getLong(3),
-                        width = c.getInt(4),
-                        height = c.getInt(5),
+                        width = c.getInt(if (turned) 5 else 4),
+                        height = c.getInt(if (turned) 4 else 5),
                         durationMs = c.getLong(6),
                         favorite = c.getInt(8) == 1,
                         name = c.getString(7).orEmpty(),

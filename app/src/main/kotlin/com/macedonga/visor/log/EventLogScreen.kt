@@ -7,8 +7,6 @@ import android.os.Build
 import android.webkit.WebView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,13 +32,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
-import com.macedonga.visor.core.media.MediaImport
-import com.macedonga.visor.settings.ActionPill
 import com.macedonga.visor.settings.ConfirmSheet
 import com.macedonga.visor.settings.Footnote
-import com.macedonga.visor.settings.LocalHost
 import com.macedonga.visor.settings.MONO
-import com.macedonga.visor.settings.NavRow
 import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.SettingsPage
 import com.macedonga.visor.settings.cardItems
@@ -59,11 +53,11 @@ import kotlinx.coroutines.withContext
 private val FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss")
 
 @HiltViewModel
-class EventLogViewModel @Inject constructor(val log: EventLog, val media: MediaImport) : ViewModel()
+class EventLogViewModel @Inject constructor(val log: EventLog) : ViewModel()
 
 /** The log as one card of lines, opened at the end: what matters is what just happened. */
 @Composable
-fun EventLogScreen(onRequests: () -> Unit = {}, model: EventLogViewModel = hiltViewModel()) {
+fun EventLogScreen(model: EventLogViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val lines by model.log.lines.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
@@ -102,14 +96,6 @@ fun EventLogScreen(onRequests: () -> Unit = {}, model: EventLogViewModel = hiltV
         if (lines.isEmpty()) item(key = "empty") { Footnote(stringResource(R.string.event_log_empty)) }
         // Keyed by place: the same line can come twice.
         cardItems(lines.withIndex().toList(), { it.index }) { LogRow(it.value) }
-        item(key = "requests") {
-            Column(Modifier.padding(top = 14.dp)) { NavRow(VisorIcons.Globe, stringResource(R.string.requests_title), null, onRequests) }
-        }
-        item(key = "bug-report") {
-            Box(Modifier.padding(horizontal = 32.dp, vertical = 20.dp)) {
-                ActionPill(stringResource(R.string.event_log_bug_report), model.media::requestBugReport, quiet = true, enabled = LocalHost.current.ready)
-            }
-        }
     }
 }
 
