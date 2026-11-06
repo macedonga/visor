@@ -100,7 +100,9 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
             MT_LIKE -> scope.launch { setLiked(fields(message)?.varint(1) == 1L) }
             MT_NOTIFICATION_ACCESS -> scope.launch {
                 val page = listenerPage()
-                if (page == null || (!startFromHere(page) && !askAccess(page))) {
+                val settings = page.resolveActivity(context.packageManager)
+                // The notification's tap names the settings activity, so no other app can be handed it.
+                if (settings == null || (!startFromHere(page) && !askAccess(Intent(page).setComponent(settings)))) {
                     log.add("Notification access: Visor may not open settings from the background")
                 }
             }
@@ -133,13 +135,10 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     private fun listener() = ComponentName(context, MirrorListener::class.java)
 
     // Visor's own page among the notification listeners, else the list on phones without it.
-    // Explicit, to the settings activity that shows it: a notification's tap opens that page and nothing else.
-    private fun listenerPage(): Intent? {
-        val pm = context.packageManager
+    private fun listenerPage(): Intent {
         val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
             .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, listener().flattenToString())
-        val page = if (detail.resolveActivity(pm) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-        return page.resolveActivity(pm)?.let(page::setComponent)
+        return if (detail.resolveActivity(context.packageManager) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
     }
 
     private fun active(manager: MediaSessionManager): List<MediaController> =
@@ -259,13 +258,13 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     }
 
     // Android keeps Visor from opening the settings from the background, so a notification opens them.
-    private fun askAccess(page: Intent): Boolean {
+    private fun askAccess(settings: Intent): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false
         if (!manager.areNotificationsEnabled()) return false
         manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.access_listener_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(
             context, ACCESS_ID,
-            Intent(page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = Notification.Builder(context, CHANNEL)
