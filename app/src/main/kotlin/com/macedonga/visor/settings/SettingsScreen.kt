@@ -116,6 +116,7 @@ import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.DEFAULT_CLAUDE_MODEL
 import com.macedonga.visor.core.assistant.Hearing
 import com.macedonga.visor.core.assistant.Provider
+import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.design.Visor
@@ -598,7 +599,7 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
         Topic.META_AI -> {
             val config by model.assistant.config.collectAsStateWithLifecycle()
             val sessionVoices by model.assistant.sessionVoices.collectAsStateWithLifecycle()
-            assistantWords(config.copy(glassesVoice = config.glassesVoice && !phoneSpeaksVoice(settings.value(VOICE_KEY), sessionVoices)))
+            assistantWords(config.copy(tts = if (config.tts == TtsPath.GLASSES && phoneSpeaksVoice(settings.value(VOICE_KEY), sessionVoices)) TtsPath.PHONE else config.tts))
         }
         Topic.LANGUAGE -> {
             val voice = settings.value(VOICE_KEY)
@@ -682,7 +683,7 @@ internal fun assistantWords(config: AssistantConfig): String {
         !configured -> stringResource(R.string.sum_ai_unset)
         else -> listOfNotNull(
             modelWords(config.model.ifBlank { if (config.provider == Provider.CLAUDE) DEFAULT_CLAUDE_MODEL else "" }),
-            stringResource(R.string.sum_ai_glasses_voice).takeIf { config.glassesVoice },
+            stringResource(R.string.sum_ai_glasses_voice).takeIf { config.tts == TtsPath.GLASSES },
         ).filter { it.isNotEmpty() }.joinToString(" · ")
     }
 }

@@ -5,6 +5,7 @@ import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Provider
+import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.notify.NotifyChoice
@@ -134,7 +135,7 @@ class VisorToggles @Inject constructor(
         ),
         VisorToggle(
             "glasses_voice", R.string.ai_glasses_voice, R.string.ai_glasses_voice_sub, Topic.META_AI,
-            assistant.config.on { it.glassesVoice }, { on -> assistant.update { it.copy(glassesVoice = on) } },
+            assistant.config.on { it.tts == TtsPath.GLASSES }, { on -> assistant.update { it.copy(tts = if (on) TtsPath.GLASSES else TtsPath.PHONE) } },
         ),
         VisorToggle(
             "quiet_actions", R.string.ai_quiet_actions, null, Topic.META_AI,

@@ -1,6 +1,7 @@
 package com.macedonga.visor.language
 
 import com.macedonga.visor.core.assistant.AssistantConfigStore
+import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.core.session.LinkState
@@ -36,7 +37,7 @@ fun keepAssistantConfig(
     scope.launch {
         combine(
             connection.state.map { it.link == LinkState.READY }.distinctUntilChanged(),
-            store.config.map { Triple(it.enabled, it.glassesVoice, it.answerWaitSeconds.toLong()) }.distinctUntilChanged(),
+            store.config.map { Triple(it.enabled, it.tts == TtsPath.GLASSES, it.answerWaitSeconds.toLong()) }.distinctUntilChanged(),
             // A phone language has no glasses voice to keep. Settings come in on connect, well inside the settle below.
             settings.state.map { isPhoneVoice(settings.value(VOICE_KEY)) }.distinctUntilChanged(),
         ) { ready, wanted, partner ->
