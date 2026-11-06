@@ -69,7 +69,7 @@ internal class PhoneTools(private val phone: Phone) {
             ),
         ),
         Triple(
-            "play_media", "Play music, a podcast or radio in a phone app.",
+            "play_media", "Play music, a podcast or radio in a phone app. A request to play or turn on music with no title is media_control resume when something is paused, else play_media with an empty query. Never say it plays without calling this tool; say only what its result says.",
             schema(
                 "query" to text("What to play as the wearer asked for it: a song, artist, album, playlist, genre, podcast or station. Empty for anything."),
                 "app" to text("The app the wearer named; empty for the one they use."),
@@ -77,7 +77,7 @@ internal class PhoneTools(private val phone: Phone) {
             ),
         ),
         Triple(
-            "media_control", "Pause, resume, skip or stop what plays on the phone.",
+            "media_control", "Pause, resume, skip or stop what plays on the phone. A request to play or turn on music with no title is resume, when music is paused. Never say it is done without calling this tool; say only what its result says.",
             schema("action" to text("What to do.", *MediaControl.entries.map { it.name.lowercase() }.toTypedArray()), required = "action"),
         ),
         Triple("now_playing", "What plays on the phone now.", schema()),

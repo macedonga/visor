@@ -52,7 +52,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * notification.
  */
 @Singleton
-class PhoneActions @Inject constructor(@ApplicationContext private val context: Context) : Phone {
+class PhoneActions @Inject constructor(@ApplicationContext private val context: Context, private val spotify: SpotifySearch) : Phone {
     private val pm = context.packageManager
     private val listener = ComponentName(context, MirrorListener::class.java)
     private val prefs = context.getSharedPreferences("phone_actions", Context.MODE_PRIVATE)
@@ -80,6 +80,14 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
             ?: return PhoneDone("", if (app.isNotEmpty()) "there is no app called $app on the phone" else "no app was named and none played lately; ask which one")
         val label = label(pkg)
         note("Playing \"$query\" in $label")
+        // Spotify takes no search from another app, but opens a track by its uri.
+        if (pkg == SPOTIFY && query.isNotEmpty() && spotify.ready) spotify.trackFor(query, ::note)?.let { track ->
+            val done = open(Intent(Intent.ACTION_VIEW, Uri.parse(track.uri)).setPackage(pkg), PLAY_ID, context.getString(R.string.phone_play, query), label)
+            if (!done.opened) return done
+            prefs.edit().putString(LAST, pkg).apply()
+            note("Playing ${track.name} in $label")
+            return PhoneDone(label, playing = track.name)
+        }
         // The step that did not play it, for the answer.
         var gaveUp = ""
         // Its session when it has one; then its media browser service, which an app may refuse to an app it does not know.
@@ -103,7 +111,9 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
         }
         // Then the app itself, opened on the search.
         val search = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH).setPackage(pkg)
-            .putExtra(SearchManager.QUERY, query).putExtra(MediaStore.EXTRA_MEDIA_FOCUS, "vnd.android.cursor.item/*")
+            .putExtra(SearchManager.QUERY, query)
+            .putExtra(MediaStore.EXTRA_MEDIA_FOCUS, if (query.isEmpty()) "vnd.android.cursor.item/*" else "vnd.android.cursor.item/audio")
+        if (query.isNotEmpty()) search.putExtra(MediaStore.EXTRA_MEDIA_TITLE, query)
         if (pm.resolveActivity(search, 0) == null) return PhoneDone(label, "$label does not take searches from other apps", gaveUp = gaveUp)
         prefs.edit().putString(LAST, pkg).apply()
         return open(search, PLAY_ID, context.getString(R.string.phone_play, query.ifEmpty { label }), label).copy(gaveUp = gaveUp)
@@ -316,6 +326,7 @@ class PhoneActions @Inject constructor(@ApplicationContext private val context: 
             MediaControl.PREVIOUS to KeyEvent.KEYCODE_MEDIA_PREVIOUS,
             MediaControl.STOP to KeyEvent.KEYCODE_MEDIA_STOP,
         )
+        const val SPOTIFY = "com.spotify.music"
         const val CHANNEL = "assistant_actions"
         const val DIRECTIONS_ID = 11
         const val PLAY_ID = 12

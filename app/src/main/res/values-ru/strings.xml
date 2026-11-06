@@ -1121,4 +1121,7 @@
     <string name="onboard_band_done">Браслет сопряжён</string>
     <string name="onboard_band_wrist">На каком запястье вы его носите?</string>
     <string name="onboard_band_failed">Браслет не сопряжён</string>
+    <string name="spotify_client_id">ID клиента</string>
+    <string name="spotify_client_secret">Секрет клиента</string>
+    <string name="phone_steady">Стабилизация на телефоне</string>
 </resources>

@@ -33,9 +33,9 @@ import java.util.concurrent.TimeUnit
 internal class Finished(val steadied: Boolean, val landscape: Boolean)
 
 /**
- * [input] as the gallery keeps it, in [output]: steadied on the phone when the glasses did not ([steadiedOnGlasses] says
- * by its size) and its motion logs are here, cut to a 4:3 band when [landscape]. One re-encode, HEVC, the sound as it
- * was. Null when there is nothing to do; throws when it cannot be done.
+ * [input] as the gallery keeps it, in [output]: steadied on the phone when [steadyOnPhone] says so and the glasses did not
+ * ([steadiedOnGlasses] says by its size), with its motion logs here, cut to a 4:3 band when [landscape]. One re-encode,
+ * HEVC, the sound as it was. Null when there is nothing to do; throws when it cannot be done.
  */
 @OptIn(UnstableApi::class)
 internal fun finishVideo(
@@ -46,6 +46,7 @@ internal fun finishVideo(
     frames: File,
     steadiness: Int,
     landscape: Boolean,
+    steadyOnPhone: () -> Boolean,
     steadiedOnGlasses: (Int, Int) -> Boolean,
 ): Finished? {
     val retriever = MediaMetadataRetriever()
@@ -60,7 +61,7 @@ internal fun finishVideo(
     }
     check(width > 0 && height > 0) { "no video track" }
     val cut = landscape && width < height
-    val steady = !steadiedOnGlasses(width, height)
+    val steady = steadyOnPhone() && !steadiedOnGlasses(width, height)
     if (!cut && !steady) return null
     val warps = Steady.plan(width, height, frameTimesUs(input).toLongArray(), readImu(imu), readFrames(frames), steadiness, steady, cut) ?: return null
     val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(input)))

@@ -95,6 +95,9 @@ class GlassesSession(
     var trustResult: TrustResult? = null
         private set
 
+    /** The handshake line of the current attempt, once its link is up. */
+    val handshake: String? get() = secureLink?.handshake
+
     /** Start connecting. Returns at once; the work happens on [scope]. */
     fun start(scope: CoroutineScope) {
         supervisor = scope.launch { supervise() }

@@ -1077,4 +1077,7 @@
     <string name="onboard_band_done">Il bracciale è accoppiato</string>
     <string name="onboard_band_wrist">Su quale polso lo indossi?</string>
     <string name="onboard_band_failed">Il bracciale non è accoppiato</string>
+    <string name="spotify_client_id">Client ID</string>
+    <string name="spotify_client_secret">Client secret</string>
+    <string name="phone_steady">Stabilizzazione sul telefono</string>
 </resources>

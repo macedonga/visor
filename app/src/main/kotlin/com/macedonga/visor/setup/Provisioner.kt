@@ -74,11 +74,13 @@ class Provisioner @Inject constructor(
                     transport = transports.create(GlassesLink.Bluetooth(address)),
                     source = login.source,
                     existingKeyPem = existing,
-                ) { step ->
-                    reached += step
-                    _status.value = Status.Running(reached.toList())
-                    log.add("Setup: ${step.words()}")
-                }
+                    onStep = { step ->
+                        reached += step
+                        _status.value = Status.Running(reached.toList())
+                        log.add("Setup: ${step.words()}")
+                    },
+                    onLink = { log.add("Setup: link $it") },
+                )
                 withContext(Dispatchers.IO) {
                     store.save(
                         IdentityBundle(

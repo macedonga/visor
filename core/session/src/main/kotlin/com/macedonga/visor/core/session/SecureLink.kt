@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.session
 
+import com.macedonga.visor.core.protocol.AuthenticationException
 import com.macedonga.visor.core.protocol.Ecdh
 import com.macedonga.visor.core.protocol.EnableEncryption
 import com.macedonga.visor.core.protocol.EndLinkSetup
@@ -49,6 +50,16 @@ class SecureLink(private val transport: Transport) {
     var lastCommand: Int? = null
         private set
 
+    /** What the glasses sent in the handshake, one line. Empty until [open] succeeds. */
+    var handshake: String = ""
+        private set
+
+    /** DATA frames [open] queued; [receive] unseals these first. */
+    private var handshakeQueued = 0
+
+    /** DATA frames unsealed so far, numbered from 0. */
+    private var unsealed = 0
+
     /** Run the AirShield handshake and install the per-direction frame ciphers. */
     suspend fun open() {
         val keyPair = Ecdh.generateEphemeral()
@@ -94,6 +105,7 @@ class SecureLink(private val transport: Transport) {
             if (peerRequest != null && peerEnable != null) break
         }
 
+        handshakeQueued = pending.size
         val request = peerRequest
         val enable = peerEnable
         if (request == null || enable == null) {
@@ -119,8 +131,22 @@ class SecureLink(private val transport: Transport) {
         val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv, multikey = multikey)
         rxCrypto = FrameCrypto(rxKeys, enable.base.toInt())
         txCrypto = FrameCrypto(txKeys, mySeq.toInt())
+        handshake = describe(request, enable, multikey)
 
         // EndLinkSetup is NOT sent here.
+    }
+
+    private fun describe(request: RequestEncryption, enable: EnableEncryption, multikey: Boolean): String {
+        val requestParameters = if (request.hasSupportedParameters) request.supportedParameters.toString() else "absent"
+        val enableParameters = if (enable.hasParameters) enable.parameters.toString() else "absent"
+        return "peer RequestEncryption supportedParameters=$requestParameters ellipticCurve=${request.ellipticCurve} " +
+            "quirks=${request.quirks} airshieldVersion=${request.airshieldVersion} keyHints=${request.keyHint.size}; " +
+            "peer EnableEncryption parameters=$enableParameters quirks=${enable.quirks} base=${enable.base} " +
+            "phasedLinkSetupSupported=${enable.phasedLinkSetupSupported} " +
+            "supportedLinkSetupServices=${enable.supportedLinkSetupServices} " +
+            "linkSwitchVersionSupported=${enable.linkSwitchVersionSupported}; " +
+            "publicKeysEqual=${request.publicKey.contentEquals(enable.publicKey)} multikey=$multikey " +
+            "queuedDuringHandshake=$handshakeQueued"
     }
 
     /** Send EndLinkSetup as the first encrypted DATA frame. */
@@ -143,8 +169,19 @@ class SecureLink(private val transport: Transport) {
         while (true) {
             val sdu = pending.removeFirstOrNull() ?: transport.receive()
             val frame = Framing.unpack(sdu)
-            if (frame.type == FrameType.DATA.value) return crypto.unseal(frame.body)
+            if (frame.type == FrameType.DATA.value) return unseal(crypto, frame.body)
             lastCommand = frame.body.firstOrNull()?.toInt()?.and(0xFF)
+        }
+    }
+
+    /** Unseal the next DATA frame; a failed check names the frame and whether the handshake queued it. */
+    private fun unseal(crypto: FrameCrypto, body: ByteArray): ByteArray {
+        val index = unsealed++
+        try {
+            return crypto.unseal(body)
+        } catch (error: AuthenticationException) {
+            val origin = if (index < handshakeQueued) "queued during the handshake" else "after the handshake"
+            throw AuthenticationException("${error.message} (frame $index, $origin)").apply { initCause(error) }
         }
     }
 

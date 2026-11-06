@@ -6,6 +6,7 @@ import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.media.LiveSettingsStore
+import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.notify.NotifyChoice
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
@@ -81,12 +83,36 @@ class VisorToggle(
     val set: (Boolean) -> Unit,
 )
 
+/** Whether the phone steadies the videos the glasses did not: the user's choice, else on for Gen 2 and while the product is unknown. */
+@Singleton
+class PhoneSteady @Inject constructor(@ApplicationContext context: Context, settings: GlassesSettings) {
+    private val prefs = context.getSharedPreferences("steady", Context.MODE_PRIVATE)
+    private val choice = MutableStateFlow(if (prefs.contains(KEY)) prefs.getBoolean(KEY, true) else null)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val on: StateFlow<Boolean> = combine(choice, settings.state) { c, s -> resolve(c, s.product) }
+        .stateIn(scope, SharingStarted.Eagerly, resolve(choice.value, settings.state.value.product))
+
+    fun set(on: Boolean) {
+        choice.value = on
+        prefs.edit().putBoolean(KEY, on).apply()
+    }
+
+    private companion object {
+        const val KEY = "on"
+
+        // 266 is the Ray-Ban Meta Gen 2, the one the phone stabilizer was calibrated on.
+        fun resolve(choice: Boolean?, product: Int?) = choice ?: (product == null || product == 266)
+    }
+}
+
 /** Visor's own switches, the ones that live on the phone and work with the glasses away. */
 @Singleton
 class VisorToggles @Inject constructor(
     notify: NotifyChoice,
     assistant: AssistantConfigStore,
     live: LiveSettingsStore,
+    steady: PhoneSteady,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -122,6 +148,7 @@ class VisorToggles @Inject constructor(
             "live_auto", R.string.live_auto_quality, null, Topic.LIVE,
             live.settings.on { !it.manual }, { auto -> live.update { it.copy(manual = !auto) } },
         ),
+        VisorToggle("phone_steady", R.string.phone_steady, null, Topic.CAMERA, steady.on, steady::set),
     )
 
     /** The switches the chosen provider has no use for: web search is Claude's alone. */

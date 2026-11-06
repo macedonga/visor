@@ -12,6 +12,7 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
@@ -24,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -36,6 +38,7 @@ import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiDirectPermissions
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.notify.MirrorListener
+import com.macedonga.visor.phone.SpotifySearch
 import com.macedonga.visor.phone.associateCompanion
 import com.macedonga.visor.phone.companionAssociated
 import com.macedonga.visor.ui.VisorIcons
@@ -102,7 +105,7 @@ enum class Need(val title: Int, val why: Int) {
 fun missingNeeds(context: Context): List<Need> = Need.entries.filter { !it.granted(context) }
 
 @HiltViewModel
-class PhoneAccessModel @Inject constructor(private val connection: GlassesConnection) : ViewModel() {
+class PhoneAccessModel @Inject constructor(private val connection: GlassesConnection, val spotify: SpotifySearch) : ViewModel() {
     /** The glasses' Bluetooth address, once they are claimed. */
     fun address(): String? = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
 }
@@ -114,6 +117,7 @@ fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
     val activity = LocalActivity.current
     var tick by remember { mutableIntStateOf(0) }
     var asked by remember { mutableStateOf<Need?>(null) }
+    var sheet by remember { mutableStateOf<String?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         // Refused for good: only Android's own page can grant it now.
         val need = asked
@@ -155,6 +159,29 @@ fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
                 }.toTypedArray(),
             )
         }
+        item(key = "spotify") {
+            val id = remember(sheet) { model.spotify.clientId }
+            val secret = remember(sheet) { model.spotify.clientSecret }
+            Column {
+                SectionLabel(stringResource(R.string.spotify_title))
+                Rows(
+                    { ValueRow(stringResource(R.string.spotify_client_id), id.ifEmpty { null }, onClick = { sheet = "id" }) },
+                    { ValueRow(stringResource(R.string.spotify_client_secret), if (secret.isEmpty()) null else "••••••", onClick = { sheet = "secret" }) },
+                )
+            }
+        }
+    }
+
+    when (sheet) {
+        "id" -> TextSheet(
+            stringResource(R.string.spotify_client_id), model.spotify.clientId,
+            onSave = { model.spotify.clientId = it }, onDismiss = { sheet = null },
+        )
+        "secret" -> TextSheet(
+            stringResource(R.string.spotify_client_secret), model.spotify.clientSecret,
+            onSave = { model.spotify.clientSecret = it }, onDismiss = { sheet = null },
+            secret = true, keyboard = KeyboardType.Password,
+        )
     }
 }
 

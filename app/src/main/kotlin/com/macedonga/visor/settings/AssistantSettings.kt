@@ -92,7 +92,9 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     val context = LocalContext.current
     val config by model.store.config.collectAsStateWithLifecycle()
     val settingsState by model.settings.state.collectAsStateWithLifecycle()
-    val partner = isPhoneVoice(settingsState.stored[VOICE_KEY] ?: model.settings.value(VOICE_KEY))
+    val voice = settingsState.stored[VOICE_KEY] ?: model.settings.value(VOICE_KEY)
+    val partner = isPhoneVoice(voice)
+    val sessionVoices by model.store.sessionVoices.collectAsStateWithLifecycle()
     val phase by model.assistant.phase.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
     var hearing by rememberOnResume { Need.MIC.granted(context) }
@@ -124,7 +126,7 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     var trying by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val claude = config.provider == Provider.CLAUDE
-    val phoneSpeaks = partner || config.speechLanguage.isNotEmpty()
+    val phoneSpeaks = phoneSpeaksVoice(voice, sessionVoices) || config.speechLanguage.isNotEmpty()
     val known = model.settings.specs.keys
 
     SettingsPage(stringResource(R.string.topic_meta_ai)) {
@@ -309,6 +311,10 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
         }
     }
 }
+
+/** The phone speaks a partner-language voice, and a glasses voice that runs session turns (sessionVoices). */
+fun phoneSpeaksVoice(voice: String?, sessionVoices: Set<String>): Boolean =
+    isPhoneVoice(voice) || (voice != null && voice in sessionVoices)
 
 /** The provider's models, newest first, with the empty choice on top and a way to type an id it does not list. */
 @Composable

@@ -137,7 +137,6 @@ import com.macedonga.visor.gallery.title
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.StatusPill
 import com.macedonga.visor.language.VOICE_KEY
-import com.macedonga.visor.language.isPhoneVoice
 import com.macedonga.visor.language.languageOfVoice
 import com.macedonga.visor.language.voiceLanguageName
 import com.macedonga.visor.media.spanWords
@@ -598,7 +597,8 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
     val base = when (topic) {
         Topic.META_AI -> {
             val config by model.assistant.config.collectAsStateWithLifecycle()
-            assistantWords(config.copy(glassesVoice = config.glassesVoice && !isPhoneVoice(settings.value(VOICE_KEY))))
+            val sessionVoices by model.assistant.sessionVoices.collectAsStateWithLifecycle()
+            assistantWords(config.copy(glassesVoice = config.glassesVoice && !phoneSpeaksVoice(settings.value(VOICE_KEY), sessionVoices)))
         }
         Topic.LANGUAGE -> {
             val voice = settings.value(VOICE_KEY)

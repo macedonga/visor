@@ -221,6 +221,9 @@ class GlassesConnection(
     @Volatile
     private var statusChannel: Pair<DataXConnection, Int>? = null
 
+    /** The current session's link handshake line, for the event log. */
+    val handshake: String? get() = host?.handshake
+
     /** Run [work] on the session with its mux: queued until READY while it reconnects, dropped when there is no session. */
     fun submit(work: suspend (DataXConnection) -> Unit) {
         host?.submit(work)

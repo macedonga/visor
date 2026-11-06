@@ -187,6 +187,10 @@ class MediaImport(
     @Volatile
     var steadiedOnGlasses: (Int, Int) -> Boolean = { w, h -> minOf(w, h) == 1512 && maxOf(w, h) == 2016 }
 
+    /** Whether videos the glasses did not steady are steadied on the phone; the app sets it from the user's switch. */
+    @Volatile
+    var steadyOnPhone: () -> Boolean = { true }
+
     private val assembly = Assembly(
         context, albums, index, places, ::say,
         onSaved = { handle ->
@@ -198,6 +202,7 @@ class MediaImport(
             deleteFromGlasses(handle)
         },
         onFailed = { handle, _ -> report(handle, ImportProblem.Kind.NOT_SAVED) },
+        steadyOnPhone = { steadyOnPhone() },
         steadiedOnGlasses = { w, h -> steadiedOnGlasses(w, h) },
     )
 
@@ -592,7 +597,7 @@ class MediaImport(
     /** [input] steadied or cut as an import would, into [output], with the logs kept for [handle]: for checking by hand. */
     fun finishAgain(input: File, handle: String, output: File, landscape: Boolean, steadiness: Int): String {
         val logs = index.originals(handle)
-        val done = finishVideo(context, input, output, File(logs, Assembly.IMU), File(logs, Assembly.FRAMES), steadiness, landscape, steadiedOnGlasses)
+        val done = finishVideo(context, input, output, File(logs, Assembly.IMU), File(logs, Assembly.FRAMES), steadiness, landscape, { steadyOnPhone() }, steadiedOnGlasses)
         return done?.let { "steadied ${it.steadied}, landscape ${it.landscape}" } ?: "nothing to do"
     }
 

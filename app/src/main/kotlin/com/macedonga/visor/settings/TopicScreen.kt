@@ -51,6 +51,7 @@ fun TopicScreen(name: String, open: (NavKey) -> Unit, model: SettingsViewModel =
                     } else null,
                 )
             }
+            Topic.CAMERA -> item(key = "visor") { Rows({ VisorToggleRow(model.toggles.byId("phone_steady")!!) }) }
             Topic.PHOTOS -> item(key = "visor") { PhotosPart(model) }
             Topic.BAND -> item(key = "visor") { BandPart(model) }
             else -> Unit

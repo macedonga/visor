@@ -33,6 +33,8 @@ class Assembly(
     private val onSaved: (String) -> Unit,
     /** A capture that could not be saved, and why. Its pieces stay for the next try. */
     private val onFailed: (String, String) -> Unit,
+    /** Whether videos the glasses did not steady are steadied on the phone. */
+    private val steadyOnPhone: () -> Boolean,
     /** Whether a video this size came out of the glasses' own stabilization. */
     private val steadiedOnGlasses: (Int, Int) -> Boolean,
 ) {
@@ -173,7 +175,7 @@ class Assembly(
 
     /** The video steadied or cut to landscape into [made], or null to keep it as it came: nothing to do, or this phone could not. */
     private fun steadyOrCrop(dir: File, main: File, made: File, handle: String, landscape: Boolean, steadiness: Int): Finished? =
-        runCatching { finishVideo(context, main, made, File(dir, IMU), File(dir, FRAMES), steadiness, landscape, steadiedOnGlasses) }.getOrElse {
+        runCatching { finishVideo(context, main, made, File(dir, IMU), File(dir, FRAMES), steadiness, landscape, steadyOnPhone, steadiedOnGlasses) }.getOrElse {
             say("Could not steady or crop ${handle.take(8)} (${it.message}): saving it as it came")
             null
         }

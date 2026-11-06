@@ -1084,4 +1084,8 @@
     <string name="onboard_band_done">The band is paired</string>
     <string name="onboard_band_wrist">Which wrist do you wear it on?</string>
     <string name="onboard_band_failed">The band is not paired</string>
+    <string name="spotify_title" translatable="false">Spotify</string>
+    <string name="spotify_client_id">Client ID</string>
+    <string name="spotify_client_secret">Client secret</string>
+    <string name="phone_steady">Phone stabilization</string>
 </resources>

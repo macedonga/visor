@@ -270,6 +270,8 @@ class Assistant(
         @Volatile var microphoneEnded = false
         @Volatile var interaction = initialInteraction
         var lastSpeechEnd = -1L
+        // The segments of a turn that is waiting for its last ones before it is answered.
+        var joining: MutableList<String>? = null
     }
 
     private suspend fun awaitPartnerWake(l: Link, interaction: String): Boolean {
@@ -286,12 +288,27 @@ class Assistant(
 
     private fun partnerUtterance(l: Link, session: PartnerSession, text: String, startMs: Long, endMs: Long) {
         if (link !== l || WAKE_WORD_ONLY.matches(text.trim())) return
-        val interaction = l.claim(session, endMs) ?: return
+        val words = withoutWakeWord(text)
+        if (words.isEmpty()) return
+        // A turn still waiting for its last segments takes this one too.
+        synchronized(session) {
+            session.joining?.let { held ->
+                held += words
+                session.lastSpeechEnd = endMs
+                return
+            }
+        }
+        val interaction = l.claim(session, endMs) ?: return say("Dropped while answering: $text")
         l.sessionOf[interaction] = session.id
         l.partnerTurns.add(interaction)
         if (interaction == session.initialInteraction) l.fresh.add(interaction)
+        val held = mutableListOf(words)
+        synchronized(session) { session.joining = held }
         scope.launch {
             try {
+                // The question's other segments come within this grace; they are joined into it.
+                delay(PARTNER_JOIN_MS)
+                val question = synchronized(session) { session.joining = null; held.joinToString(" ") }
                 if (!awaitPartnerWake(l, interaction)) return@launch
                 if (interaction != session.initialInteraction) {
                     if (session.microphoneEnded) return@launch
@@ -300,9 +317,10 @@ class Assistant(
                     l.mux.send(m0, netEvent(EV_START_OF_USER_SPEECH, ThriftWriter().str(1, interaction).i64(2, startMs).done()), messageType = MT_NET_EVENT)
                     l.speechStarted.add(interaction)
                 }
-                say("Heard \"$text\" myself in verified 3p session ${session.id}, turn $interaction")
-                answer(l, interaction, text, Visual.NONE)
+                say("Heard \"$question\" myself in verified 3p session ${session.id}, turn $interaction")
+                answer(l, interaction, question, Visual.NONE)
             } catch (cancel: CancellationException) {
+                synchronized(session) { if (session.joining === held) session.joining = null }
                 l.end(session)
                 throw cancel
             } catch (error: Exception) {
@@ -311,6 +329,9 @@ class Assistant(
             }
         }
     }
+
+    /** [text] without a wake phrase at its start, such as "Hey Meta," or "Хей, мета". */
+    private fun withoutWakeWord(text: String): String = text.trim().replace(WAKE_WORD_START, "").trim()
 
     /** svc15 state for one Bluetooth session. */
     private inner class Link(val mux: DataXConnection) {
@@ -393,6 +414,8 @@ class Assistant(
         val callIds = AtomicInteger(1)
         // The Display's interactions for questions typed in the app, to the app's turn for each.
         val typedOf = ConcurrentHashMap<String, String>()
+        // Each start interaction's MMAI_ONFRAME_KILLSWITCH (field 41), for the photo log.
+        val onFrameKillswitch = ConcurrentHashMap<String, Any>()
         // Questions typed or handwritten on the Display (ev341): no microphone, so no stream id for the phone's voice.
         val written: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
     }
@@ -400,7 +423,10 @@ class Assistant(
     /** A photo this side is waiting for, for one interaction. */
     private class PendingImage(val interaction: String) {
         val image = CompletableDeferred<ByteArray>()
-        @Volatile var answered = false
+        // What came while the photo was awaited, by source, for the log when none did.
+        private val seen = ConcurrentHashMap<String, Int>()
+        fun saw(source: String) { seen.merge(source, 1) { a, b -> a + b } }
+        fun count(source: String): Int = seen[source] ?: 0
     }
 
     @Volatile
@@ -437,6 +463,7 @@ class Assistant(
             override fun wants(offer: Offer): Boolean {
                 val namespace = offer.namespace
                 val size = offer.size
+                pending?.saw("airship")
                 val waiting = (pending != null && size < PHOTO_MAX_BYTES) ||
                     (namespace == NAMESPACE_SHARING && store.config.value.enabled && size < EARLY_MAX_BYTES)
                 if (waiting) say("Taking ${size / 1000} KB in namespace \"$namespace\" for the photo")
@@ -496,7 +523,10 @@ class Assistant(
             }
         }
         scope.launch {
-            glassesPhotos.arrived.collect { (id, bytes) -> if (pending != null && offerImage(bytes, "svc53 photo $id")) glassesPhotos.take(id) }
+            glassesPhotos.arrived.collect { (id, bytes) ->
+                pending?.saw("svc53")
+                if (pending != null && offerImage(bytes, "svc53 photo $id")) glassesPhotos.take(id)
+            }
         }
         // A day's lines are written again once its latest conversation has closed.
         scope.launch {
@@ -755,7 +785,7 @@ class Assistant(
             EV_MMAI_INTERACTION_REQUEST -> mmaiRequest(l, event.body)
             EV_DEVICE_VOICE_STATE -> voiceState(event.body)
             EV_REMOTE_IMAGE_CAPTURE_RESPONSE -> {
-                pending?.answered = true
+                pending?.saw("ev74")
                 say("The glasses took the photo: ${describe(event.body)}")
             }
             CustomWakeWord.EV_RESULT -> wakeWord.onResult(runCatching { Thrift.loads(event.body) }.getOrDefault(emptyMap()))
@@ -781,6 +811,18 @@ class Assistant(
         // Use case 7 opens a session ("SCI", English): there the glasses never speak text from the phone.
         l.sessionTurn = fields[5] == SESSION_USE_CASE
         val id = fields[1].asText()
+        fields[41]?.let { l.onFrameKillswitch[id] = it }
+        // On a voice's session turns the glasses never speak the phone's text, so the phone speaks; a plain turn undoes it.
+        fields[4].asText().takeIf { it.isNotEmpty() && !it.startsWith("3p_") }?.let { voice ->
+            val marked = voice in store.sessionVoices.value
+            if (l.sessionTurn && !marked) {
+                store.markSessionVoice(voice)
+                say("$voice runs session turns: the phone speaks")
+            } else if (!l.sessionTurn && marked) {
+                store.forgetSessionVoice(voice)
+                say("$voice runs plain turns again")
+            }
+        }
         // 55 isTranscriptionRequest: a turn that starts from text, as the question typed in the app does.
         if (fields[55] == true && id.isNotEmpty()) typed?.let { t ->
             l.typedOf[id] = t.id
@@ -912,6 +954,7 @@ class Assistant(
     private fun mmaiRequest(l: Link, body: ByteArray) {
         val f = runCatching { Thrift.loads(body) }.getOrNull() ?: return say("An unreadable MmaiInteractionRequest")
         val interaction = f[1].asText()
+        pending?.saw("ev65")
         val text = runCatching {
             val ocr = Thrift.loads(GZIPInputStream(Base64.getDecoder().decode(f[2].asText()).inputStream()).use { it.readBytes() })
             val words = (ocr[2] as? List<*>).orEmpty().map { it.asStruct()[2].asText() }
@@ -1361,6 +1404,9 @@ class Assistant(
         try {
             early?.let { offerEarly(it) }
             if (waiting.image.isCompleted) return waiting.image.await()
+            val killswitch = l.onFrameKillswitch[interaction]?.let { deep(it) } ?: "absent"
+            say("Photo for the question: imageUuid ${present(visual.imageUuid)}, captureHandle ${present(visual.captureHandle)}, " +
+                "inline ${visual.inline?.let { "${it.size} bytes" } ?: "none"}, MMAI_ONFRAME_KILLSWITCH $killswitch")
             if (!visual.glassesCaptured) {
                 val m0 = l.m0 ?: return null
                 val request = ThriftWriter().bool(1, false).bool(2, true).bool(3, false).str(4, interaction).done()
@@ -1369,12 +1415,15 @@ class Assistant(
                     say("Could not ask the glasses for a photo: ${failed.message}")
                     return null
                 }
-                say("Asked the glasses for a photo")
+                say("Asked the glasses for a photo with ev73 ${request.toHexString()}")
             } else {
                 say("The glasses took a photo (${visual.imageUuid.ifEmpty { visual.captureHandle }}); waiting for it")
             }
             val image = withTimeoutOrNull(PHOTO_WAIT_MS) { waiting.image.await() }
-            if (image == null) say("No photo arrived in ${PHOTO_WAIT_MS / 1000} s" + if (waiting.answered) " (the glasses said they took it)" else "")
+            if (image == null) {
+                say("No photo arrived in ${PHOTO_WAIT_MS / 1000} s; during the wait svc53 ${waiting.count("svc53")}, " +
+                    "airship ${waiting.count("airship")}, ev74 ${waiting.count("ev74")}, ev65 ${waiting.count("ev65")}")
+            }
             return image
         } finally {
             if (pending === waiting) pending = null
@@ -1741,11 +1790,21 @@ class Assistant(
         // svc15's statuses for a channel its restarted assistant closed.
         val CHANNEL_GONE = setOf(0xc002, 0xc010)
         const val QUESTION_GRACE_MS = 3_000L
+        // How long a 3p turn waits for the rest of its question before it is answered.
+        const val PARTNER_JOIN_MS = 1_500L
         // ev57 field 11, invocationMethod: 1 for the wake word, 3 for the reply to an answer that asked something, 5 for
         // a question after any other answer.
         val FOLLOW_UP_INVOCATIONS = setOf(3L, 5L)
         const val FRESH_WINDOW_MS = 2 * 60_000L
-        val WAKE_WORD_ONLY = Regex("^(hey|hi|ehi|ei|ok|okay)?[ ,]*(meta|mata|metta|matta|meda)[.!?]*$", RegexOption.IGNORE_CASE)
+        val WAKE_WORD_ONLY = Regex(
+            "^((hey|hi|ehi|ei|ok|okay)?[ ,]*(meta|mata|metta|matta|meda)|(хей|хэй|хай|эй)([ ,]+(мета|мэта|метта|мэтта|это|вета))?|мета|мэта|метта|мэтта|вета|всем[ ,]+это)[.!?]*$",
+            RegexOption.IGNORE_CASE,
+        )
+        // A wake phrase at the start of a question, with the punctuation after it.
+        val WAKE_WORD_START = Regex(
+            "^((hey|hi|ehi|ei|ok|okay)?[ ,]*(meta|mata|metta|matta|meda)|(хей|хэй|хай|эй)([ ,]+(мета|мэта|метта|мэтта|это|вета))?|мета|мэта|метта|мэтта|вета|всем[ ,]+это)[ ,.!?]+",
+            RegexOption.IGNORE_CASE,
+        )
         const val MIN_MODEL_MS = 6_000L
         const val PHOTO_WAIT_MS = 8_000L
         const val PHOTO_MAX_BYTES = 20_000_000L
@@ -1797,6 +1856,8 @@ private fun isUuid(s: String) = s.length == 36 && s.count { it == '-' } == 4
 private fun plain(s: String) = s.filter(Char::isLetterOrDigit).lowercase()
 
 private fun hex(b: ByteArray): String = b.toHexString(0, minOf(24, b.size))
+
+private fun present(s: String) = if (s.isEmpty()) "empty" else "present"
 
 private fun Throwable.why() = message ?: this::class.simpleName.orEmpty()
 

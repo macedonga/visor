@@ -19,6 +19,7 @@ import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.media.SVC_HN_SCREENCAST
+import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.transport.LeKeeper
 import com.macedonga.visor.phone.PhoneActions
@@ -78,7 +79,7 @@ fun responderScope(log: EventLog, name: String, dispatcher: CoroutineDispatcher 
 @Singleton
 class LogFeed @Inject constructor(
     private val log: EventLog,
-    connection: GlassesConnection,
+    private val connection: GlassesConnection,
     keeper: LeKeeper,
     media: MediaImport,
     albums: Albums,
@@ -139,6 +140,7 @@ class LogFeed @Inject constructor(
         if (t != null && t != before.target) add("Glasses: ${t.serial} at ${t.link}")
         if (now.noGlasses && !before.noGlasses) add("No glasses set up")
         if (now.link != before.link) add("Link: ${now.link.words()} [${now.link}]")
+        if (now.link == LinkState.READY && before.link != LinkState.READY) connection.handshake?.let { add("Link handshake: $it") }
         if (now.reason != before.reason && now.reason.isNotBlank()) add("Reason: ${now.reason}")
         if (now.failure != before.failure) now.failure?.let { add("Connect failed: ${it.words()} [$it]") }
         if (now.diagnosis != before.diagnosis) now.diagnosis?.let { add("Verdict: ${it.words()} [$it]") }

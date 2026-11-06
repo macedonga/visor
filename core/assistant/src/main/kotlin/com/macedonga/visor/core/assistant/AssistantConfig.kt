@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONObject
 
 /** How the assistant answers. The key stays in this app's private storage. */
@@ -52,6 +53,20 @@ class AssistantConfigStore(context: Context) {
 
     private val _config = MutableStateFlow(load())
     val config: StateFlow<AssistantConfig> = _config.asStateFlow()
+
+    private val _sessionVoices = MutableStateFlow(prefs.getStringSet(SESSION_VOICES, null).orEmpty().toSet())
+    /** Voices the glasses spoke session turns in, where the phone speaks. */
+    val sessionVoices: StateFlow<Set<String>> = _sessionVoices.asStateFlow()
+
+    fun markSessionVoice(voice: String) = setSessionVoices { it + voice }
+
+    /** A plain turn in [voice]: the glasses speak it again, as after Visor turned their session path off. */
+    fun forgetSessionVoice(voice: String) = setSessionVoices { it - voice }
+
+    private fun setSessionVoices(change: (Set<String>) -> Set<String>) {
+        _sessionVoices.update(change)
+        prefs.edit().putStringSet(SESSION_VOICES, _sessionVoices.value).apply()
+    }
 
     /** The [Fields] found for an address and model, kept until either changes. */
     fun fields(key: String): Fields? = runCatching {
@@ -115,5 +130,6 @@ class AssistantConfigStore(context: Context) {
 
     private companion object {
         const val FIELDS = "server_fields"
+        const val SESSION_VOICES = "session_voices"
     }
 }

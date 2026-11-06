@@ -43,6 +43,7 @@ import com.macedonga.visor.notify.PhoneContacts
 import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.outside.Glimpse
 import com.macedonga.visor.outside.Outside
+import com.macedonga.visor.settings.PhoneSteady
 import com.macedonga.visor.settings.keepMuseWithWakeWord
 import com.macedonga.visor.ui.allows
 import dagger.hilt.android.AndroidEntryPoint
@@ -109,6 +110,9 @@ class GlassesService : Service() {
     @Inject
     lateinit var glassesSettings: GlassesSettings
 
+    @Inject
+    lateinit var steady: PhoneSteady
+
     // Injected so the widget and the Quick Settings tile follow the glasses while no screen is open.
     @Inject
     lateinit var outside: Outside
@@ -170,6 +174,7 @@ class GlassesService : Service() {
             keepMuseWithWakeWord(scope, glassesSettings, log)
             keepLandscape(scope, connection, glassesSettings, glassesConfig, log)
             media.steadiedOnGlasses = steadiedOnGlasses(glassesSettings)
+            media.steadyOnPhone = { steady.on.value }
             notifications = scope.launch {
                 var shown: Shown? = null
                 combine(connection.state, liveNow(), outside.glimpse, ::Triple).collect { (state, now, glimpse) ->

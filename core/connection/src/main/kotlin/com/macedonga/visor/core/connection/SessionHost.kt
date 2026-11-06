@@ -18,6 +18,9 @@ interface SessionHost {
     /** True once the glasses have sent their own svc36 credential on this attempt, even if they refused ours. */
     val credentialReceived: Boolean
 
+    /** What the glasses sent in the link handshake, or null before the link is up. */
+    val handshake: String?
+
     fun start(scope: CoroutineScope)
 
     /** Finish, and do not return until the socket has been let go of. */

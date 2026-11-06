@@ -33,6 +33,7 @@ suspend fun provision(
     transport: Transport,
     source: WebLoginSource,
     existingKeyPem: ByteArray? = null,
+    onLink: (String) -> Unit = {},
     onStep: (ProvisionStep) -> Unit = {},
 ): ProvisioningResult {
     val key = if (existingKeyPem != null) ownerKeyFromPem(existingKeyPem) else generateOwnerKey()
@@ -51,6 +52,7 @@ suspend fun provision(
                     GlassesSession.LINK_SETUP_READ_TIMEOUT_MILLIS,
                     "the glasses stopped answering during link setup",
                 ) { link.open() }
+                onLink(link.handshake)
                 val connection = DataXConnection(link, ChannelRegistry())
                 val reader = connection.startReader(this)
                 try {

@@ -12,6 +12,8 @@ class RequestEncryption(
     val keyHint: List<ByteArray> = emptyList(),
     val quirks: Int = 0,
     val airshieldVersion: Int = 16,
+    /** Whether field 4 was on the wire. */
+    val hasSupportedParameters: Boolean = true,
 ) {
     fun encode(): ByteArray {
         var parts = Wire.fieldBytes(1, publicKey)
@@ -37,6 +39,7 @@ class RequestEncryption(
                 keyHint = f.repeatedBytes(5),
                 quirks = f.varint(6).toInt(),
                 airshieldVersion = f.varint(7).toInt(),
+                hasSupportedParameters = f.has(4),
             )
         }
     }
@@ -54,6 +57,8 @@ class EnableEncryption(
     val phasedLinkSetupSupported: Int = 0,
     val supportedLinkSetupServices: Long = 0,
     val linkSwitchVersionSupported: Int = 0,
+    /** Whether field 5 was on the wire. */
+    val hasParameters: Boolean = true,
 ) {
     /** Fields 1 to 5 always; 6 to 9 only when non-zero. */
     fun encode(): ByteArray {
@@ -72,17 +77,19 @@ class EnableEncryption(
     companion object {
         fun decode(data: ByteArray): EnableEncryption {
             val f = Wire.parse(data)
+            val hasParameters = f.has(5)
             return EnableEncryption(
                 publicKey = f.bytes(1),
                 seed = f.bytes(2),
                 iv = f.bytes(3),
                 base = f.varint(4),
                 // Left out, the glasses mean 31: Multikey on.
-                parameters = if (f.has(5)) f.varint(5).toInt() else 31,
+                parameters = if (hasParameters) f.varint(5).toInt() else 31,
                 quirks = f.varint(6).toInt(),
                 phasedLinkSetupSupported = f.varint(7).toInt(),
                 supportedLinkSetupServices = f.varint(8),
                 linkSwitchVersionSupported = f.varint(9).toInt(),
+                hasParameters = hasParameters,
             )
         }
     }
