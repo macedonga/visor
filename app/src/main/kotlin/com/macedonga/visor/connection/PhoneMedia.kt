@@ -99,7 +99,8 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
             }
             MT_LIKE -> scope.launch { setLiked(fields(message)?.varint(1) == 1L) }
             MT_NOTIFICATION_ACCESS -> scope.launch {
-                if (!startFromHere(listenerPage()) && !askAccess()) {
+                val page = listenerPage()
+                if (page == null || (!startFromHere(page) && !askAccess(page))) {
                     log.add("Notification access: Visor may not open settings from the background")
                 }
             }
@@ -132,10 +133,13 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     private fun listener() = ComponentName(context, MirrorListener::class.java)
 
     // Visor's own page among the notification listeners, else the list on phones without it.
-    private fun listenerPage(): Intent {
+    // Explicit, to the settings activity that shows it: a notification's tap opens that page and nothing else.
+    private fun listenerPage(): Intent? {
+        val pm = context.packageManager
         val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
             .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, listener().flattenToString())
-        return if (detail.resolveActivity(context.packageManager) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        val page = if (detail.resolveActivity(pm) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        return page.resolveActivity(pm)?.let(page::setComponent)
     }
 
     private fun active(manager: MediaSessionManager): List<MediaController> =
@@ -255,13 +259,13 @@ class PhoneMedia @Inject constructor(@ApplicationContext private val context: Co
     }
 
     // Android keeps Visor from opening the settings from the background, so a notification opens them.
-    private fun askAccess(): Boolean {
+    private fun askAccess(page: Intent): Boolean {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return false
         if (!manager.areNotificationsEnabled()) return false
         manager.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.access_listener_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val open = PendingIntent.getActivity(
             context, ACCESS_ID,
-            listenerPage().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = Notification.Builder(context, CHANNEL)
