@@ -111,6 +111,7 @@ class KitRoutes @Inject constructor(
     private val live: LiveStream,
     private val kitLive: KitLive,
     private val transcripts: KitTranscripts,
+    private val settings: KitSettings,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -196,6 +197,10 @@ class KitRoutes @Inject constructor(
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }
         answer(Methods.NOTIFY_POST) { caller, notice -> notices.post(caller.packageName, notice) }
         answer(Methods.NOTIFY_REMOVE) { caller, removal -> notices.remove(caller.packageName, removal.id) }
+        answer(Methods.SETTINGS_LIST) { _, query -> settings.list(query) }
+        answer(Methods.SETTINGS_GET) { _, request -> settings.get(request.key) }
+        answer(Methods.SETTINGS_SET) { _, write -> settings.set(write.key, write.value) }
+        stream(Topics.SETTINGS_CHANGES) { _, query -> settings.changes(query) }
 
         answer(Methods.RAW_SEND) { _, send ->
             requireRaw(send.service)

@@ -458,6 +458,8 @@
     <string name="kit_scope_name_voice">语音</string>
     <string name="kit_scope_name_assistant">助手</string>
     <string name="kit_scope_name_notify">通知</string>
+    <string name="kit_scope_settings">读取眼镜的设置，并更改音量、相机分辨率等日常设置</string>
+    <string name="kit_scope_name_settings">设置</string>
     <string name="kit_scope_raw">发送和读取眼镜自身的协议消息，用于研究。仅在开发者模式开启时</string>
     <string name="kit_scope_name_raw">原始协议</string>
     <string name="settings_diagnostics">诊断</string>
