@@ -47,6 +47,7 @@ import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
 import com.macedonga.visor.kit.protocol.RawMessage
+import com.macedonga.visor.kit.protocol.ThermalLevel
 import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.kit.protocol.VideoKind
 import com.macedonga.visor.kit.server.Caller
@@ -215,6 +216,8 @@ class KitRoutes @Inject constructor(
             folded = device?.hinge?.let { it == HINGE_CLOSED },
             recording = device?.camera?.let { it == CAMERA_VIDEO_STARTED },
             caseBattery = device?.case?.takeIf { it.known && it.present }?.percent,
+            thermal = device?.thermal?.health?.takeIf { it != "UNKNOWN" }?.let { ThermalLevel(it.lowercase()) },
+            throttling = device?.thermal?.throttling,
         )
     }
 
