@@ -37,6 +37,7 @@ import com.macedonga.visor.kit.protocol.CaptureProgress
 import com.macedonga.visor.kit.protocol.CaptureType
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.Failure
+import com.macedonga.visor.kit.protocol.Feeds
 import com.macedonga.visor.kit.protocol.Finger
 import com.macedonga.visor.kit.protocol.Gesture
 import com.macedonga.visor.kit.protocol.GestureAction
@@ -98,6 +99,7 @@ class KitRoutes @Inject constructor(
     private val pairs: Pairs,
     private val looks: Looks,
     private val live: LiveStream,
+    private val kitLive: KitLive,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -125,6 +127,9 @@ class KitRoutes @Inject constructor(
             ready()
             if (!shutter.stop()) throw KitException(ErrorCode.TIMEOUT, "The glasses did not stop the video.")
         }
+
+        feed(Feeds.CAMERA_LIVE) { caller, config -> kitLive.watch(caller, config) }
+        answer(Methods.CAMERA_LIVE_PHOTO) { caller, _ -> kitLive.photo(caller) }
 
         answer(Methods.CAPTURES_LIST) { caller, _ ->
             ready()
