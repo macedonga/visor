@@ -4,7 +4,7 @@ import android.app.Application
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.transport.FileTrace
 import com.macedonga.visor.log.LogFeed
-import com.macedonga.visor.outside.VdkHost
+import com.macedonga.visor.outside.KitHost
 import com.macedonga.visor.update.Updates
 import dagger.hilt.android.HiltAndroidApp
 import java.io.File
@@ -21,13 +21,13 @@ class VisorApp : Application() {
     lateinit var updates: Updates
 
     @Inject
-    lateinit var vdk: VdkHost
+    lateinit var kit: KitHost
 
     override fun onCreate() {
         super.onCreate()
         // Debug builds keep every DataX message in files/datax.log.
         if (BuildConfig.DEBUG) DataXConnection.trace = FileTrace(File(filesDir, "datax.log"))
         updates.start()
-        vdk.start()
+        kit.start()
     }
 }

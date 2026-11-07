@@ -13,8 +13,8 @@ import androidx.compose.ui.unit.dp
 import com.macedonga.visor.R
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.design.VisorTheme
-import com.macedonga.visor.vdk.protocol.VdkProtocol
-import com.macedonga.visor.vdk.protocol.Scope
+import com.macedonga.visor.kit.protocol.KitProtocol
+import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SheetAnswers
 import com.macedonga.visor.settings.SheetTitle
@@ -27,8 +27,8 @@ import javax.inject.Inject
  * The result is every scope the app holds afterwards, also when the person just goes back.
  */
 @AndroidEntryPoint
-class VdkConsentActivity : ComponentActivity() {
-    @Inject lateinit var grants: VdkGrants
+class KitConsentActivity : ComponentActivity() {
+    @Inject lateinit var grants: KitGrants
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,7 +40,7 @@ class VdkConsentActivity : ComponentActivity() {
         }
         answer(app)
         // A scope this Visor does not know cannot be granted: the result shows the app does not hold it.
-        val asked = intent.getStringArrayExtra(VdkProtocol.EXTRA_SCOPES).orEmpty().map(::Scope).filter { it in KNOWN }
+        val asked = intent.getStringArrayExtra(KitProtocol.EXTRA_SCOPES).orEmpty().map(::Scope).filter { it in KNOWN }
         val missing = asked.toSet() - grants.scopesOf(app)
         if (missing.isEmpty()) return finish()
 
@@ -49,7 +49,7 @@ class VdkConsentActivity : ComponentActivity() {
         setContent {
             VisorTheme {
                 VisorSheet(onDismiss = ::finish) {
-                    SheetTitle(stringResource(R.string.vdk_consent_title, label))
+                    SheetTitle(stringResource(R.string.kit_consent_title, label))
                     for (scope in KNOWN.filter { it in missing }) {
                         Text(
                             stringResource(SCOPE_TEXT.getValue(scope)),
@@ -59,13 +59,13 @@ class VdkConsentActivity : ComponentActivity() {
                         )
                     }
                     SheetAnswers(
-                        stringResource(R.string.vdk_consent_allow),
+                        stringResource(R.string.kit_consent_allow),
                         {
                             grants.set(app, grants.scopesOf(app) + missing)
                             answer(app)
                             finish()
                         },
-                        stringResource(R.string.vdk_consent_deny),
+                        stringResource(R.string.kit_consent_deny),
                         ::finish,
                     )
                 }
@@ -75,7 +75,7 @@ class VdkConsentActivity : ComponentActivity() {
 
     private fun answer(app: String) {
         val held = grants.scopesOf(app).map { it.id }.toTypedArray()
-        setResult(RESULT_OK, Intent().putExtra(VdkProtocol.EXTRA_SCOPES, held))
+        setResult(RESULT_OK, Intent().putExtra(KitProtocol.EXTRA_SCOPES, held))
     }
 
     companion object {
@@ -83,23 +83,23 @@ class VdkConsentActivity : ComponentActivity() {
         val KNOWN = listOf(Scope.STATE, Scope.CAMERA, Scope.BAND, Scope.DISPLAY, Scope.VOICE, Scope.ASSISTANT, Scope.NOTIFY)
 
         val SCOPE_NAME = mapOf(
-            Scope.STATE to R.string.vdk_scope_name_state,
-            Scope.CAMERA to R.string.vdk_scope_name_camera,
-            Scope.BAND to R.string.vdk_scope_name_band,
-            Scope.DISPLAY to R.string.vdk_scope_name_display,
-            Scope.VOICE to R.string.vdk_scope_name_voice,
-            Scope.ASSISTANT to R.string.vdk_scope_name_assistant,
-            Scope.NOTIFY to R.string.vdk_scope_name_notify,
+            Scope.STATE to R.string.kit_scope_name_state,
+            Scope.CAMERA to R.string.kit_scope_name_camera,
+            Scope.BAND to R.string.kit_scope_name_band,
+            Scope.DISPLAY to R.string.kit_scope_name_display,
+            Scope.VOICE to R.string.kit_scope_name_voice,
+            Scope.ASSISTANT to R.string.kit_scope_name_assistant,
+            Scope.NOTIFY to R.string.kit_scope_name_notify,
         )
 
         val SCOPE_TEXT = mapOf(
-            Scope.STATE to R.string.vdk_scope_state,
-            Scope.CAMERA to R.string.vdk_scope_camera,
-            Scope.BAND to R.string.vdk_scope_band,
-            Scope.DISPLAY to R.string.vdk_scope_display,
-            Scope.VOICE to R.string.vdk_scope_voice,
-            Scope.ASSISTANT to R.string.vdk_scope_assistant,
-            Scope.NOTIFY to R.string.vdk_scope_notify,
+            Scope.STATE to R.string.kit_scope_state,
+            Scope.CAMERA to R.string.kit_scope_camera,
+            Scope.BAND to R.string.kit_scope_band,
+            Scope.DISPLAY to R.string.kit_scope_display,
+            Scope.VOICE to R.string.kit_scope_voice,
+            Scope.ASSISTANT to R.string.kit_scope_assistant,
+            Scope.NOTIFY to R.string.kit_scope_notify,
         )
     }
 }

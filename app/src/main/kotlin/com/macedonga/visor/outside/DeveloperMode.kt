@@ -24,7 +24,7 @@ import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.DeveloperIntents as I
-import com.macedonga.visor.vdk.protocol.Scope
+import com.macedonga.visor.kit.protocol.Scope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -66,7 +66,7 @@ class DeveloperMode @Inject constructor(
     private val shutter: Shutter,
     private val log: EventLog,
     private val assistant: AssistantConfigStore,
-    private val vdkGrants: VdkGrants,
+    private val kitGrants: KitGrants,
 ) {
     private val prefs = context.getSharedPreferences("developer", Context.MODE_PRIVATE)
     private val _on = MutableStateFlow(prefs.getBoolean(ON, false))
@@ -201,8 +201,8 @@ class DeveloperMode @Inject constructor(
             val ready = connection.state.map { it.link == LinkState.READY }.distinctUntilChanged()
                 .onEach { if (it) upAt = SystemClock.elapsedRealtime() }
             val photos = assistant.config.map { it.voicePhotos }.distinctUntilChanged()
-            val vdkCamera = vdkGrants.all.map { apps -> apps.values.any { Scope.CAMERA in it.scopes } }.distinctUntilChanged()
-            combine(ready, on, photos, vdkCamera) { ready, on, photos, vdk -> (on || photos || vdk).takeIf { ready } }.collectLatest { on ->
+            val kitCamera = kitGrants.all.map { apps -> apps.values.any { Scope.CAMERA in it.scopes } }.distinctUntilChanged()
+            combine(ready, on, photos, kitCamera) { ready, on, photos, kit -> (on || photos || kit).takeIf { ready } }.collectLatest { on ->
                 on ?: return@collectLatest
                 // A link just up settles first; the configuration comes in a bug report.
                 delay(upAt + SETTLE_MS - SystemClock.elapsedRealtime())

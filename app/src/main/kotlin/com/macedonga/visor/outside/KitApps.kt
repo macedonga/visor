@@ -1,4 +1,4 @@
-@file:OptIn(VdkInternal::class)
+@file:OptIn(KitInternal::class)
 
 package com.macedonga.visor.outside
 
@@ -12,17 +12,17 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.notify.GlassesNotification
-import com.macedonga.visor.vdk.VdkException
-import com.macedonga.visor.vdk.protocol.ErrorCode
-import com.macedonga.visor.vdk.protocol.Notice
-import com.macedonga.visor.vdk.protocol.ToolAnswer
-import com.macedonga.visor.vdk.protocol.ToolCall
-import com.macedonga.visor.vdk.protocol.ToolSpec
-import com.macedonga.visor.vdk.protocol.VdkInternal
-import com.macedonga.visor.vdk.protocol.VdkJson
-import com.macedonga.visor.vdk.protocol.VoiceReply
-import com.macedonga.visor.vdk.protocol.VoiceRequest
-import com.macedonga.visor.vdk.server.Phrases
+import com.macedonga.visor.kit.KitException
+import com.macedonga.visor.kit.protocol.ErrorCode
+import com.macedonga.visor.kit.protocol.Notice
+import com.macedonga.visor.kit.protocol.ToolAnswer
+import com.macedonga.visor.kit.protocol.ToolCall
+import com.macedonga.visor.kit.protocol.ToolSpec
+import com.macedonga.visor.kit.protocol.KitInternal
+import com.macedonga.visor.kit.protocol.KitJson
+import com.macedonga.visor.kit.protocol.VoiceReply
+import com.macedonga.visor.kit.protocol.VoiceRequest
+import com.macedonga.visor.kit.server.Phrases
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -41,7 +41,7 @@ import org.json.JSONObject
 
 /** The questions VDK apps answer: each app's phrases while it listens, and the answers it gives. */
 @Singleton
-class VdkVoices @Inject constructor(private val grants: VdkGrants) : AppVoices {
+class KitVoices @Inject constructor(private val grants: KitGrants) : AppVoices {
     private class Offer(val app: String, val label: String, val phrases: List<String>, val requests: SendChannel<VoiceRequest>) {
         val words = phrases.map(Phrases::words)
     }
@@ -57,7 +57,7 @@ class VdkVoices @Inject constructor(private val grants: VdkGrants) : AppVoices {
     /** [app]'s questions for as long as it collects them. */
     fun offer(app: String, phrases: List<String>): Flow<VoiceRequest> = channelFlow {
         val offer = Offer(app, grants.labelOf(app), phrases, channel)
-        if (offer.words.all { it.isEmpty() }) throw VdkException(ErrorCode.INVALID_PARAMS, "No phrase has a word in it.")
+        if (offer.words.all { it.isEmpty() }) throw KitException(ErrorCode.INVALID_PARAMS, "No phrase has a word in it.")
         offers += offer
         awaitClose { offers -= offer }
     }
@@ -90,7 +90,7 @@ class VdkVoices @Inject constructor(private val grants: VdkGrants) : AppVoices {
 
 /** The tools VDK apps offer the assistant's model, while they offer them, and the answers to their calls. */
 @Singleton
-class VdkTools @Inject constructor(private val grants: VdkGrants) : AppTools {
+class KitTools @Inject constructor(private val grants: KitGrants) : AppTools {
     private class Offer(val app: String, val label: String, val tools: List<ToolSpec>, val calls: SendChannel<ToolCall>)
 
     private class Waiting(val app: String, val answer: CompletableDeferred<ToolAnswer>)
@@ -101,12 +101,12 @@ class VdkTools @Inject constructor(private val grants: VdkGrants) : AppTools {
     /** [app]'s [tools] for as long as it collects their calls. */
     fun offer(app: String, tools: List<ToolSpec>): Flow<ToolCall> = channelFlow {
         for (tool in tools) {
-            if (!NAME.matches(tool.name)) throw VdkException(ErrorCode.INVALID_PARAMS, "The tool name \"${tool.name}\" does not fit $NAME.")
+            if (!NAME.matches(tool.name)) throw KitException(ErrorCode.INVALID_PARAMS, "The tool name \"${tool.name}\" does not fit $NAME.")
             if ((tool.schema as? JsonObject)?.get("type")?.jsonPrimitive?.contentOrNull != "object") {
-                throw VdkException(ErrorCode.INVALID_PARAMS, "The schema of ${tool.name} is not an object schema.")
+                throw KitException(ErrorCode.INVALID_PARAMS, "The schema of ${tool.name} is not an object schema.")
             }
         }
-        if (tools.map { it.name }.toSet().size != tools.size) throw VdkException(ErrorCode.INVALID_PARAMS, "Two tools share a name.")
+        if (tools.map { it.name }.toSet().size != tools.size) throw KitException(ErrorCode.INVALID_PARAMS, "Two tools share a name.")
         val offer = Offer(app, grants.labelOf(app), tools, channel)
         offers += offer
         awaitClose { offers -= offer }
@@ -135,7 +135,7 @@ class VdkTools @Inject constructor(private val grants: VdkGrants) : AppTools {
         val answer = CompletableDeferred<ToolAnswer>()
         waiting[id] = Waiting(offer.app, answer)
         try {
-            val arguments = VdkJson.parseToJsonElement(input.toString())
+            val arguments = KitJson.parseToJsonElement(input.toString())
             if (offer.calls.trySend(ToolCall(id, tool, arguments)).isFailure) return ToolResult("${offer.label} stopped offering $tool", true)
             val done = withTimeoutOrNull(TOOL_MS) { answer.await() } ?: return ToolResult("${offer.label} did not answer in time", true)
             return ToolResult(done.text, done.error)
@@ -153,7 +153,7 @@ class VdkTools @Inject constructor(private val grants: VdkGrants) : AppTools {
 
 /** VDK apps' notifications on the Display; glasses without a display show none of an app's. */
 @Singleton
-class VdkNotices @Inject constructor(private val connection: GlassesConnection, private val grants: VdkGrants) {
+class KitNotices @Inject constructor(private val connection: GlassesConnection, private val grants: KitGrants) {
     // What each shown notification was sent with, which its removal must name.
     private val shown = ConcurrentHashMap<String, String>()
 
@@ -185,12 +185,12 @@ class VdkNotices @Inject constructor(private val connection: GlassesConnection, 
 
     private fun ready() {
         val state = connection.state.value
-        if (state.link != LinkState.READY) throw VdkException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
-        if (!isDisplayBuild(state.info?.build)) throw VdkException(ErrorCode.UNSUPPORTED, "Glasses without a display show no notifications of apps.")
+        if (state.link != LinkState.READY) throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+        if (!isDisplayBuild(state.info?.build)) throw KitException(ErrorCode.UNSUPPORTED, "Glasses without a display show no notifications of apps.")
     }
 
-    private fun keyOf(app: String, id: String) = "vdk:$app:$id"
+    private fun keyOf(app: String, id: String) = "kit:$app:$id"
 }
 
 private fun expired(what: String, id: String) =
-    VdkException(ErrorCode.INVALID_PARAMS, "No $what $id is waiting: it was answered, or the glasses gave up on it.", reason = "expired")
+    KitException(ErrorCode.INVALID_PARAMS, "No $what $id is waiting: it was answered, or the glasses gave up on it.", reason = "expired")

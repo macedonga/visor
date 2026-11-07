@@ -155,22 +155,22 @@
 
         <!-- The VDK, the Visor Development Kit: apps bind this, and get what the person grants them. -->
         <service
-            android:name=".outside.VdkService"
+            android:name=".outside.KitService"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.macedonga.visor.vdk.action.BIND" />
+                <action android:name="com.macedonga.visor.kit.action.BIND" />
             </intent-filter>
         </service>
 
         <!-- The VDK's consent screen, over the app that asks. -->
         <activity
-            android:name=".outside.VdkConsentActivity"
+            android:name=".outside.KitConsentActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
-                <action android:name="com.macedonga.visor.vdk.action.REQUEST_SCOPES" />
+                <action android:name="com.macedonga.visor.kit.action.REQUEST_SCOPES" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

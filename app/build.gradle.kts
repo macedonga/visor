@@ -73,7 +73,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.browser)
-    implementation(libs.vdk)
+    implementation(libs.visor.kit)
     implementation(libs.androidx.media)
     implementation(libs.kotlinx.coroutines.android)
 

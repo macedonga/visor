@@ -78,8 +78,8 @@ import com.macedonga.visor.metaai.AssistantCamera
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.NotifyIcons
 import com.macedonga.visor.phone.PhoneActions
-import com.macedonga.visor.outside.VdkTools
-import com.macedonga.visor.outside.VdkVoices
+import com.macedonga.visor.outside.KitTools
+import com.macedonga.visor.outside.KitVoices
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -264,10 +264,10 @@ object ConnectionModule {
         glassesConfig: GlassesConfig,
         phone: PhoneActions,
         camera: AssistantCamera,
-        vdkVoices: VdkVoices,
-        vdkTools: VdkTools,
+        kitVoices: KitVoices,
+        kitTools: KitTools,
     ): Assistant = Assistant(
-        context, connection, Voice(context), Brain(config, diary, hub, phone, vdkTools), config, airship, diary,
+        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools), config, airship, diary,
         liveSession = live.wifiSession,
         liveFrame = live::frameNow,
         camera = camera,
@@ -279,7 +279,7 @@ object ConnectionModule {
         phone = phone,
         display = { isDisplayBuild(connection.state.value.info?.build) },
         cameraAction = camera::act,
-        apps = vdkVoices,
+        apps = kitVoices,
     )
 
     @Provides
