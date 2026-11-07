@@ -23,7 +23,7 @@ object AirShieldCipher {
     /** Modified PKCS#7: the pad byte is `pad_len + 0xC0`. */
     const val PAD_OFFSET: Int = 0xC0
 
-    /** The constant 4-byte little-endian word ahead of the seq in the 8-byte MAC counter. */
+    /** The 4-byte little-endian word ahead of the seq in the MAC: 02 02 00, then the link's quirks. */
     const val COUNTER_PREFIX: Int = 0x00000202
 
     /** Modified PKCS#7. An aligned input gets a whole block, so there is always a pad. */
@@ -60,11 +60,14 @@ object AirShieldCipher {
 }
 
 /** One direction's crypto on AirShield DATA frame bodies: [seal] for tx, [unseal] for rx. */
-class FrameCrypto(keys: SessionKeys, initSeq: Int = 0) {
+class FrameCrypto(keys: SessionKeys, initSeq: Int = 0, quirks: Int = 0) {
     private val aesKey: ByteArray
     private val hmacKey: ByteArray
     private var iv: ByteArray
     private var seq: Int = initSeq
+
+    // The quirks byte is the word's top byte: 02 02 00 01 under QCS7 (libairshield Framing, #80).
+    private val macPrefix = AirShieldCipher.le32(AirShieldCipher.COUNTER_PREFIX or ((quirks and 0xFF) shl 24))
 
     init {
         require(keys.aesKey.size == 32 && keys.hmacKey.size == 32 && keys.iv.size == AirShieldCipher.BLOCK) {
@@ -77,7 +80,7 @@ class FrameCrypto(keys: SessionKeys, initSeq: Int = 0) {
 
     private fun mac(blockCount: Int, ciphertext: ByteArray): ByteArray {
         // MAC input: prefix (LE u32), seq (LE u32), blockCount, ciphertext.
-        val macInput = AirShieldCipher.le32(AirShieldCipher.COUNTER_PREFIX) + AirShieldCipher.le32(seq) +
+        val macInput = macPrefix + AirShieldCipher.le32(seq) +
             byteArrayOf(blockCount.toByte()) + ciphertext
         val hmac = Mac.getInstance("HmacSHA256")
         hmac.init(SecretKeySpec(hmacKey, "HmacSHA256"))

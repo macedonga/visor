@@ -16,7 +16,7 @@ object Kdf {
     /** EncryptionParameters flag 0x04: a separate HMAC key. The Neural Band offers 27, without it. */
     const val MULTIKEY: Int = 4
 
-    /** QuirksMode 1 (QCS7), sent by Ray-Ban Meta Burbank Audio: the HKDF expand takes [QCS7_INFO]. */
+    /** QuirksMode 1 (QCS7), sent by Ray-Ban Meta Burbank Audio: the HKDF expand takes [QCS7_INFO], the MAC word ends in 1. */
     const val QUIRKS_QCS7: Int = 1
 
     /** One direction's key set. */
