@@ -17,11 +17,13 @@ import com.macedonga.visor.core.transport.META_LE_SERVICE
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Meta glasses the phone can hear or is bonded with. [rssi] is null for a bonded pair that is not advertising. */
 data class NearbyPair(
@@ -183,19 +185,27 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
      * within [BAND_SCAN_MS]. Bonded by [bond], as the glasses are.
      */
     @SuppressLint("MissingPermission")
-    suspend fun bandNearby(): String? {
+    suspend fun bandNearby(): String? = bandNearby(first = false)
+
+    /**
+     * The band heard nearby, one in pairing mode first. With [first], the first band heard, at once: a band the Display
+     * has just let go of is the only one advertising.
+     */
+    suspend fun bandNearby(first: Boolean): String? {
         val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
         val heard = HashMap<String, Pair<Boolean, Int>>()
+        val any = CompletableDeferred<Unit>()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val advert = result.scanRecord?.getManufacturerSpecificData(META_COMPANY)?.let(::advert) ?: return
                 if (advert.product !in PRODUCT_BANDS) return
                 synchronized(heard) { heard[result.device.address] = advert.pairing to result.rssi }
+                any.complete(Unit)
             }
         }
         scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
         try {
-            delay(BAND_SCAN_MS)
+            if (first) withTimeoutOrNull(BAND_SCAN_MS) { any.await() } else delay(BAND_SCAN_MS)
         } finally {
             runCatching { scanner.stopScan(callback) }
         }
