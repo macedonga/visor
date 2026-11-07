@@ -69,11 +69,12 @@ class BandSetup @Inject constructor(
             if (glasses == null || !owned) return@launch fail(Reason.NO_GLASSES)
             link.release()
             try {
-                // Not bonded yet: the band heard nearby is bonded here, as the glasses are.
-                val candidates = bondedBands().ifEmpty { listOfNotNull(nearby.bandNearby()?.let { nearby.bond(it) }) }
-                if (candidates.isEmpty()) return@launch fail(Reason.NOT_PAIRED)
-                // A band paired more than once leaves a bond per pairing; the one that answers is the band.
-                val address = candidates.firstOrNull { reachable(it) } ?: return@launch fail(Reason.NO_ANSWER)
+                // A band paired more than once leaves a bond per pairing; the one that answers is the band. A band that
+                // forgot this phone answers none of them, so then the band heard nearby is bonded here, as the glasses are.
+                val bonded = bondedBands()
+                val address = bonded.firstOrNull { reachable(it) }
+                    ?: nearby.bandNearby()?.let { nearby.bond(it) }?.takeIf { reachable(it) }
+                    ?: return@launch fail(if (bonded.isEmpty()) Reason.NOT_PAIRED else Reason.NO_ANSWER)
                 log.add("Band setup: changing owner on $address")
                 val result = provision(
                     transport = BluetoothLeTransport(context, address, defaultPsm = Band.PSM),
