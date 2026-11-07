@@ -1,5 +1,9 @@
 package com.macedonga.visor.band
 
+import kotlinx.coroutines.flow.onSubscription
+import com.macedonga.visor.core.identity.rawPublicKey
+import com.macedonga.visor.core.identity.keyHint
+import com.macedonga.visor.setup.NearbyGlasses
 import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.BundleCredentials
@@ -71,8 +75,12 @@ class BandLink @Inject constructor(
     private val connection: GlassesConnection,
     private val bands: Bands,
     private val store: IdentityStore,
+    private val peers: BandPeers,
+    private val nearby: NearbyGlasses,
     private val log: EventLog,
 ) {
+    // The band the Display let go of for this phone, by its address as the Display names it and its key hint.
+    @Volatile private var lent: Pair<ByteArray, ByteArray>? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = Mutex()
     private val seq = AtomicInteger(1)
@@ -274,12 +282,18 @@ class BandLink @Inject constructor(
         session = null
         job = null
         _state.update { it.copy(link = LinkState.DISCONNECTED, gestures = false) }
-        if (band == null) return
+        if (band == null) return giveBack()
         val key = band.key ?: store.ownerKeyPem() ?: return
         if (_state.value.serial != band.serial) _state.value = BandState(serial = band.serial)
-        val identity = IdentityBundle(key, band.address, band.serial, nowIso(), "band", BundleState.VERIFIED)
+        // The band takes one central and stops advertising while the Display holds it: the Display lets go first, then
+        // the band is heard and reached, as the Meta app does. Pairing finds the band in pairing mode on its own.
+        val address = if (pairing.value) band.address else {
+            takeFromDisplay(band)
+            runCatching { nearby.bandNearby() }.getOrNull() ?: band.address
+        }
+        val identity = IdentityBundle(key, address, band.serial, nowIso(), "band", BundleState.VERIFIED)
         val opened = GlassesSession(
-            transport = BluetoothLeTransport(context, band.address, defaultPsm = Band.PSM),
+            transport = BluetoothLeTransport(context, address, defaultPsm = Band.PSM, randomAddress = true),
             trust = IdentityTrustExchange(BundleCredentials(identity)),
         )
         session = opened
@@ -308,6 +322,32 @@ class BandLink @Inject constructor(
         }
         log.add("Band: connecting to ${band.serial}")
         opened.start(scope)
+    }
+
+    /** Asks the Display on svc41109 to let go of the band it holds, and waits until it says it did. */
+    private suspend fun takeFromDisplay(band: BandRecord) {
+        if (connection.state.value.link != LinkState.READY) return
+        val held = peers.refresh()?.peers?.firstOrNull { it.connected } ?: return
+        val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return log.add("Band: no key to name the band to the Display")
+        log.add("Band: asking the Display to let go of the band")
+        val released = withTimeoutOrNull(RELEASE_MS) {
+            connection.serviceData
+                .onSubscription { connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.DISCONNECT, BtPeer.disconnect(held.identity, hint)) } }
+                .first {
+                    it.serviceId == BtPeer.SERVICE && it.messageType == BtPeer.CONNECTION_EVENT &&
+                        BtPeer.connectionEvent(it.payload).let { e -> e.event == BtPeer.DISCONNECTED && BtPeer.sameAddress(e.identity, held.identity) }
+                }
+        } != null
+        lent = held.identity to hint
+        log.add(if (released) "Band: the Display let go" else "Band: the Display did not say it let go in ${RELEASE_MS / 1000} s")
+    }
+
+    /** Hands the band back to the Display after a borrow. */
+    private fun giveBack() {
+        val (identity, hint) = lent ?: return
+        lent = null
+        log.add("Band: handing the band back to the Display")
+        connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.CONNECT, BtPeer.connect(identity, hint)) }
     }
 
     // The band pushes battery changes too; a slow read keeps the reading fresh when it does not.
@@ -362,9 +402,11 @@ class BandLink @Inject constructor(
     }
 
     private companion object {
+        const val RELEASE_MS = 10_000L
         const val POLL_MS = 5 * 60_000L
         const val INFO_WAIT_MS = 1_500L
-        const val BORROW_MS = 20_000L
+        // The Display letting go (up to 10 s), hearing the band (15 s), then the link.
+        const val BORROW_MS = 45_000L
         const val ERRAND_MS = 1_500L
         const val REPLY_MS = 5_000L
         // The Display's own buzzes are 20 and 50 ms at 255, the most; 400 ms is one the wearer cannot miss.

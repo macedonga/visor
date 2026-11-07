@@ -77,7 +77,7 @@ class BandSetup @Inject constructor(
                     ?: return@launch fail(if (bonded.isEmpty()) Reason.NOT_PAIRED else Reason.NO_ANSWER)
                 log.add("Band setup: changing owner on $address")
                 val result = provision(
-                    transport = BluetoothLeTransport(context, address, defaultPsm = Band.PSM),
+                    transport = BluetoothLeTransport(context, address, defaultPsm = Band.PSM, randomAddress = true),
                     // No existing key: the band gets one of its own.
                     source = login.source,
                 ) { step ->

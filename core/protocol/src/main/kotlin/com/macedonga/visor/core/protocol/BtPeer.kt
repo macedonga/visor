@@ -14,6 +14,7 @@ object BtPeer {
     const val PAIRING_EVENT = 6
     const val CONNECT = 7
     const val CONNECTION_EVENT = 8
+    const val DISCONNECT = 9
     const val TOPOLOGY_EVENT = 13
 
     // A DataX error id on this service.
@@ -23,6 +24,7 @@ object BtPeer {
     const val TOPOLOGY_SWITCHING = 0
     const val PAIRED = 0
     const val CONNECTED = 3
+    const val DISCONNECTED = 5
     const val TOPOLOGY_START = 1
     const val TOPOLOGY_END = 2
     const val TOPOLOGY_PAIR_AND_CONNECT = 1
@@ -71,6 +73,9 @@ object BtPeer {
 
     /** CONNECT {1 bleIdentityAddr, 2 peerKeyHint}. */
     fun connect(identity: ByteArray, keyHint: ByteArray): ByteArray = Wire.fieldBytes(1, identity) + Wire.fieldBytes(2, keyHint)
+
+    /** DISCONNECT {1 bleIdentityAddr, 2 peerKeyHint}: the Display lets go of the peer and says so in CONNECTION_EVENT. */
+    fun disconnect(identity: ByteArray, keyHint: ByteArray): ByteArray = Wire.fieldBytes(1, identity) + Wire.fieldBytes(2, keyHint)
 
     /** TOPOLOGY_EVENT {1 peerIdentityAddr, 2 peerKeyHint, 3 uuid, 4 event, 5 type}; an empty address or hint is left out. */
     fun topologyEvent(peerIdentity: ByteArray, keyHint: ByteArray, uuid: UUID, event: Int, type: Int): ByteArray {

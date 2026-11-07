@@ -1,5 +1,6 @@
 package com.macedonga.visor.core.transport
 
+import android.os.Build
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
@@ -41,6 +42,9 @@ class BluetoothLeTransport(
     private val keeper: LeKeeper? = null,
     // The Neural Band's is 129.
     private val defaultPsm: Int = META_LE_DEFAULT_PSM,
+    // The band's address is a random one. Dialled without its type, Android takes it for a public address and never
+    // finds the band, unless a scan has just heard it.
+    private val randomAddress: Boolean = false,
 ) : Transport {
 
     @Volatile private var socket: BluetoothSocket? = null
@@ -61,7 +65,8 @@ class BluetoothLeTransport(
             ?: throw TransportConnectException(ConnectFailure.BLUETOOTH_UNSUPPORTED, "this phone has no Bluetooth")
         if (!adapter.isEnabled) throw TransportConnectException(ConnectFailure.BLUETOOTH_OFF, "Bluetooth is off")
         val device = try {
-            adapter.getRemoteDevice(address)
+            if (randomAddress && Build.VERSION.SDK_INT >= 33) adapter.getRemoteLeDevice(address, BluetoothDevice.ADDRESS_TYPE_RANDOM)
+            else adapter.getRemoteDevice(address)
         } catch (error: IllegalArgumentException) {
             throw TransportConnectException(ConnectFailure.BAD_ADDRESS, "$address is not a Bluetooth address", error)
         }
