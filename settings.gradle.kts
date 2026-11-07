@@ -29,7 +29,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "visor"
 
-// The kit (github.com/macedonga/visor-kit), built from source while it sits next to this repo, so a change to its
+// The VDK (github.com/macedonga/visor-kit), built from source while it sits next to this repo, so a change to its
 // contract and Visor's side of it build together. Without it, the release on Maven Central.
 if (file("../visor-kit/settings.gradle.kts").exists()) includeBuild("../visor-kit")
 

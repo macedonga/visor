@@ -79,7 +79,7 @@ class BandLink @Inject constructor(
     // Answers still awaited, by request seq.
     private val replies = ConcurrentHashMap<Int, CompletableDeferred<ByteArray>>()
     private val held = MutableStateFlow(true)
-    // Lessons and kit apps that hold the band's gestures, counted: the band goes back when the last one ends.
+    // Lessons and VDK apps that hold the band's gestures, counted: the band goes back when the last one ends.
     private val lessons = MutableStateFlow(0)
     // Errands under way: the band stays here until the last one ends.
     private val errands = MutableStateFlow(0)

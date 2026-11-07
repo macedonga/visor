@@ -31,8 +31,8 @@ import com.macedonga.visor.core.settings.GROUPS
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
 import com.macedonga.visor.outside.DeveloperMode
-import com.macedonga.visor.outside.KitConsentActivity
-import com.macedonga.visor.outside.KitGrants
+import com.macedonga.visor.outside.VdkConsentActivity
+import com.macedonga.visor.outside.VdkGrants
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.copy
 
@@ -84,22 +84,22 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     if (developer) row { TokenRow(model.developer) } else null,
                     if (developer) row { ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) } else null,
                 )
-                KitApps(model.kitGrants)
+                VdkApps(model.vdkGrants)
             }
         }
     }
 }
 
-/** The apps the person let reach the glasses through the kit, each with the way to take that back. */
+/** The apps the person let reach the glasses through the VDK, each with the way to take that back. */
 @Composable
-private fun KitApps(grants: KitGrants) {
+private fun VdkApps(grants: VdkGrants) {
     val all by grants.all.collectAsStateWithLifecycle()
     if (all.isEmpty()) return
     Spacer(Modifier.height(12.dp))
-    SectionLabel(stringResource(R.string.settings_kit_apps))
-    val remove = stringResource(R.string.settings_kit_remove)
+    SectionLabel(stringResource(R.string.settings_vdk_apps))
+    val remove = stringResource(R.string.settings_vdk_remove)
     Rows(all.keys.sorted()) { app ->
-        val scopes = all.getValue(app).scopes.map { scope -> KitConsentActivity.SCOPE_NAME[scope]?.let { stringResource(it) } ?: scope.id }
+        val scopes = all.getValue(app).scopes.map { scope -> VdkConsentActivity.SCOPE_NAME[scope]?.let { stringResource(it) } ?: scope.id }
         RowFrame(grants.labelOf(app), onClick = null, sub = scopes.joinToString(", ")) {
             RoundIcon(VisorIcons.Close, remove, { grants.set(app, emptySet()) }, size = 40.dp)
         }

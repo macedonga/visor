@@ -2,7 +2,7 @@ package com.macedonga.visor.outside
 
 import android.content.Context
 import android.content.pm.PackageManager
-import com.macedonga.visor.kit.protocol.Scope
+import com.macedonga.visor.vdk.protocol.Scope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import javax.inject.Inject
@@ -14,17 +14,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** What the person let one app do, and the certificate the app was signed with then. */
-data class KitGrant(val certificate: String, val scopes: Set<Scope>)
+data class VdkGrant(val certificate: String, val scopes: Set<Scope>)
 
 /**
- * The scopes each app holds through the kit, by package. A grant belongs to the signing certificate the app had when
+ * The scopes each app holds through the VDK, by package. A grant belongs to the signing certificate the app had when
  * the person granted it: another app installed later under the same package holds nothing.
  */
 @Singleton
-class KitGrants @Inject constructor(@ApplicationContext private val context: Context) {
-    private val prefs = context.getSharedPreferences("kit_grants", Context.MODE_PRIVATE)
+class VdkGrants @Inject constructor(@ApplicationContext private val context: Context) {
+    private val prefs = context.getSharedPreferences("vdk_grants", Context.MODE_PRIVATE)
     private val _all = MutableStateFlow(read())
-    val all: StateFlow<Map<String, KitGrant>> = _all.asStateFlow()
+    val all: StateFlow<Map<String, VdkGrant>> = _all.asStateFlow()
 
     /** The scopes [app] holds now; none when its certificate changed since the grant. */
     fun scopesOf(app: String): Set<Scope> {
@@ -39,7 +39,7 @@ class KitGrants @Inject constructor(@ApplicationContext private val context: Con
             _all.value -= app
         } else {
             val certificate = certificateOf(app) ?: return false
-            _all.value += app to KitGrant(certificate, scopes)
+            _all.value += app to VdkGrant(certificate, scopes)
         }
         write()
         return true
@@ -64,13 +64,13 @@ class KitGrants @Inject constructor(@ApplicationContext private val context: Con
         null
     }
 
-    private fun read(): Map<String, KitGrant> {
+    private fun read(): Map<String, VdkGrant> {
         val text = prefs.getString(KEY, null) ?: return emptyMap()
         val apps = JSONObject(text)
         return apps.keys().asSequence().associateWith { app ->
             val grant = apps.getJSONObject(app)
             val scopes = grant.getJSONArray(SCOPES)
-            KitGrant(grant.getString(CERTIFICATE), (0 until scopes.length()).mapTo(LinkedHashSet()) { Scope(scopes.getString(it)) })
+            VdkGrant(grant.getString(CERTIFICATE), (0 until scopes.length()).mapTo(LinkedHashSet()) { Scope(scopes.getString(it)) })
         }
     }
 

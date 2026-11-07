@@ -153,24 +153,24 @@
             </intent-filter>
         </receiver>
 
-        <!-- The kit (github.com/macedonga/visor-kit): apps bind this; it answers them only while developer mode is on. -->
+        <!-- The VDK, the Visor Development Kit: apps bind this, and get what the person grants them. -->
         <service
-            android:name=".outside.KitService"
+            android:name=".outside.VdkService"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.macedonga.visor.kit.action.BIND" />
+                <action android:name="com.macedonga.visor.vdk.action.BIND" />
             </intent-filter>
         </service>
 
-        <!-- The kit's consent screen, over the app that asks. -->
+        <!-- The VDK's consent screen, over the app that asks. -->
         <activity
-            android:name=".outside.KitConsentActivity"
+            android:name=".outside.VdkConsentActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
-                <action android:name="com.macedonga.visor.kit.action.REQUEST_SCOPES" />
+                <action android:name="com.macedonga.visor.vdk.action.REQUEST_SCOPES" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

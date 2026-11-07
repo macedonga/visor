@@ -144,7 +144,7 @@ import com.macedonga.visor.media.spanWords
 import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
 import com.macedonga.visor.outside.DeveloperMode
-import com.macedonga.visor.outside.KitGrants
+import com.macedonga.visor.outside.VdkGrants
 import com.macedonga.visor.stage.Choreography
 import com.macedonga.visor.stage.HOME_STRIP_SCALE
 import com.macedonga.visor.stage.LocalStage
@@ -192,7 +192,7 @@ class SettingsViewModel @Inject constructor(
     val bandSetup: BandSetup,
     val bandUpdate: BandUpdate,
     val developer: DeveloperMode,
-    val kitGrants: KitGrants,
+    val vdkGrants: VdkGrants,
     val media: MediaImport,
 ) : ViewModel()
 

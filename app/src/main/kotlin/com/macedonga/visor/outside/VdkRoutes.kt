@@ -1,4 +1,4 @@
-@file:OptIn(KitInternal::class)
+@file:OptIn(VdkInternal::class)
 
 package com.macedonga.visor.outside
 
@@ -26,25 +26,25 @@ import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.protocol.Band as BandWire
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.home.LastSeen
-import com.macedonga.visor.kit.KitException
-import com.macedonga.visor.kit.protocol.BandStatus
-import com.macedonga.visor.kit.protocol.Capture
-import com.macedonga.visor.kit.protocol.CaptureFailure
-import com.macedonga.visor.kit.protocol.CaptureProgress
-import com.macedonga.visor.kit.protocol.CaptureType
-import com.macedonga.visor.kit.protocol.ErrorCode
-import com.macedonga.visor.kit.protocol.Failure
-import com.macedonga.visor.kit.protocol.Finger
-import com.macedonga.visor.kit.protocol.Gesture
-import com.macedonga.visor.kit.protocol.GestureAction
-import com.macedonga.visor.kit.protocol.GlassesStatus
-import com.macedonga.visor.kit.protocol.KitInternal
-import com.macedonga.visor.kit.protocol.Link
-import com.macedonga.visor.kit.protocol.Methods
-import com.macedonga.visor.kit.protocol.Topics
-import com.macedonga.visor.kit.protocol.VideoKind
-import com.macedonga.visor.kit.server.Caller
-import com.macedonga.visor.kit.server.Routes
+import com.macedonga.visor.vdk.VdkException
+import com.macedonga.visor.vdk.protocol.BandStatus
+import com.macedonga.visor.vdk.protocol.Capture
+import com.macedonga.visor.vdk.protocol.CaptureFailure
+import com.macedonga.visor.vdk.protocol.CaptureProgress
+import com.macedonga.visor.vdk.protocol.CaptureType
+import com.macedonga.visor.vdk.protocol.ErrorCode
+import com.macedonga.visor.vdk.protocol.Failure
+import com.macedonga.visor.vdk.protocol.Finger
+import com.macedonga.visor.vdk.protocol.Gesture
+import com.macedonga.visor.vdk.protocol.GestureAction
+import com.macedonga.visor.vdk.protocol.GlassesStatus
+import com.macedonga.visor.vdk.protocol.VdkInternal
+import com.macedonga.visor.vdk.protocol.Link
+import com.macedonga.visor.vdk.protocol.Methods
+import com.macedonga.visor.vdk.protocol.Topics
+import com.macedonga.visor.vdk.protocol.VideoKind
+import com.macedonga.visor.vdk.server.Caller
+import com.macedonga.visor.vdk.server.Routes
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -65,9 +65,9 @@ import com.macedonga.visor.core.media.Capture as GlassesCapture
 import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
 import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
 
-/** What the kit's methods and topics do in Visor: each one is a thing Visor already does for its own screens. */
+/** What the VDK's methods and topics do in Visor: each one is a thing Visor already does for its own screens. */
 @Singleton
-class KitRoutes @Inject constructor(
+class VdkRoutes @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: GlassesConnection,
     private val shutter: Shutter,
@@ -84,23 +84,23 @@ class KitRoutes @Inject constructor(
         answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
         answer(Methods.CAMERA_VIDEO_START) { _, request ->
             val kind = GlassesVideoKind.entries.firstOrNull { it.wire == request.kind.id }
-                ?: throw KitException(ErrorCode.INVALID_PARAMS, "The glasses film ${VideoKind.VIDEO} or ${VideoKind.HYPERLAPSE}, not ${request.kind}.")
+                ?: throw VdkException(ErrorCode.INVALID_PARAMS, "The glasses film ${VideoKind.VIDEO} or ${VideoKind.HYPERLAPSE}, not ${request.kind}.")
             ready()
-            if (!shutter.video(kind)) throw KitException(ErrorCode.TIMEOUT, "The glasses did not start the video.")
+            if (!shutter.video(kind)) throw VdkException(ErrorCode.TIMEOUT, "The glasses did not start the video.")
         }
         answer(Methods.CAMERA_VIDEO_STOP) { _, _ ->
             ready()
-            if (!shutter.stop()) throw KitException(ErrorCode.TIMEOUT, "The glasses did not stop the video.")
+            if (!shutter.stop()) throw VdkException(ErrorCode.TIMEOUT, "The glasses did not stop the video.")
         }
 
         answer(Methods.CAPTURES_LIST) { caller, _ ->
             ready()
-            media.captures.value.filter { it.isNew && it.isMedia }.map { kitCapture(caller, it) }
+            media.captures.value.filter { it.isNew && it.isMedia }.map { vdkCapture(caller, it) }
         }
         answer(Methods.CAPTURES_IMPORT) { caller, request -> import(caller, request.id) }
         stream(Topics.CAPTURES_AVAILABLE) { caller, _ -> available(caller) }
         stream(Topics.CAPTURES_PROGRESS) { _, _ -> progress() }
-        stream(Topics.CAPTURES_IMPORTED) { caller, _ -> media.imported.mapNotNull { media.index.entries.value[it]?.let { kept -> kitCapture(caller, kept) } } }
+        stream(Topics.CAPTURES_IMPORTED) { caller, _ -> media.imported.mapNotNull { media.index.entries.value[it]?.let { kept -> vdkCapture(caller, kept) } } }
         stream(Topics.CAPTURES_FAILED) { _, _ -> failures() }
 
         answer(Methods.BAND_STATUS) { _, _ -> bandStatus(paired(), band.state.value) }
@@ -112,8 +112,8 @@ class KitRoutes @Inject constructor(
             requireBand()
             when (band.vibrate(request.durationMs.toLong(), request.strength)) {
                 BandErrand.DONE, BandErrand.NOT_CHANGED -> Unit
-                BandErrand.NO_ANSWER -> throw KitException(ErrorCode.NOT_CONNECTED, "The band did not come up in time.")
-                BandErrand.REFUSED -> throw KitException(ErrorCode.REFUSED, "The band refused the buzz.")
+                BandErrand.NO_ANSWER -> throw VdkException(ErrorCode.NOT_CONNECTED, "The band did not come up in time.")
+                BandErrand.REFUSED -> throw VdkException(ErrorCode.REFUSED, "The band refused the buzz.")
             }
         }
 
@@ -122,8 +122,8 @@ class KitRoutes @Inject constructor(
             val style = request.style
             teleprompter.show(request.text, PrompterLook(style.sizeSp, style.speed, style.paged, style.followVoice))
             val now = withTimeoutOrNull(ANSWER_MS) { teleprompter.state.first { it.phase != PrompterPhase.STARTING } }
-                ?: throw KitException(ErrorCode.TIMEOUT, "The Display did not open the teleprompter.")
-            now.refusal?.let { throw KitException(ErrorCode.REFUSED, "The Display refused the teleprompter (code $it).") }
+                ?: throw VdkException(ErrorCode.TIMEOUT, "The Display did not open the teleprompter.")
+            now.refusal?.let { throw VdkException(ErrorCode.REFUSED, "The Display refused the teleprompter (code $it).") }
         }
         answer(Methods.DISPLAY_PROMPTER_CLOSE) { _, _ ->
             requireDisplay()
@@ -160,12 +160,12 @@ class KitRoutes @Inject constructor(
         if (connection.state.value.link == LinkState.READY) return
         runCatching { GlassesService.reconnect(context) }
         withTimeoutOrNull(WAKE_MS) { connection.state.first { it.link == LinkState.READY } }
-            ?: throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+            ?: throw VdkException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
     }
 
     private suspend fun photo(caller: Caller, import: Boolean): Capture {
         ready()
-        if (connection.state.value.device?.camera == CAMERA_VIDEO_STARTED) throw KitException(ErrorCode.BUSY, "The glasses are recording a video.")
+        if (connection.state.value.device?.camera == CAMERA_VIDEO_STARTED) throw VdkException(ErrorCode.BUSY, "The glasses are recording a video.")
         val known = media.captures.value.mapTo(HashSet()) { it.handle }
         val taken = coroutineScope {
             // Watching before the shutter, so a quick photo is not missed.
@@ -174,27 +174,27 @@ class KitRoutes @Inject constructor(
             }
             if (!shutter.photo()) {
                 listed.cancel()
-                throw KitException(ErrorCode.TIMEOUT, "The glasses did not take the photo.")
+                throw VdkException(ErrorCode.TIMEOUT, "The glasses did not take the photo.")
             }
             withTimeoutOrNull(LIST_MS) { listed.await() } ?: run {
                 listed.cancel()
-                throw KitException(ErrorCode.TIMEOUT, "The photo did not show up on the glasses.")
+                throw VdkException(ErrorCode.TIMEOUT, "The photo did not show up on the glasses.")
             }
         }
-        return if (import) import(caller, taken.handle) else kitCapture(caller, taken)
+        return if (import) import(caller, taken.handle) else vdkCapture(caller, taken)
     }
 
     private suspend fun import(caller: Caller, id: String): Capture {
         val kept = media.index.entries.value[id]
         val listed = media.captures.value.firstOrNull { it.handle == id }
-        if (kept != null && listed?.isNew != true) return kitCapture(caller, kept)
+        if (kept != null && listed?.isNew != true) return vdkCapture(caller, kept)
         ready()
         val capture = listed ?: run {
             // Just connected, or just taken: the list may not have it yet.
             media.refresh()
             withTimeoutOrNull(LIST_MS) { media.captures.map { list -> list.firstOrNull { it.handle == id } }.filterNotNull().first() }
         }
-        if (capture == null || !capture.isMedia) throw KitException(ErrorCode.FAILED, "The glasses have no capture $id.", reason = "not_found")
+        if (capture == null || !capture.isMedia) throw VdkException(ErrorCode.FAILED, "The glasses have no capture $id.", reason = "not_found")
         val done = withTimeoutOrNull(IMPORT_MS) {
             coroutineScope {
                 val imported = async(start = CoroutineStart.UNDISPATCHED) { media.imported.first { it == id } }
@@ -207,16 +207,16 @@ class KitRoutes @Inject constructor(
                     imported.cancel()
                     failed.cancel()
                 }
-            }?.let { problem -> throw KitException(ErrorCode.FAILED, "The import of $id failed.", reason = problem.kind.name.lowercase()) }
+            }?.let { problem -> throw VdkException(ErrorCode.FAILED, "The import of $id failed.", reason = problem.kind.name.lowercase()) }
             media.index.entries.value[id]
-        } ?: throw KitException(ErrorCode.TIMEOUT, "The import of $id did not finish in time.")
-        return kitCapture(caller, done)
+        } ?: throw VdkException(ErrorCode.TIMEOUT, "The import of $id did not finish in time.")
+        return vdkCapture(caller, done)
     }
 
     private fun available(caller: Caller): Flow<Capture> = flow {
         val told = HashSet<String>()
         media.captures.collect { list ->
-            for (capture in list) if (capture.isNew && capture.isMedia && told.add(capture.handle)) emit(kitCapture(caller, capture))
+            for (capture in list) if (capture.isNew && capture.isMedia && told.add(capture.handle)) emit(vdkCapture(caller, capture))
         }
     }
 
@@ -245,12 +245,12 @@ class KitRoutes @Inject constructor(
         }
     }
 
-    private fun kitCapture(caller: Caller, capture: GlassesCapture): Capture =
-        media.index.entries.value[capture.handle]?.takeUnless { capture.isNew }?.let { kitCapture(caller, it) }
-            ?: Capture(capture.handle, kitType(capture.type), capture.takenAtMillis, capture.main?.size)
+    private fun vdkCapture(caller: Caller, capture: GlassesCapture): Capture =
+        media.index.entries.value[capture.handle]?.takeUnless { capture.isNew }?.let { vdkCapture(caller, it) }
+            ?: Capture(capture.handle, vdkType(capture.type), capture.takenAtMillis, capture.main?.size)
 
     /** A capture in the gallery, which the caller may now read without a media permission. */
-    private fun kitCapture(caller: Caller, kept: Kept): Capture {
+    private fun vdkCapture(caller: Caller, kept: Kept): Capture {
         if (!caller.shell) {
             try {
                 context.grantUriPermission(caller.packageName, Uri.parse(kept.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -258,10 +258,10 @@ class KitRoutes @Inject constructor(
                 // The app then needs its own permission to read photos and videos.
             }
         }
-        return Capture(kept.handle, kitType(kept.type), kept.takenAt, uri = kept.uri)
+        return Capture(kept.handle, vdkType(kept.type), kept.takenAt, uri = kept.uri)
     }
 
-    private fun kitType(type: GlassesCaptureType) = when (type) {
+    private fun vdkType(type: GlassesCaptureType) = when (type) {
         GlassesCaptureType.PHOTO -> CaptureType.PHOTO
         GlassesCaptureType.LIVE -> CaptureType.LIVE
         GlassesCaptureType.VIDEO -> CaptureType.VIDEO
@@ -271,13 +271,13 @@ class KitRoutes @Inject constructor(
     private fun paired(): Boolean = bands.forGlasses(connection.pair.value) != null
 
     private fun requireBand() {
-        if (!paired()) throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+        if (!paired()) throw VdkException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
     }
 
     private fun requireDisplay() {
         val product = productId(connection.state.value.info?.build) ?: lastSeen.product.value
-        if (product != null && !isDisplayProduct(product)) throw KitException(ErrorCode.UNSUPPORTED, "These glasses have no display.")
-        if (connection.state.value.link != LinkState.READY) throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+        if (product != null && !isDisplayProduct(product)) throw VdkException(ErrorCode.UNSUPPORTED, "These glasses have no display.")
+        if (connection.state.value.link != LinkState.READY) throw VdkException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
     }
 
     private fun bandStatus(paired: Boolean, state: BandState): BandStatus {
@@ -301,13 +301,13 @@ class KitRoutes @Inject constructor(
         requireBand()
         band.startLesson()
         try {
-            band.gestures.collect { emit(kitGesture(it)) }
+            band.gestures.collect { emit(vdkGesture(it)) }
         } finally {
             band.endLesson()
         }
     }
 
-    private fun kitGesture(g: BandWire.Gesture) = Gesture(
+    private fun vdkGesture(g: BandWire.Gesture) = Gesture(
         finger = when (g.finger) {
             1 -> Finger.THUMB
             2 -> Finger.INDEX
