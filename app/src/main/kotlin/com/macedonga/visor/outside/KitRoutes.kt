@@ -1,0 +1,338 @@
+@file:OptIn(KitInternal::class)
+
+package com.macedonga.visor.outside
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import com.macedonga.visor.band.BandErrand
+import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.band.BandState
+import com.macedonga.visor.band.Bands
+import com.macedonga.visor.connection.GlassesService
+import com.macedonga.visor.core.connection.CAMERA_VIDEO_STARTED
+import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesState
+import com.macedonga.visor.core.connection.HINGE_CLOSED
+import com.macedonga.visor.core.connection.PrompterLook
+import com.macedonga.visor.core.connection.PrompterPhase
+import com.macedonga.visor.core.connection.Shutter
+import com.macedonga.visor.core.connection.Teleprompter
+import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.connection.parseBuild
+import com.macedonga.visor.core.connection.productId
+import com.macedonga.visor.core.media.Kept
+import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.protocol.Band as BandWire
+import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.home.LastSeen
+import com.macedonga.visor.kit.KitException
+import com.macedonga.visor.kit.protocol.BandStatus
+import com.macedonga.visor.kit.protocol.Capture
+import com.macedonga.visor.kit.protocol.CaptureFailure
+import com.macedonga.visor.kit.protocol.CaptureProgress
+import com.macedonga.visor.kit.protocol.CaptureType
+import com.macedonga.visor.kit.protocol.ErrorCode
+import com.macedonga.visor.kit.protocol.Failure
+import com.macedonga.visor.kit.protocol.Finger
+import com.macedonga.visor.kit.protocol.Gesture
+import com.macedonga.visor.kit.protocol.GestureAction
+import com.macedonga.visor.kit.protocol.GlassesStatus
+import com.macedonga.visor.kit.protocol.KitInternal
+import com.macedonga.visor.kit.protocol.Link
+import com.macedonga.visor.kit.protocol.Methods
+import com.macedonga.visor.kit.protocol.Topics
+import com.macedonga.visor.kit.protocol.VideoKind
+import com.macedonga.visor.kit.server.Caller
+import com.macedonga.visor.kit.server.Routes
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+import com.macedonga.visor.core.media.Capture as GlassesCapture
+import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
+import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
+
+/** What the kit's methods and topics do in Visor: each one is a thing Visor already does for its own screens. */
+@Singleton
+class KitRoutes @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val connection: GlassesConnection,
+    private val shutter: Shutter,
+    private val media: MediaImport,
+    private val teleprompter: Teleprompter,
+    private val band: BandLink,
+    private val bands: Bands,
+    private val lastSeen: LastSeen,
+) {
+    fun routes(): Routes = Routes().apply {
+        answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(connection.state.value) }
+        stream(Topics.GLASSES_STATUS) { _, _ -> connection.state.map(::glassesStatus).distinctUntilChanged() }
+
+        answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
+        answer(Methods.CAMERA_VIDEO_START) { _, request ->
+            val kind = GlassesVideoKind.entries.firstOrNull { it.wire == request.kind.id }
+                ?: throw KitException(ErrorCode.INVALID_PARAMS, "The glasses film ${VideoKind.VIDEO} or ${VideoKind.HYPERLAPSE}, not ${request.kind}.")
+            ready()
+            if (!shutter.video(kind)) throw KitException(ErrorCode.TIMEOUT, "The glasses did not start the video.")
+        }
+        answer(Methods.CAMERA_VIDEO_STOP) { _, _ ->
+            ready()
+            if (!shutter.stop()) throw KitException(ErrorCode.TIMEOUT, "The glasses did not stop the video.")
+        }
+
+        answer(Methods.CAPTURES_LIST) { caller, _ ->
+            ready()
+            media.captures.value.filter { it.isNew && it.isMedia }.map { kitCapture(caller, it) }
+        }
+        answer(Methods.CAPTURES_IMPORT) { caller, request -> import(caller, request.id) }
+        stream(Topics.CAPTURES_AVAILABLE) { caller, _ -> available(caller) }
+        stream(Topics.CAPTURES_PROGRESS) { _, _ -> progress() }
+        stream(Topics.CAPTURES_IMPORTED) { caller, _ -> media.imported.mapNotNull { media.index.entries.value[it]?.let { kept -> kitCapture(caller, kept) } } }
+        stream(Topics.CAPTURES_FAILED) { _, _ -> failures() }
+
+        answer(Methods.BAND_STATUS) { _, _ -> bandStatus(paired(), band.state.value) }
+        stream(Topics.BAND_STATUS) { _, _ ->
+            combine(connection.pair, bands.all, band.state) { _, _, state -> bandStatus(paired(), state) }.distinctUntilChanged()
+        }
+        stream(Topics.BAND_GESTURES) { _, _ -> gestures() }
+        answer(Methods.BAND_BUZZ) { _, request ->
+            requireBand()
+            when (band.vibrate(request.durationMs.toLong(), request.strength)) {
+                BandErrand.DONE, BandErrand.NOT_CHANGED -> Unit
+                BandErrand.NO_ANSWER -> throw KitException(ErrorCode.NOT_CONNECTED, "The band did not come up in time.")
+                BandErrand.REFUSED -> throw KitException(ErrorCode.REFUSED, "The band refused the buzz.")
+            }
+        }
+
+        answer(Methods.DISPLAY_PROMPTER_SHOW) { _, request ->
+            requireDisplay()
+            val style = request.style
+            teleprompter.show(request.text, PrompterLook(style.sizeSp, style.speed, style.paged, style.followVoice))
+            val now = withTimeoutOrNull(ANSWER_MS) { teleprompter.state.first { it.phase != PrompterPhase.STARTING } }
+                ?: throw KitException(ErrorCode.TIMEOUT, "The Display did not open the teleprompter.")
+            now.refusal?.let { throw KitException(ErrorCode.REFUSED, "The Display refused the teleprompter (code $it).") }
+        }
+        answer(Methods.DISPLAY_PROMPTER_CLOSE) { _, _ ->
+            requireDisplay()
+            teleprompter.close()
+        }
+    }
+
+    private fun glassesStatus(state: GlassesState): GlassesStatus {
+        val target = state.target ?: return GlassesStatus(paired = false, link = Link.DISCONNECTED)
+        val device = state.device
+        val battery = device?.battery
+        return GlassesStatus(
+            paired = true,
+            link = when (state.link) {
+                LinkState.READY -> Link.CONNECTED
+                LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
+                else -> Link.CONNECTING
+            },
+            model = state.info?.model?.ifEmpty { null },
+            serial = target.serial,
+            firmware = parseBuild(state.info?.build)?.firmware?.ifEmpty { null },
+            display = (productId(state.info?.build) ?: lastSeen.product.value)?.let(::isDisplayProduct),
+            battery = battery?.percent?.toInt(),
+            charging = battery?.charging,
+            worn = device?.worn,
+            folded = device?.hinge?.let { it == HINGE_CLOSED },
+            recording = device?.camera?.let { it == CAMERA_VIDEO_STARTED },
+            caseBattery = device?.case?.takeIf { it.known && it.present }?.percent,
+        )
+    }
+
+    /** Waits for the glasses when they are not connected, as Developer mode's intents do; not for long. */
+    private suspend fun ready() {
+        if (connection.state.value.link == LinkState.READY) return
+        runCatching { GlassesService.reconnect(context) }
+        withTimeoutOrNull(WAKE_MS) { connection.state.first { it.link == LinkState.READY } }
+            ?: throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+    }
+
+    private suspend fun photo(caller: Caller, import: Boolean): Capture {
+        ready()
+        if (connection.state.value.device?.camera == CAMERA_VIDEO_STARTED) throw KitException(ErrorCode.BUSY, "The glasses are recording a video.")
+        val known = media.captures.value.mapTo(HashSet()) { it.handle }
+        val taken = coroutineScope {
+            // Watching before the shutter, so a quick photo is not missed.
+            val listed = async(start = CoroutineStart.UNDISPATCHED) {
+                media.captures.map { list -> list.firstOrNull { it.handle !in known && it.isMedia } }.filterNotNull().first()
+            }
+            if (!shutter.photo()) {
+                listed.cancel()
+                throw KitException(ErrorCode.TIMEOUT, "The glasses did not take the photo.")
+            }
+            withTimeoutOrNull(LIST_MS) { listed.await() } ?: run {
+                listed.cancel()
+                throw KitException(ErrorCode.TIMEOUT, "The photo did not show up on the glasses.")
+            }
+        }
+        return if (import) import(caller, taken.handle) else kitCapture(caller, taken)
+    }
+
+    private suspend fun import(caller: Caller, id: String): Capture {
+        val kept = media.index.entries.value[id]
+        val listed = media.captures.value.firstOrNull { it.handle == id }
+        if (kept != null && listed?.isNew != true) return kitCapture(caller, kept)
+        ready()
+        val capture = listed ?: run {
+            // Just connected, or just taken: the list may not have it yet.
+            media.refresh()
+            withTimeoutOrNull(LIST_MS) { media.captures.map { list -> list.firstOrNull { it.handle == id } }.filterNotNull().first() }
+        }
+        if (capture == null || !capture.isMedia) throw KitException(ErrorCode.FAILED, "The glasses have no capture $id.", reason = "not_found")
+        val done = withTimeoutOrNull(IMPORT_MS) {
+            coroutineScope {
+                val imported = async(start = CoroutineStart.UNDISPATCHED) { media.imported.first { it == id } }
+                val failed = async(start = CoroutineStart.UNDISPATCHED) { media.problem.filterNotNull().first { id in it.handles } }
+                media.import(listOf(capture))
+                select {
+                    imported.onAwait { null }
+                    failed.onAwait { it }
+                }.also {
+                    imported.cancel()
+                    failed.cancel()
+                }
+            }?.let { problem -> throw KitException(ErrorCode.FAILED, "The import of $id failed.", reason = problem.kind.name.lowercase()) }
+            media.index.entries.value[id]
+        } ?: throw KitException(ErrorCode.TIMEOUT, "The import of $id did not finish in time.")
+        return kitCapture(caller, done)
+    }
+
+    private fun available(caller: Caller): Flow<Capture> = flow {
+        val told = HashSet<String>()
+        media.captures.collect { list ->
+            for (capture in list) if (capture.isNew && capture.isMedia && told.add(capture.handle)) emit(kitCapture(caller, capture))
+        }
+    }
+
+    private fun progress(): Flow<CaptureProgress> = flow {
+        val shown = HashMap<String, Int>()
+        media.transfers.collect { transfers ->
+            for (t in transfers) {
+                // The photo or the video itself; the pieces that come with it are small.
+                val capture = media.captures.value.firstOrNull { it.main?.id == t.uuid } ?: continue
+                val percent = if (t.size > 0) (t.received * 100 / t.size).toInt() else 0
+                if (shown.put(capture.handle, percent) != percent) emit(CaptureProgress(capture.handle, t.received, t.size))
+            }
+        }
+    }
+
+    private fun failures(): Flow<CaptureFailure> = flow {
+        val told = HashSet<String>()
+        media.problem.collect { problem ->
+            // Each import starts without a problem: what fails in it is new.
+            if (problem == null) return@collect told.clear()
+            for (handle in problem.handles) {
+                if (!told.add(handle)) continue
+                val failure = Failure(ErrorCode.FAILED, "The import of $handle failed.", reason = problem.kind.name.lowercase())
+                emit(CaptureFailure(handle, failure))
+            }
+        }
+    }
+
+    private fun kitCapture(caller: Caller, capture: GlassesCapture): Capture =
+        media.index.entries.value[capture.handle]?.takeUnless { capture.isNew }?.let { kitCapture(caller, it) }
+            ?: Capture(capture.handle, kitType(capture.type), capture.takenAtMillis, capture.main?.size)
+
+    /** A capture in the gallery, which the caller may now read without a media permission. */
+    private fun kitCapture(caller: Caller, kept: Kept): Capture {
+        if (!caller.shell) {
+            try {
+                context.grantUriPermission(caller.packageName, Uri.parse(kept.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (e: SecurityException) {
+                // The app then needs its own permission to read photos and videos.
+            }
+        }
+        return Capture(kept.handle, kitType(kept.type), kept.takenAt, uri = kept.uri)
+    }
+
+    private fun kitType(type: GlassesCaptureType) = when (type) {
+        GlassesCaptureType.PHOTO -> CaptureType.PHOTO
+        GlassesCaptureType.LIVE -> CaptureType.LIVE
+        GlassesCaptureType.VIDEO -> CaptureType.VIDEO
+        GlassesCaptureType.OTHER -> CaptureType("other")
+    }
+
+    private fun paired(): Boolean = bands.forGlasses(connection.pair.value) != null
+
+    private fun requireBand() {
+        if (!paired()) throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+    }
+
+    private fun requireDisplay() {
+        val product = productId(connection.state.value.info?.build) ?: lastSeen.product.value
+        if (product != null && !isDisplayProduct(product)) throw KitException(ErrorCode.UNSUPPORTED, "These glasses have no display.")
+        if (connection.state.value.link != LinkState.READY) throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+    }
+
+    private fun bandStatus(paired: Boolean, state: BandState): BandStatus {
+        if (!paired) return BandStatus(paired = false, link = Link.DISCONNECTED)
+        return BandStatus(
+            paired = true,
+            link = when (state.link) {
+                LinkState.READY -> Link.CONNECTED
+                LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
+                else -> Link.CONNECTING
+            },
+            battery = state.battery,
+            charging = state.charging,
+            leftHanded = state.leftHanded,
+            borrowed = state.gestures,
+        )
+    }
+
+    /** The band's gestures while collected: the band is borrowed from the Display for as long as that lasts. */
+    private fun gestures(): Flow<Gesture> = flow {
+        requireBand()
+        band.startLesson()
+        try {
+            band.gestures.collect { emit(kitGesture(it)) }
+        } finally {
+            band.endLesson()
+        }
+    }
+
+    private fun kitGesture(g: BandWire.Gesture) = Gesture(
+        finger = when (g.finger) {
+            1 -> Finger.THUMB
+            2 -> Finger.INDEX
+            3 -> Finger.MIDDLE
+            else -> Finger("unknown")
+        },
+        action = ACTIONS[g.action] ?: GestureAction.UNKNOWN,
+        derived = if (g.derived == 0) null else DERIVED[g.derived] ?: GestureAction.UNKNOWN,
+        time = System.currentTimeMillis(),
+    )
+
+    private companion object {
+        const val WAKE_MS = 20_000L
+        const val ANSWER_MS = 8_000L
+        const val LIST_MS = 15_000L
+        const val IMPORT_MS = 10 * 60_000L
+
+        // EmgImu$GestureEvent's action and derived action, as Band.Gesture documents them.
+        val ACTIONS = mapOf(
+            1 to GestureAction.PRESS, 2 to GestureAction.RELEASE, 3 to GestureAction.TAP, 4 to GestureAction.DOUBLE_TAP,
+            5 to GestureAction.CLICK, 6 to GestureAction.UP, 7 to GestureAction.DOWN, 8 to GestureAction.LEFT, 9 to GestureAction.RIGHT,
+        )
+        val DERIVED = mapOf(
+            1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction.HOLD, 4 to GestureAction.RELEASE,
+            5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,
+        )
+    }
+}

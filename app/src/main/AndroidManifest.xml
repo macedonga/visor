@@ -153,6 +153,28 @@
             </intent-filter>
         </receiver>
 
+        <!-- The kit (github.com/macedonga/visor-kit): apps bind this; it answers them only while developer mode is on. -->
+        <service
+            android:name=".outside.KitService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.macedonga.visor.kit.action.BIND" />
+            </intent-filter>
+        </service>
+
+        <!-- The kit's consent screen, over the app that asks. -->
+        <activity
+            android:name=".outside.KitConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="com.macedonga.visor.kit.action.REQUEST_SCOPES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- The Live view's frames for an app holding developer mode's token. -->
         <service
             android:name=".outside.FrameService"

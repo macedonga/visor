@@ -79,7 +79,8 @@ class BandLink @Inject constructor(
     // Answers still awaited, by request seq.
     private val replies = ConcurrentHashMap<Int, CompletableDeferred<ByteArray>>()
     private val held = MutableStateFlow(true)
-    private val lesson = MutableStateFlow(false)
+    // Lessons and kit apps that hold the band's gestures, counted: the band goes back when the last one ends.
+    private val lessons = MutableStateFlow(0)
     // Errands under way: the band stays here until the last one ends.
     private val errands = MutableStateFlow(0)
     private val updating = MutableStateFlow(false)
@@ -103,7 +104,7 @@ class BandLink @Inject constructor(
         scope.launch {
             // A lesson or an errand takes the band from the Display; when it ends, the band goes back. Never otherwise:
             // the Display reaches the band on its own, and a phone holding it while the Display restarts keeps it off.
-            val wanted = combine(lesson, errands, updating, pairing) { learning, errand, update, pair -> learning || errand > 0 || update || pair }
+            val wanted = combine(lessons, errands, updating, pairing) { learning, errand, update, pair -> learning > 0 || errand > 0 || update || pair }
             combine(connection.running, connection.pair, bands.all, wanted, held) { running, pair, all, want, hold ->
                 pair?.let { p -> all.firstOrNull { it.glasses == p } }?.takeIf { running && hold && want }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
@@ -157,22 +158,29 @@ class BandLink @Inject constructor(
     fun sendRaw(requests: List<ByteArray>): Boolean = send { requests }
 
     /** Have the band's gestures come here: the band is taken from the Display for as long as it lasts. */
+    @Synchronized
     fun startLesson() {
-        if (lesson.value) return
-        lesson.value = true
+        lessons.value += 1
+        if (lessons.value > 1) return
         log.add("Band: a lesson takes the band")
         if (_state.value.link == LinkState.READY) streams(true)
     }
 
+    @Synchronized
     fun endLesson() {
-        if (!lesson.value) return
-        if (_state.value.link == LinkState.READY) streams(false)
-        lesson.value = false
-        log.add("Band: the lesson gives the band back")
+        if (lessons.value == 0) return
+        // The streams stop before the count lets the band go back.
+        if (lessons.value == 1 && _state.value.link == LinkState.READY) streams(false)
+        lessons.value -= 1
+        if (lessons.value == 0) log.add("Band: the lesson gives the band back")
     }
 
     /** A buzz the wearer cannot miss: done once sent, unless the band answers with an error. */
-    suspend fun vibrate(): BandErrand = errand("a buzz") { haptic(call(BUZZ_REPLY_MS, { Band.vibrate(it, BUZZ_MS, FULL_STRENGTH) }), "buzz") }
+    suspend fun vibrate(): BandErrand = vibrate(BUZZ_MS, FULL_STRENGTH)
+
+    /** A buzz of [millis] at [amplitude], 1 to 255. */
+    suspend fun vibrate(millis: Long, amplitude: Int): BandErrand =
+        errand("a buzz") { haptic(call(BUZZ_REPLY_MS, { Band.vibrate(it, millis, amplitude) }), "buzz") }
 
     // The Display never reads the band's haptics answers: none is fine, an error code is not.
     private fun haptic(answer: Band.Response?, what: String): BandErrand {
@@ -288,9 +296,9 @@ class BandLink @Inject constructor(
                             log.add("Band: link up")
                             ask(opened, info = true)
                             // The gestures wait for the device info, which picks how to ask for them; not for long.
-                            if (lesson.value) launch {
+                            if (lessons.value > 0) launch {
                                 delay(INFO_WAIT_MS)
-                                if (lesson.value && !_state.value.gestures) streams(true)
+                                if (lessons.value > 0 && !_state.value.gestures) streams(true)
                             }
                         }
                     }
@@ -337,7 +345,7 @@ class BandLink @Inject constructor(
                     if (r.leftHanded != null) _state.update { it.copy(leftHanded = r.leftHanded) }
                     if (r.protocol != null) {
                         _state.update { it.copy(protocol = r.protocol) }
-                        if (lesson.value && !_state.value.gestures) streams(true)
+                        if (lessons.value > 0 && !_state.value.gestures) streams(true)
                     }
                 }.battery
                 Band.STREAM_UPDATE -> Band.streamBattery(event.payload)
