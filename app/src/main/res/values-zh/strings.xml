@@ -441,6 +441,8 @@
     <string name="kit_scope_band">读取 Neural Band 的手势并让它振动</string>
     <string name="kit_scope_display">在显示屏上显示文字</string>
     <string name="kit_scope_name_state">状态</string>
+    <string name="kit_scope_pairs">查看在 Visor 中设置的所有眼镜及其名称和外观，并选择 Visor 连接哪一副</string>
+    <string name="kit_scope_name_pairs">你的眼镜</string>
     <string name="kit_scope_name_camera">相机</string>
     <string name="kit_scope_name_band">Neural Band</string>
     <string name="kit_scope_name_display">显示屏</string>

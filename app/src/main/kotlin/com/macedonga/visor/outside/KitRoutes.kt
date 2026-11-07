@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import com.macedonga.visor.band.BandErrand
 import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.band.BandRecord
 import com.macedonga.visor.band.BandState
 import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GlassesService
@@ -22,10 +23,12 @@ import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.media.Kept
+import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.home.LastSeen
+import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.BandStatus
 import com.macedonga.visor.kit.protocol.Capture
@@ -37,6 +40,8 @@ import com.macedonga.visor.kit.protocol.Failure
 import com.macedonga.visor.kit.protocol.Finger
 import com.macedonga.visor.kit.protocol.Gesture
 import com.macedonga.visor.kit.protocol.GestureAction
+import com.macedonga.visor.kit.protocol.GlassesLook
+import com.macedonga.visor.kit.protocol.GlassesPair
 import com.macedonga.visor.kit.protocol.GlassesStatus
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
@@ -46,6 +51,9 @@ import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.kit.protocol.VideoKind
 import com.macedonga.visor.kit.server.Caller
 import com.macedonga.visor.kit.server.Routes
+import com.macedonga.visor.pairs.KnownPair
+import com.macedonga.visor.pairs.Looks
+import com.macedonga.visor.pairs.Pairs
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Base64
 import javax.inject.Inject
@@ -62,9 +70,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
+import com.macedonga.visor.core.identity.look.GlassesLook as MetaLook
 import com.macedonga.visor.core.media.Capture as GlassesCapture
 import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
 import com.macedonga.visor.core.protocol.Band as BandWire
@@ -84,10 +94,21 @@ class KitRoutes @Inject constructor(
     private val tools: KitTools,
     private val notices: KitNotices,
     private val developer: DeveloperMode,
+    private val pairs: Pairs,
+    private val looks: Looks,
+    private val live: LiveStream,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(connection.state.value) }
         stream(Topics.GLASSES_STATUS) { _, _ -> connection.state.map(::glassesStatus).distinctUntilChanged() }
+        answer(Methods.GLASSES_PAIRS) { _, _ -> pairsNow() }
+        stream(Topics.GLASSES_PAIRS) { _, _ ->
+            val active = combine(connection.pair, connection.state.map { it.link }) { pair, link -> pair to link }
+            combine(pairs.all, lastSeen.seen, looks.all, bands.all, active) { all, seen, looks, bands, (pair, link) ->
+                all.filterNot { it.demo }.map { kitPair(it, pair, link, seen[it.serial], looks[it.serial], bands) }
+            }.onStart { readPairs() }.distinctUntilChanged()
+        }
+        answer(Methods.GLASSES_SELECT) { _, selection -> select(selection.serial) }
 
         answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
         answer(Methods.CAMERA_VIDEO_START) { _, request ->
@@ -175,12 +196,9 @@ class KitRoutes @Inject constructor(
         val battery = device?.battery
         return GlassesStatus(
             paired = true,
-            link = when (state.link) {
-                LinkState.READY -> Link.CONNECTED
-                LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
-                else -> Link.CONNECTING
-            },
+            link = kitLink(state.link),
             model = state.info?.model?.ifEmpty { null },
+            name = lastSeen.seen.value[target.serial]?.name,
             serial = target.serial,
             firmware = parseBuild(state.info?.build)?.firmware?.ifEmpty { null },
             display = (productId(state.info?.build) ?: lastSeen.product.value)?.let(::isDisplayProduct),
@@ -191,6 +209,57 @@ class KitRoutes @Inject constructor(
             recording = device?.camera?.let { it == CAMERA_VIDEO_STARTED },
             caseBattery = device?.case?.takeIf { it.known && it.present }?.percent,
         )
+    }
+
+    // Visor reads its pairs from the identity store when its home first asks; after a fresh start, the kit asks.
+    private suspend fun readPairs() {
+        if (pairs.stored.value != null) return
+        pairs.refresh()
+        withTimeoutOrNull(READ_MS) { pairs.stored.first { it != null } }
+    }
+
+    private suspend fun pairsNow(): List<GlassesPair> {
+        readPairs()
+        val pair = connection.pair.value
+        val link = connection.state.value.link
+        return pairs.all.value.filterNot { it.demo }.map {
+            kitPair(it, pair, link, lastSeen.seen.value[it.serial], looks.all.value[it.serial], bands.all.value)
+        }
+    }
+
+    private fun kitPair(pair: KnownPair, active: String?, link: LinkState, seen: PairSeen?, look: MetaLook?, bands: List<BandRecord>) = GlassesPair(
+        serial = pair.serial,
+        name = seen?.name,
+        active = pair.serial == active,
+        link = if (pair.serial == active) kitLink(link) else Link.DISCONNECTED,
+        product = seen?.product,
+        display = seen?.product?.let(::isDisplayProduct),
+        look = look?.let { GlassesLook(it.style, it.styleName, it.color, it.colorName, it.lens, it.lensName, it.size) },
+        battery = seen?.glasses,
+        caseBattery = seen?.case,
+        lastSeen = seen?.at?.takeIf { it > 0 },
+        band = bands.firstOrNull { it.glasses == pair.serial }?.serial,
+    )
+
+    /** Makes [serial] the active pair, as the person's pick on the home does, and answers once Visor has switched. */
+    private suspend fun select(serial: String): GlassesPair {
+        readPairs()
+        if (pairs.all.value.none { it.serial == serial && !it.demo }) {
+            throw KitException(ErrorCode.INVALID_PARAMS, "Visor has no pair $serial set up.", reason = "not_found")
+        }
+        if (serial != connection.pair.value) {
+            if (live.usingWifi || media.importing.value) throw KitException(ErrorCode.BUSY, "A Live view or an import holds the glasses.")
+            pairs.connect(serial)
+            withTimeoutOrNull(SWITCH_MS) { connection.pair.first { it == serial } }
+                ?: throw KitException(ErrorCode.TIMEOUT, "Visor did not switch to $serial.")
+        }
+        return pairsNow().first { it.serial == serial }
+    }
+
+    private fun kitLink(link: LinkState) = when (link) {
+        LinkState.READY -> Link.CONNECTED
+        LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
+        else -> Link.CONNECTING
     }
 
     /** Waits for the glasses when they are not connected, as Developer mode's intents do; not for long. */
@@ -362,6 +431,8 @@ class KitRoutes @Inject constructor(
         // AirShield, 79 constellation), and firmware updates (29).
         val KEPT_SERVICES = setOf(ServiceId.IDENTITY.value, 54, 79, 29)
         const val WAKE_MS = 20_000L
+        const val SWITCH_MS = 5_000L
+        const val READ_MS = 3_000L
         const val ANSWER_MS = 8_000L
         const val LIST_MS = 15_000L
         const val IMPORT_MS = 10 * 60_000L

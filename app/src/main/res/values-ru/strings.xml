@@ -471,6 +471,8 @@
     <string name="kit_scope_band">Получать жесты Neural Band и включать его вибрацию</string>
     <string name="kit_scope_display">Показывать текст на дисплее</string>
     <string name="kit_scope_name_state">Состояние</string>
+    <string name="kit_scope_pairs">Видеть все ваши очки, настроенные в Visor, с их именами и видом, и выбирать, к какой паре подключается Visor</string>
+    <string name="kit_scope_name_pairs">Ваши очки</string>
     <string name="kit_scope_name_camera">Камера</string>
     <string name="kit_scope_name_band">Neural Band</string>
     <string name="kit_scope_name_display">Дисплей</string>

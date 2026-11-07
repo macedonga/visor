@@ -451,6 +451,8 @@
     <string name="kit_scope_band">Leggere i gesti del Neural Band e farlo vibrare</string>
     <string name="kit_scope_display">Mostrare testo sul Display</string>
     <string name="kit_scope_name_state">Stato</string>
+    <string name="kit_scope_pairs">Vedere tutti i tuoi occhiali configurati in Visor, con nomi e aspetto, e scegliere a quale paio si collega Visor</string>
+    <string name="kit_scope_name_pairs">I tuoi occhiali</string>
     <string name="kit_scope_name_camera">Fotocamera</string>
     <string name="kit_scope_name_band">Neural Band</string>
     <string name="kit_scope_name_display">Display</string>
