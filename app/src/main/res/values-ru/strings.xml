@@ -476,6 +476,8 @@
     <string name="kit_scope_pairs">Видеть все ваши очки, настроенные в Visor, с их именами и видом, и выбирать, к какой паре подключается Visor</string>
     <string name="kit_scope_name_inputs">Касания и кнопки</string>
     <string name="kit_scope_inputs">Знать, когда вы касаетесь или проводите по сенсорной панели или нажимаете кнопку на очках</string>
+    <string name="kit_scope_name_microphone">Микрофон</string>
+    <string name="kit_scope_microphone">Превращать в текст то, что слышат микрофоны ваших очков, пока приложение или Visor на экране</string>
     <string name="kit_scope_name_pairs">Ваши очки</string>
     <string name="kit_scope_name_camera">Камера</string>
     <string name="kit_scope_name_band">Neural Band</string>

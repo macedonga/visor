@@ -458,6 +458,8 @@
     <string name="kit_scope_pairs">See all your glasses set up in Visor, with their names and looks, and choose which pair Visor connects to</string>
     <string name="kit_scope_name_inputs">Touch and buttons</string>
     <string name="kit_scope_inputs">Know when you tap or swipe the touchpad or press a button on your glasses</string>
+    <string name="kit_scope_name_microphone">Microphone</string>
+    <string name="kit_scope_microphone">Turn what your glasses\' microphones hear into text, while the app or Visor is on screen</string>
     <string name="kit_scope_name_pairs">Your glasses</string>
     <string name="kit_scope_name_camera">Camera</string>
     <string name="kit_scope_name_band">Neural Band</string>

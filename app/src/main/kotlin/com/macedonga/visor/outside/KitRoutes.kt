@@ -110,6 +110,7 @@ class KitRoutes @Inject constructor(
     private val looks: Looks,
     private val live: LiveStream,
     private val kitLive: KitLive,
+    private val transcripts: KitTranscripts,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -188,6 +189,7 @@ class KitRoutes @Inject constructor(
         }
 
         stream(Topics.VOICE_REQUESTS) { caller, offer -> voices.offer(caller.packageName, offer.phrases) }
+        stream(Topics.VOICE_TRANSCRIPTS) { caller, request -> transcripts.transcripts(caller, request) }
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
         stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }

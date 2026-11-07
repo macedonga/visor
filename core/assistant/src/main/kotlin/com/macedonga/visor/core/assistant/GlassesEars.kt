@@ -118,6 +118,11 @@ class GlassesEars(
         }
     }
 
+    /** 16 kHz 16-bit mono PCM, from the glasses' microphone as a headset rather than from s0. */
+    fun hearPcm(samples: ShortArray) {
+        if (accepting) queue.offer(samples)
+    }
+
     /** The stream ended: what is queued still goes to the recogniser, then it hears the end and gives its result. */
     fun finish() {
         if (!accepting) return

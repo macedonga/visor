@@ -456,6 +456,8 @@
     <string name="kit_scope_pairs">Vedere tutti i tuoi occhiali configurati in Visor, con nomi e aspetto, e scegliere a quale paio si collega Visor</string>
     <string name="kit_scope_name_inputs">Tocchi e tasti</string>
     <string name="kit_scope_inputs">Sapere quando tocchi o scorri il touchpad o premi un tasto dei tuoi occhiali</string>
+    <string name="kit_scope_name_microphone">Microfono</string>
+    <string name="kit_scope_microphone">Trasformare in testo ciò che sentono i microfoni dei tuoi occhiali, mentre l\'app o Visor è sullo schermo</string>
     <string name="kit_scope_name_pairs">I tuoi occhiali</string>
     <string name="kit_scope_name_camera">Fotocamera</string>
     <string name="kit_scope_name_band">Neural Band</string>

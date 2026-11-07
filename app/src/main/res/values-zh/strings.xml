@@ -446,6 +446,8 @@
     <string name="kit_scope_pairs">查看在 Visor 中设置的所有眼镜及其名称和外观，并选择 Visor 连接哪一副</string>
     <string name="kit_scope_name_inputs">触摸和按键</string>
     <string name="kit_scope_inputs">知道你何时轻触或滑动眼镜的触控板，或按下眼镜上的按键</string>
+    <string name="kit_scope_name_microphone">麦克风</string>
+    <string name="kit_scope_microphone">在应用或 Visor 显示在屏幕上时，把眼镜麦克风听到的内容转成文字</string>
     <string name="kit_scope_name_pairs">你的眼镜</string>
     <string name="kit_scope_name_camera">相机</string>
     <string name="kit_scope_name_band">Neural Band</string>

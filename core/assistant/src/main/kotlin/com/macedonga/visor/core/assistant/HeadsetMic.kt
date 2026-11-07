@@ -90,6 +90,54 @@ internal suspend fun headsetTake(context: Context, address: String?, ms: Long, s
     }
 }
 
+/**
+ * The glasses' microphone as a Bluetooth headset, 16 kHz 16-bit mono PCM to [onPcm] in chunks of 100 ms, until
+ * cancelled. Never the phone's own microphone: a recording Android moves off the glasses is routed back, and nothing
+ * from elsewhere reaches [onPcm]. Returns why it could not start or go on.
+ */
+@SuppressLint("MissingPermission")
+suspend fun headsetListen(context: Context, address: String?, onPcm: (ShortArray) -> Unit): String = withContext(Dispatchers.IO) {
+    if (address == null) return@withContext "the glasses are not connected over Bluetooth"
+    val am = context.getSystemService(AudioManager::class.java)
+    val glasses = am.availableCommunicationDevices.firstOrNull { it.isHeadset() && it.address.equals(address, ignoreCase = true) }
+        ?: return@withContext "the glasses are no Bluetooth headset to this phone"
+    val mode = am.mode
+    am.mode = AudioManager.MODE_IN_COMMUNICATION
+    try {
+        if (!am.setCommunicationDevice(glasses)) return@withContext "could not route the call mic to the glasses"
+        val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val rec = runCatching {
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, RATE * 2))
+        }.getOrElse { return@withContext "no headset recorder: ${it.message}" }
+        try {
+            rec.setPreferredDevice(am.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == glasses.type && it.address.equals(address, ignoreCase = true) })
+            rec.startRecording()
+            val chunk = ShortArray(RATE / 10)
+            var checked = System.currentTimeMillis()
+            var read = 0
+            while (read >= 0) {
+                ensureActive()
+                read = rec.read(chunk, 0, chunk.size)
+                val onGlasses = rec.routedDevice?.isHeadset() == true
+                // Another user of the call mic, such as a call, can take the route: ask for it back now and then.
+                val now = System.currentTimeMillis()
+                if (!onGlasses && now - checked > ROUTE_CHECK_MS) {
+                    checked = now
+                    am.setCommunicationDevice(glasses)
+                }
+                if (onGlasses && read > 0) onPcm(chunk.copyOf(read))
+            }
+            "the headset recorder failed ($read)"
+        } finally {
+            runCatching { rec.stop() }
+            rec.release()
+        }
+    } finally {
+        am.clearCommunicationDevice()
+        am.mode = mode
+    }
+}
+
 private fun AudioDeviceInfo.isHeadset() = type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || type == AudioDeviceInfo.TYPE_BLE_HEADSET
 
 /** The loudest of the first [n] bytes of 16-bit little-endian PCM. */
@@ -101,3 +149,4 @@ private fun peakOf(pcm: ByteArray, n: Int): Int {
 
 private const val RATE = 16_000
 private const val LIVE_WAIT_MS = 4_000L
+private const val ROUTE_CHECK_MS = 2_000L
