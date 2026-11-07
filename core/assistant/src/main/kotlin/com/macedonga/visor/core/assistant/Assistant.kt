@@ -1457,12 +1457,12 @@ class Assistant(
         val written = l.typedOf.containsKey(interaction) || interaction in l.written
         val c = store.config.value
         val partner = interaction in l.partnerTurns
-        val ownVoice = c.glassesVoice && !l.foreign && c.speechLanguage.isEmpty()
+        val ownVoice = c.tts == TtsPath.GLASSES && !l.foreign && c.speechLanguage.isEmpty()
         if ((text.isEmpty() && partner) || (!l.sessionTurn && (written || ownVoice))) {
             speakOnGlasses(l, interaction, transcript, text, listen)
             return 0
         }
-        val packets = voice.speak(text, spoken(l))
+        val packets = synthesise(text, spoken(l))
         // A session turn ends on the VARM; there, and in Live AI, ev60 would end the whole session. A typed one ends on its card.
         val card = if (written && display() && text.isNotEmpty()) answerCard(text) else null
         stream(
@@ -1470,6 +1470,27 @@ class Assistant(
             complete = written || (!l.sessionTurn && !live && !partner), listen = listen, card = card,
         )
         return packets.sumOf { it.durationUs } / 1000
+    }
+
+    /**
+     * The answer as audio, in the order the wearer chose. A cloud service is asked first when it is the
+     * choice: it speaks languages the phone's engine may not have, and the answer needed the network
+     * anyway. One that fails or takes too long falls through to the phone's engine rather than leaving
+     * silence and a turn that never ends.
+     */
+    private suspend fun synthesise(text: String, locale: Locale): List<OpusPacket> {
+        val c = store.config.value
+        if (c.tts == TtsPath.CLOUD) {
+            try {
+                val audio = withTimeoutOrNull(CLOUD_SPEECH_WAIT_MS) { cloudSpeech(c, text) }
+                    ?: throw SpeechError("no answer in ${CLOUD_SPEECH_WAIT_MS / 1000} s")
+                say("Speech: ${text.length} characters from ${c.ttsModel.ifEmpty { "the speech service" }}")
+                return voice.encode(audio.samples, audio.rate)
+            } catch (error: Exception) {
+                say("The speech service did not answer (${error.message}); the phone speaks instead")
+            }
+        }
+        return voice.speak(text, locale)
     }
 
     /** ev71, ev52 and ev342, with explicit NetEvent types for partner turns and tagged type 0 otherwise. */
@@ -1807,6 +1828,9 @@ class Assistant(
         )
         const val MIN_MODEL_MS = 6_000L
         const val PHOTO_WAIT_MS = 8_000L
+        // A cloud speech service that has not answered by then is answered by the phone's engine instead,
+        // slow enough to be worth waiting for and fast enough to fit in the answer the glasses wait for.
+        const val CLOUD_SPEECH_WAIT_MS = 20_000L
         const val PHOTO_MAX_BYTES = 20_000_000L
         const val MCP_WAIT_MS = 8_000L
         const val INTENT_WAIT_MS = 5_000L

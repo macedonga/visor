@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Provider
+import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.assistant.mcp.AuthKind
 import com.macedonga.visor.core.assistant.mcp.McpServer
 import com.macedonga.visor.core.assistant.mcp.McpStore
@@ -118,9 +119,12 @@ class Backups @Inject constructor(
                 "assistant",
                 JSONObject()
                     .put("enabled", a.enabled).put("provider", a.provider.name).put("model", a.model).put("linesModel", a.linesModel)
-                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.glassesVoice).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
+                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.tts == TtsPath.GLASSES).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
                     .put("instructions", a.instructions).put("memoryMinutes", a.memoryMinutes)
-                    .put("answerWaitSeconds", a.answerWaitSeconds),
+                    .put("answerWaitSeconds", a.answerWaitSeconds)
+                    // The speech service's key is left out like the model provider's; the address and
+                    // the chosen model come along so a restored phone only needs the key typed again.
+                    .put("tts", a.tts.name).put("ttsBaseUrl", a.ttsBaseUrl).put("ttsModel", a.ttsModel).put("ttsVoice", a.ttsVoice),
             )
             .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("muted", JSONArray(apps.muted.value.sorted())))
             .put("import", import.mode.value.name)
@@ -186,7 +190,11 @@ class Backups @Inject constructor(
                     webSearch = o.optBoolean("webSearch", it.webSearch),
                     vision = o.optBoolean("vision", it.vision),
                     voicePhotos = o.optBoolean("voicePhotos", it.voicePhotos),
-                    glassesVoice = o.optBoolean("glassesVoice", it.glassesVoice),
+                    // "tts" from the version that added it; older backups carried the boolean instead.
+                    tts = runCatching { TtsPath.valueOf(o.getString("tts")) }.getOrDefault(if (o.optBoolean("glassesVoice", true)) TtsPath.GLASSES else TtsPath.PHONE),
+                    ttsBaseUrl = o.optString("ttsBaseUrl", it.ttsBaseUrl),
+                    ttsModel = o.optString("ttsModel", it.ttsModel),
+                    ttsVoice = o.optString("ttsVoice", it.ttsVoice),
                     quietAfterActions = o.optBoolean("quietAfterActions", it.quietAfterActions),
                     speechLanguage = o.optString("speechLanguage", it.speechLanguage),
                     instructions = o.optString("instructions", it.instructions),

@@ -21,8 +21,16 @@ data class AssistantConfig(
     val vision: Boolean = true,
     // Let a partner-language voice command take a photo; it turns on the glasses' Robusta switch, not Developer mode.
     val voicePhotos: Boolean = false,
-    // Answers in the glasses' own voice, the one that reads notifications; off, the phone's voice streamed to them.
-    val glassesVoice: Boolean = true,
+    // Who says the answer out loud. The frames' own voice speaks only the language their assistant runs in;
+    // the phone's engine is offline and free; a cloud service speaks any language and needs a network,
+    // which the answer needed anyway.
+    val tts: TtsPath = TtsPath.GLASSES,
+    // The cloud speech service's endpoint and credentials, the same shape as the model's. Two request
+    // shapes hide behind "OpenAI compatible", so the first call finds out which one this server answers.
+    val ttsBaseUrl: String = "https://api.openai.com/v1",
+    val ttsApiKey: String = "",
+    val ttsModel: String = "",
+    val ttsVoice: String = "",
     // No spoken answer when every tool the model used did what was asked, such as music that now plays.
     val quietAfterActions: Boolean = false,
     // The language the wearer speaks, as a BCP 47 tag, when the glasses have no pack for it; empty, the glasses' own.
@@ -37,6 +45,9 @@ data class AssistantConfig(
     /** A model can answer: Claude needs a key, an OpenAI-compatible server may not. */
     val hasModel: Boolean get() = apiKey.isNotBlank() || provider == Provider.OPENAI_COMPATIBLE
 }
+
+/** Who says the answer out loud. */
+enum class TtsPath { GLASSES, PHONE, CLOUD }
 
 /** Languages the wearer can speak that the glasses have no pack for, heard and spoken by the phone. */
 val SPEECH_LANGUAGES = listOf(
@@ -97,7 +108,11 @@ class AssistantConfigStore(context: Context) {
             .putBoolean("web_search", next.webSearch)
             .putBoolean("vision", next.vision)
             .putBoolean("voice_photos", next.voicePhotos)
-            .putBoolean("glasses_voice", next.glassesVoice)
+            .putString("tts", next.tts.name)
+            .putString("tts_base_url", next.ttsBaseUrl)
+            .putString("tts_api_key", next.ttsApiKey)
+            .putString("tts_model", next.ttsModel)
+            .putString("tts_voice", next.ttsVoice)
             .putBoolean("quiet_after_actions", next.quietAfterActions)
             .putString("speech_language", next.speechLanguage)
             .putString("instructions", next.instructions)
@@ -119,7 +134,13 @@ class AssistantConfigStore(context: Context) {
             webSearch = prefs.getBoolean("web_search", d.webSearch),
             vision = prefs.getBoolean("vision", d.vision),
             voicePhotos = prefs.getBoolean("voice_photos", d.voicePhotos),
-            glassesVoice = prefs.getBoolean("glasses_voice", d.glassesVoice),
+            // "tts" from this version on; before it, the boolean chose between the frames and the phone.
+            tts = prefs.getString("tts", null)?.let { runCatching { TtsPath.valueOf(it) }.getOrNull() }
+                ?: if (prefs.getBoolean("glasses_voice", true)) TtsPath.GLASSES else TtsPath.PHONE,
+            ttsBaseUrl = prefs.getString("tts_base_url", d.ttsBaseUrl).orEmpty(),
+            ttsApiKey = prefs.getString("tts_api_key", d.ttsApiKey).orEmpty(),
+            ttsModel = prefs.getString("tts_model", d.ttsModel).orEmpty(),
+            ttsVoice = prefs.getString("tts_voice", d.ttsVoice).orEmpty(),
             quietAfterActions = prefs.getBoolean("quiet_after_actions", d.quietAfterActions),
             speechLanguage = prefs.getString("speech_language", d.speechLanguage).orEmpty(),
             instructions = prefs.getString("instructions", d.instructions).orEmpty(),
