@@ -127,8 +127,9 @@ class SecureLink(private val transport: Transport) {
         val multikey = (OUR_PARAMETERS and request.supportedParameters and enable.parameters and Kdf.MULTIKEY) != 0
         // Keep exactly as measured: TX takes the peer's RequestEncryption challenge as nonce and
         // our seed.
-        val rxKeys = Kdf.deriveDirectionKeys(secret, myChallenge, enable.seed, enable.iv, multikey = multikey)
-        val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv, multikey = multikey)
+        // The quirks of each peer message pick its direction's HKDF info, as Meta's LinkSetupClient does (#80).
+        val rxKeys = Kdf.deriveDirectionKeys(secret, myChallenge, enable.seed, enable.iv, multikey = multikey, quirks = enable.quirks)
+        val txKeys = Kdf.deriveDirectionKeys(secret, request.challenge, mySeed, myIv, multikey = multikey, quirks = request.quirks)
         rxCrypto = FrameCrypto(rxKeys, enable.base.toInt())
         txCrypto = FrameCrypto(txKeys, mySeq.toInt())
         handshake = describe(request, enable, multikey)

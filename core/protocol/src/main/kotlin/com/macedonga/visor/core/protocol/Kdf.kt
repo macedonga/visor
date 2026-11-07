@@ -10,8 +10,14 @@ object Kdf {
     private val AIRSHIELD_INFO: ByteArray = "AirShield".toByteArray(Charsets.US_ASCII)
     private val HMAC_DERIVE_LABEL: ByteArray = "hmac_derive".toByteArray(Charsets.US_ASCII)
 
+    // QCS7 info: "AirShield" in a 128-byte label, then u32 32 and u32 256 (libairshield HKDF::getQcs7HkdfInfo).
+    private val QCS7_INFO: ByteArray = AIRSHIELD_INFO.copyOf(128) + byteArrayOf(32, 0, 0, 0, 0, 1, 0, 0)
+
     /** EncryptionParameters flag 0x04: a separate HMAC key. The Neural Band offers 27, without it. */
     const val MULTIKEY: Int = 4
+
+    /** QuirksMode 1 (QCS7), sent by Ray-Ban Meta Burbank Audio: the HKDF expand takes [QCS7_INFO]. */
+    const val QUIRKS_QCS7: Int = 1
 
     /** One direction's key set. */
     fun deriveDirectionKeys(
@@ -21,15 +27,17 @@ object Kdf {
         preambleIv: ByteArray,
         // Without Multikey on both ends the AES key is the HMAC key too.
         multikey: Boolean = true,
+        quirks: Int = 0,
     ): SessionKeys {
         require(ecdhSecret.size == 32) { "ECDH secret must be 32 bytes, got ${ecdhSecret.size}" }
         require(preambleIv.size == 16) { "preamble IV must be 16 bytes, got ${preambleIv.size}" }
 
+        val info = if (quirks == QUIRKS_QCS7) QCS7_INFO else AIRSHIELD_INFO
         val aesSalt = sha256(nonce, seed)
-        val aesKey = hkdfExpand(hkdfExtract(aesSalt, ecdhSecret))
+        val aesKey = hkdfExpand(hkdfExtract(aesSalt, ecdhSecret), info)
         if (!multikey) return SessionKeys(aesKey = aesKey, hmacKey = aesKey, iv = preambleIv)
         val hmacSalt = sha256(seed, nonce, HMAC_DERIVE_LABEL)
-        val hmacKey = hkdfExpand(hkdfExtract(hmacSalt, ecdhSecret))
+        val hmacKey = hkdfExpand(hkdfExtract(hmacSalt, ecdhSecret), info)
         return SessionKeys(aesKey = aesKey, hmacKey = hmacKey, iv = preambleIv)
     }
 
@@ -48,7 +56,7 @@ object Kdf {
     private fun hkdfExtract(salt: ByteArray, ikm: ByteArray): ByteArray = hmacSha256(salt, ikm)
 
     // RFC 5869 T(1): one HMAC-SHA256 block is the whole 32-byte key.
-    private fun hkdfExpand(prk: ByteArray): ByteArray = hmacSha256(prk, AIRSHIELD_INFO + byteArrayOf(1))
+    private fun hkdfExpand(prk: ByteArray, info: ByteArray): ByteArray = hmacSha256(prk, info + byteArrayOf(1))
 }
 
 /** One direction's key set: AES-256, HMAC-SHA256, and the initial CBC IV. */
