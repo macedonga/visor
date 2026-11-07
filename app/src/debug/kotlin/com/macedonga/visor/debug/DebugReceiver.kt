@@ -1,5 +1,10 @@
 package com.macedonga.visor.debug
 
+import android.bluetooth.le.ScanSettings
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.BluetoothManager
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -565,6 +570,8 @@ class DebugReceiver : BroadcastReceiver() {
                 resultData = "started; BAND_PAIR_STATUS for how it ended, LOG for the steps"
             }
             "BAND_PAIR_STATUS" -> resultData = bandPair.status.value.toString()
+            // The strongest BLE advertisers heard in --ei ms (10 s by default), each with its manufacturer data by company id.
+            "BLE_SCAN" -> answerLater { bleScan(context, intent.getIntExtra("ms", 10_000).toLong()) }
             // A Display's classic bond for calls: CLASSIC_PROBE only reads. CLASSIC_REBOND and CLASSIC_UNDO unpair the glasses
             // and pair them again, so they need --ez confirm true; they answer at once and log each step (LOG).
             "CLASSIC_PROBE" -> answerLater { classicBond.perform(ClassicBond.Action.PROBE).toString() }
@@ -692,6 +699,30 @@ class DebugReceiver : BroadcastReceiver() {
     }
 
     /** For an answer that takes seconds: the broadcast stays open until it is ready. */
+    @SuppressLint("MissingPermission")
+    private suspend fun bleScan(context: Context, ms: Long): String {
+        val scanner = context.getSystemService(BluetoothManager::class.java)?.adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner
+            ?: return "Bluetooth is off"
+        val heard = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, String>>()
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val record = result.scanRecord
+                val makers = record?.manufacturerSpecificData?.let { m ->
+                    (0 until m.size()).joinToString(" ") { i -> "%04x:".format(m.keyAt(i)) + m.valueAt(i).joinToString("") { "%02x".format(it) } }
+                }.orEmpty()
+                val name = record?.deviceName ?: runCatching { result.device.name }.getOrNull()
+                heard[result.device.address] = result.rssi to "${result.device.address} rssi=${result.rssi} name=$name maker=[$makers] services=${record?.serviceUuids.orEmpty()}"
+            }
+        }
+        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        try {
+            delay(ms)
+        } finally {
+            runCatching { scanner.stopScan(callback) }
+        }
+        return heard.values.sortedByDescending { it.first }.take(SCAN_SHOWN).joinToString("\n") { it.second }.ifEmpty { "nothing heard" }
+    }
+
     private fun answerLater(work: suspend () -> String) {
         val pending = goAsync()
         scope.launch {
@@ -712,6 +743,7 @@ class DebugReceiver : BroadcastReceiver() {
     private companion object {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         const val DEMO_SERIAL = "DEMO00SKYLER00"
+        const val SCAN_SHOWN = 25
         // Meta's own picture of a black Skyler, as its asset service hands it out.
         const val DEMO_PICTURE = "https://scontent.xx.fbcdn.net/mci_ab/uap/asset_manager/name_revision/?ab_b=e&ab_page=AssetManagerNameAndRevision" +
             "&ab_entry=RBM2-Skyler-ShinyBlack-Clear-Concord&set=mwa_device_image_assets&revision=1837680503843762&density=3&mode=dark"
