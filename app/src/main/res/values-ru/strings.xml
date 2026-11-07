@@ -1104,8 +1104,6 @@
     <string name="band_vibrate">Вибрация</string>
     <string name="band_not_changed">Не изменено</string>
     <string name="band_refused">Отклонено</string>
-    <string name="band_fw_confirm">Установить %1$s? По завершении браслет перезапустится.</string>
-    <string name="band_fw_installed">Установлено</string>
     <string name="band_glasses">Очки</string>
     <string name="band_not_paired">Не сопряжён</string>
     <string name="band_paired_connected">Сопряжён, подключён</string>

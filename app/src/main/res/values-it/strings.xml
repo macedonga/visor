@@ -1060,8 +1060,6 @@
     <string name="band_vibrate">Fai vibrare</string>
     <string name="band_not_changed">Non cambiato</string>
     <string name="band_refused">Rifiutato</string>
-    <string name="band_fw_confirm">Installare %1$s? Il bracciale si riavvia al termine.</string>
-    <string name="band_fw_installed">Installato</string>
     <string name="band_glasses">Occhiali</string>
     <string name="band_not_paired">Non accoppiato</string>
     <string name="band_paired_connected">Accoppiato, collegato</string>

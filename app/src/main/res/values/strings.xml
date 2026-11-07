@@ -1067,8 +1067,6 @@
     <string name="band_vibrate">Vibrate</string>
     <string name="band_not_changed">Not changed</string>
     <string name="band_refused">Refused</string>
-    <string name="band_fw_confirm">Install %1$s? The band restarts when it is done.</string>
-    <string name="band_fw_installed">Installed</string>
     <string name="band_glasses">Glasses</string>
     <string name="band_not_paired">Not paired</string>
     <string name="band_paired_connected">Paired, connected</string>
