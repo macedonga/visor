@@ -447,6 +447,12 @@
     <string name="vdk_scope_name_camera">Camera</string>
     <string name="vdk_scope_name_band">Neural Band</string>
     <string name="vdk_scope_name_display">Display</string>
+    <string name="vdk_scope_voice">Answer the questions you ask the glasses that name it</string>
+    <string name="vdk_scope_assistant">Give the assistant tools it can use while it answers you</string>
+    <string name="vdk_scope_notify">Show notifications on the Display</string>
+    <string name="vdk_scope_name_voice">Voice</string>
+    <string name="vdk_scope_name_assistant">Assistant</string>
+    <string name="vdk_scope_name_notify">Notifications</string>
     <string name="settings_diagnostics">Diagnostics</string>
     <string name="settings_event_log">Event log</string>
     <string name="diag_stage">Stage</string>

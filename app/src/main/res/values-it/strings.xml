@@ -445,6 +445,12 @@
     <string name="vdk_scope_name_camera">Fotocamera</string>
     <string name="vdk_scope_name_band">Neural Band</string>
     <string name="vdk_scope_name_display">Display</string>
+    <string name="vdk_scope_voice">Rispondere alle domande che fai agli occhiali e che la nominano</string>
+    <string name="vdk_scope_assistant">Dare all\'assistente strumenti da usare mentre ti risponde</string>
+    <string name="vdk_scope_notify">Mostrare notifiche sul Display</string>
+    <string name="vdk_scope_name_voice">Voce</string>
+    <string name="vdk_scope_name_assistant">Assistente</string>
+    <string name="vdk_scope_name_notify">Notifiche</string>
     <string name="settings_diagnostics">Diagnostica</string>
     <string name="settings_event_log">Registro eventi</string>
     <string name="diag_stage">Fase</string>

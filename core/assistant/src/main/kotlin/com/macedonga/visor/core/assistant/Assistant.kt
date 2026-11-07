@@ -91,6 +91,8 @@ class Assistant(
     /** The connected glasses have a display: each answer then comes with a card for it. */
     private val display: () -> Boolean,
     private val cameraAction: suspend (CameraAction) -> Boolean,
+    /** Apps that answer the questions naming them, through the VDK. */
+    private val apps: AppVoices,
 ) : Responder {
 
     // A send on a channel the glasses closed, or after the link went, throws: it is logged, not a crash.
@@ -1113,7 +1115,50 @@ class Assistant(
             }
             // Left to the server by the glasses: the phone's player does them at once.
             intent in MEDIA_CONTROLS -> scope.launch { mediaControl(l, interaction, transcript, MEDIA_CONTROLS.getValue(intent)) }
-            else -> scope.launch { answer(l, interaction, transcript, visual, glasses) }
+            else -> {
+                // A question that names an app goes to the app, not the model. A partner turn keeps Meta's own flow.
+                val claim = if (interaction in l.partnerTurns) null else apps.claim(transcript)
+                if (claim != null) scope.launch { appAnswer(l, interaction, transcript, intent, claim) }
+                else scope.launch { answer(l, interaction, transcript, visual, glasses) }
+            }
+        }
+    }
+
+    /** [claim]'s app answers the question, in the glasses' voice; when it does not in time, the wearer hears so. */
+    private suspend fun appAnswer(l: Link, interaction: String, transcript: String, intent: String, claim: AppClaim) {
+        if (!awaitPartnerWake(l, interaction)) return
+        val started = System.currentTimeMillis()
+        record(TurnRecord(interaction, started, transcript))
+        say("${claim.app} answers $interaction")
+        setPhase(l, AssistantPhase.THINKING)
+        val waiting = scope.launch { holdOn(l, interaction) }
+        val budget = (processingTimeoutS() ?: FACTORY_PROCESSING_S) * 1000 - DELIVERY_MS
+        val reply = try {
+            apps.answer(claim, interaction, transcript, intent, budget)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            say("${claim.app} failed to answer: ${e.message}")
+            null
+        }
+        if (reply == null) {
+            waiting.cancel()
+            update(interaction) { it.copy(problem = "${claim.app} did not answer") }
+            return speakTurn(l, interaction, transcript, "Tell the wearer that the app ${claim.app} did not answer.")
+        }
+        val answered = listOf(ToolAction(claim.app, "answered", true))
+        update(interaction) { it.copy(answer = reply.text, modelMs = System.currentTimeMillis() - started, actions = answered) }
+        if (l.simplified) waiting.cancel()
+        try {
+            val sentMs = deliver(l, interaction, transcript, reply.text, listen = reply.listen)
+            l.answered.add(interaction)
+            update(interaction) { it.copy(sentMs = sentMs) }
+        } catch (error: Exception) {
+            say("${claim.app}'s answer did not reach the glasses: ${error.message}")
+            update(interaction) { it.copy(problem = error.why()) }
+        } finally {
+            waiting.cancel()
+            setPhase(l, AssistantPhase.LISTENING)
         }
     }
 

@@ -76,6 +76,9 @@ class VdkRoutes @Inject constructor(
     private val band: BandLink,
     private val bands: Bands,
     private val lastSeen: LastSeen,
+    private val voices: VdkVoices,
+    private val tools: VdkTools,
+    private val notices: VdkNotices,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(connection.state.value) }
@@ -129,6 +132,13 @@ class VdkRoutes @Inject constructor(
             requireDisplay()
             teleprompter.close()
         }
+
+        stream(Topics.VOICE_REQUESTS) { caller, offer -> voices.offer(caller.packageName, offer.phrases) }
+        answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
+        stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
+        answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }
+        answer(Methods.NOTIFY_POST) { caller, notice -> notices.post(caller.packageName, notice) }
+        answer(Methods.NOTIFY_REMOVE) { caller, removal -> notices.remove(caller.packageName, removal.id) }
     }
 
     private fun glassesStatus(state: GlassesState): GlassesStatus {

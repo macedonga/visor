@@ -62,6 +62,7 @@ private class Turn(
     val box: Toolbox, var photo: ByteArray? = null, val glasses: GlassesToolbox? = null, val canEnd: Boolean = false,
     val capturePhoto: (suspend () -> ByteArray?)? = null,
     val cameraAction: (suspend (CameraAction) -> Boolean)? = null,
+    val apps: List<AppTool> = emptyList(),
 ) {
     val remembered = ArrayList<String>()
     val actions = ArrayList<ToolAction>()
@@ -109,7 +110,7 @@ enum class CameraAction(val tool: String, val title: String, val help: String, v
 }
 
 /** The model behind the assistant. The conversation comes with each question, from the diary; tools from [hub] and [phone]. */
-class Brain(private val store: AssistantConfigStore, private val diary: Diary, private val hub: McpHub, phone: Phone) {
+class Brain(private val store: AssistantConfigStore, private val diary: Diary, private val hub: McpHub, phone: Phone, private val appTools: AppTools) {
     private val phoneTools = PhoneTools(phone)
 
     private fun config() = store.config.value
@@ -155,7 +156,7 @@ class Brain(private val store: AssistantConfigStore, private val diary: Diary, p
         } catch (_: Exception) {
             Toolbox(emptyList(), "")
         }
-        val turn = Turn(box, image, glasses, canEnd, capturePhoto, cameraAction)
+        val turn = Turn(box, image, glasses, canEnd, capturePhoto, cameraAction, appTools.tools())
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
@@ -262,9 +263,14 @@ class Brain(private val store: AssistantConfigStore, private val diary: Diary, p
         }
         val glasses = turn.glasses
         if (glasses != null) glasses.tools.find { it.short == name }?.let { return glasses.call(it.full, input) }
-        val tool = turn.box.find(name) ?: return ToolResult("unknown tool", true)
-        val (result, action) = hub.call(tool, input, turn.photo)
-        action?.let(turn.actions::add)
+        turn.box.find(name)?.let { tool ->
+            val (result, action) = hub.call(tool, input, turn.photo)
+            action?.let(turn.actions::add)
+            return result
+        }
+        val app = turn.apps.find { it.name == name } ?: return ToolResult("unknown tool", true)
+        val result = app.run(input)
+        turn.actions += ToolAction(app.app, app.name, !result.isError)
         return result
     }
 
@@ -285,6 +291,9 @@ class Brain(private val store: AssistantConfigStore, private val diary: Diary, p
         addAll(phoneTools.tools)
         turn.box.tools.forEach { add(Triple(it.name, it.help(), it.tool.schema)) }
         turn.glasses?.tools?.forEach { add(Triple(it.short, it.help, it.schema)) }
+        // Apps' tools come last, and one named like a tool above stays out: the call would reach the other.
+        val taken = mapTo(HashSet()) { it.first }
+        turn.apps.filter { it.name !in taken }.forEach { add(Triple(it.name, it.help, it.schema)) }
     }
 
     private suspend fun claude(

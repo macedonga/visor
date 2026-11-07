@@ -465,6 +465,12 @@
     <string name="vdk_scope_name_camera">Камера</string>
     <string name="vdk_scope_name_band">Neural Band</string>
     <string name="vdk_scope_name_display">Дисплей</string>
+    <string name="vdk_scope_voice">Отвечать на вопросы очкам, в которых оно названо</string>
+    <string name="vdk_scope_assistant">Давать ассистенту инструменты, которыми он пользуется, отвечая вам</string>
+    <string name="vdk_scope_notify">Показывать уведомления на дисплее</string>
+    <string name="vdk_scope_name_voice">Голос</string>
+    <string name="vdk_scope_name_assistant">Ассистент</string>
+    <string name="vdk_scope_name_notify">Уведомления</string>
     <string name="settings_diagnostics">Диагностика</string>
     <string name="settings_event_log">Журнал событий</string>
     <string name="diag_stage">Этап</string>

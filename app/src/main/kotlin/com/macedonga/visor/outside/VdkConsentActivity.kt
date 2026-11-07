@@ -80,13 +80,16 @@ class VdkConsentActivity : ComponentActivity() {
 
     companion object {
         /** The scopes this Visor grants, in the order the screen lists them. */
-        val KNOWN = listOf(Scope.STATE, Scope.CAMERA, Scope.BAND, Scope.DISPLAY)
+        val KNOWN = listOf(Scope.STATE, Scope.CAMERA, Scope.BAND, Scope.DISPLAY, Scope.VOICE, Scope.ASSISTANT, Scope.NOTIFY)
 
         val SCOPE_NAME = mapOf(
             Scope.STATE to R.string.vdk_scope_name_state,
             Scope.CAMERA to R.string.vdk_scope_name_camera,
             Scope.BAND to R.string.vdk_scope_name_band,
             Scope.DISPLAY to R.string.vdk_scope_name_display,
+            Scope.VOICE to R.string.vdk_scope_name_voice,
+            Scope.ASSISTANT to R.string.vdk_scope_name_assistant,
+            Scope.NOTIFY to R.string.vdk_scope_name_notify,
         )
 
         val SCOPE_TEXT = mapOf(
@@ -94,6 +97,9 @@ class VdkConsentActivity : ComponentActivity() {
             Scope.CAMERA to R.string.vdk_scope_camera,
             Scope.BAND to R.string.vdk_scope_band,
             Scope.DISPLAY to R.string.vdk_scope_display,
+            Scope.VOICE to R.string.vdk_scope_voice,
+            Scope.ASSISTANT to R.string.vdk_scope_assistant,
+            Scope.NOTIFY to R.string.vdk_scope_notify,
         )
     }
 }
