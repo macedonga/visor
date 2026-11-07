@@ -13,8 +13,6 @@ import com.macedonga.visor.R
 import com.macedonga.visor.band.BandErrand
 import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.band.BandSetup
-import com.macedonga.visor.band.BandUpdate
-import com.macedonga.visor.band.BandWork
 import com.macedonga.visor.core.session.LinkState
 import kotlinx.coroutines.launch
 
@@ -44,7 +42,6 @@ internal fun BandPart(model: SettingsViewModel) {
     var wristOutcome by remember { mutableStateOf<BandErrand?>(null) }
     var buzzing by remember { mutableStateOf(false) }
     var buzzOutcome by remember { mutableStateOf<BandErrand?>(null) }
-    var firmwareOpen by remember { mutableStateOf(false) }
     Rows(
         {
             ValueRow(
@@ -120,45 +117,9 @@ internal fun BandPart(model: SettingsViewModel) {
         if (owned) row {
             ValueRow(
                 stringResource(R.string.glasses_firmware), own.firmware?.toString() ?: stringResource(R.string.settings_unknown),
-                onClick = { firmwareOpen = true },
+                onClick = null,
             )
         } else null,
-    )
-    if (firmwareOpen && owned) BandFirmwareSheet(model.bandUpdate, own.firmware) { firmwareOpen = false }
-}
-
-/** Meta's firmware for the band; the band is the phone's while it installs. */
-@Composable
-private fun BandFirmwareSheet(update: BandUpdate, version: Long?, onDismiss: () -> Unit) {
-    val work by update.work.collectAsStateWithLifecycle()
-    val offer by update.offer.collectAsStateWithLifecycle()
-    val checked by update.checked.collectAsStateWithLifecycle()
-    FirmwareSheet(
-        current = version?.toString() ?: stringResource(R.string.settings_unknown),
-        offer = offer?.let { o -> o.displayName.ifEmpty { o.targetVersion } },
-        status = when (val w = work) {
-            BandWork.Checking -> stringResource(R.string.firmware_checking)
-            is BandWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
-            BandWork.Installed -> stringResource(R.string.band_fw_installed)
-            is BandWork.Failed -> stringResource(
-                when (w.why) {
-                    BandWork.Why.NO_GLASSES -> R.string.connect_first
-                    BandWork.Why.NO_BAND -> R.string.band_pair_fail_no_band
-                    BandWork.Why.NO_ANSWER -> R.string.band_pair_fail_no_answer
-                    BandWork.Why.LOW_BATTERY -> R.string.mood_low_battery
-                    BandWork.Why.FAILED -> R.string.band_failed
-                },
-            )
-            BandWork.Idle -> if (checked && offer == null) stringResource(R.string.firmware_up_to_date) else null
-        },
-        failed = work is BandWork.Failed,
-        installing = work is BandWork.Installing,
-        checking = work == BandWork.Checking,
-        confirm = R.string.band_fw_confirm,
-        onCheck = { update.check() },
-        onInstall = { update.install() },
-        onCancel = { update.cancel() },
-        onDismiss = { update.dismiss(); onDismiss() },
     )
 }
 

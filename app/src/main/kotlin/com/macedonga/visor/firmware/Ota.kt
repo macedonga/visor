@@ -4,7 +4,7 @@ import com.macedonga.visor.core.connection.SnApp
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.ServiceData
 
-/** svc29's OTA app, as firmware and resource packs both start it, and the message types they share. */
+/** svc29's OTA app, as resource packs start it, and its message types. Visor never installs firmware. */
 internal object Ota {
     const val MT_INSTALL = 1
     const val MT_PROGRESS = 2

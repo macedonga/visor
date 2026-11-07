@@ -108,7 +108,6 @@ import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.band.BandPeers
 import com.macedonga.visor.band.BandSetup
-import com.macedonga.visor.band.BandUpdate
 import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GLASSES_CAMERA_KEYS
 import com.macedonga.visor.core.assistant.AssistantConfig
@@ -192,7 +191,6 @@ class SettingsViewModel @Inject constructor(
     val bandPeers: BandPeers,
     val bandPair: BandPair,
     val bandSetup: BandSetup,
-    val bandUpdate: BandUpdate,
     val developer: DeveloperMode,
     val kitGrants: KitGrants,
     val networkClients: NetworkClients,

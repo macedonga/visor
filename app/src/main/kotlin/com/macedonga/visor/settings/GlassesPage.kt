@@ -33,8 +33,6 @@ import com.macedonga.visor.OnboardingKey
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.connection.LinkKind
-import com.macedonga.visor.firmware.FirmwareUpdate
-import com.macedonga.visor.firmware.FirmwareWork
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
@@ -67,7 +65,6 @@ class GlassesPageModel @Inject constructor(
     val connection: GlassesConnection,
     val settings: GlassesSettings,
     val login: MetaLogin,
-    val firmware: FirmwareUpdate,
     val kind: LinkKind,
     private val store: IdentityStore,
     val looks: Looks,
@@ -127,13 +124,6 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
     val name = pairName(serial?.let { seen[it] }, look)
     var renaming by remember { mutableStateOf(false) }
     var forgetting by remember { mutableStateOf(false) }
-    var firmwareOpen by remember { mutableStateOf(false) }
-    val fwChecking by model.firmware.checking.collectAsStateWithLifecycle()
-    val fwChecked by model.firmware.checked.collectAsStateWithLifecycle()
-    val fwOffer by model.firmware.offer.collectAsStateWithLifecycle()
-    val fwProblem by model.firmware.problem.collectAsStateWithLifecycle()
-    val fwWork by model.firmware.work.collectAsStateWithLifecycle()
-    val fwInstalling = fwWork is FirmwareWork.Installing || fwWork is FirmwareWork.Downloading || fwWork is FirmwareWork.Sending
 
     SettingsPage(
         name, light = 0.6f,
@@ -156,33 +146,6 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         model.forget(serial, back)
                     },
                     onDismiss = { forgetting = false },
-                )
-            }
-            if (firmwareOpen) {
-                FirmwareSheet(
-                    current = info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown),
-                    offer = fwOffer?.let { o -> o.displayName.ifEmpty { o.targetVersion } },
-                    status = when (val w = fwWork) {
-                        is FirmwareWork.Failed -> stringResource(R.string.firmware_failed)
-                        FirmwareWork.Installed -> stringResource(R.string.firmware_installed)
-                        is FirmwareWork.Installing -> w.percent?.let { stringResource(R.string.firmware_progress, it) } ?: stringResource(R.string.firmware_installing)
-                        is FirmwareWork.Downloading -> stringResource(R.string.firmware_downloading, sizeWords(context, w.done), sizeWords(context, w.total))
-                        is FirmwareWork.Sending -> stringResource(R.string.firmware_sending, sizeWords(context, w.done), sizeWords(context, w.total))
-                        FirmwareWork.Idle -> when {
-                            fwChecking -> stringResource(R.string.firmware_checking)
-                            fwProblem.isNotEmpty() -> stringResource(R.string.firmware_check_failed)
-                            fwChecked && fwOffer == null -> stringResource(R.string.firmware_up_to_date)
-                            else -> null
-                        }
-                    },
-                    failed = fwWork is FirmwareWork.Failed || (fwWork == FirmwareWork.Idle && !fwChecking && fwProblem.isNotEmpty()),
-                    installing = fwInstalling,
-                    checking = fwChecking,
-                    confirm = R.string.firmware_confirm,
-                    onCheck = { model.firmware.check() },
-                    onInstall = { model.firmware.install() },
-                    onCancel = { model.firmware.cancel() },
-                    onDismiss = { firmwareOpen = false; model.firmware.dismiss() },
                 )
             }
         },
@@ -240,7 +203,7 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                     {
                         ValueRow(
                             stringResource(R.string.glasses_firmware), info?.build?.let(::firmwareWords) ?: stringResource(R.string.settings_unknown),
-                            onClick = { firmwareOpen = true }, locked = !ready && !fwInstalling,
+                            onClick = null,
                         )
                     },
                     { ValueRow(stringResource(R.string.glasses_serial), serial ?: stringResource(R.string.settings_unknown), onClick = null) },
@@ -327,49 +290,6 @@ fun GlassesPage(open: (NavKey) -> Unit, model: GlassesPageModel = hiltViewModel(
                         RowFrame(stringResource(R.string.glasses_forget), onClick = { forgetting = true })
                     } else null,
                 )
-            }
-        }
-    }
-}
-
-/** A firmware check, then an install after a yes. */
-@Composable
-internal fun FirmwareSheet(
-    current: String,
-    offer: String?,
-    status: String?,
-    failed: Boolean,
-    installing: Boolean,
-    checking: Boolean,
-    @StringRes confirm: Int,
-    onCheck: () -> Unit,
-    onInstall: () -> Unit,
-    onCancel: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var confirming by remember { mutableStateOf(false) }
-    VisorSheet(onDismiss) {
-        SheetTitle(stringResource(R.string.firmware_title))
-        Rows(
-            { ValueRow(stringResource(R.string.firmware_current), current, onClick = null) },
-            offer?.let { o -> @Composable { ValueRow(stringResource(R.string.firmware_update), o, onClick = null) } },
-        )
-        val asking = confirming && offer != null && !installing
-        val line = if (asking) stringResource(confirm, offer.orEmpty()) else status
-        if (line != null) {
-            Text(
-                line, style = Visor.type.label, color = if (failed && !asking) Visor.colors.signal else Visor.colors.textSecondary,
-                modifier = Modifier.padding(horizontal = SIDE).padding(top = 16.dp, bottom = 4.dp),
-            )
-        }
-        when {
-            installing -> Box(Modifier.padding(horizontal = SIDE).padding(top = 8.dp)) {
-                WidePill(stringResource(R.string.cancel), onCancel, Modifier.fillMaxWidth(), quiet = true)
-            }
-            asking -> SheetAnswers(stringResource(R.string.firmware_install), { confirming = false; onInstall() }, stringResource(R.string.cancel), { confirming = false })
-            offer != null -> SheetAnswers(stringResource(R.string.firmware_install), { confirming = true }, stringResource(R.string.firmware_check), onCheck)
-            else -> Box(Modifier.padding(horizontal = SIDE).padding(top = 8.dp)) {
-                WidePill(stringResource(R.string.firmware_check), onCheck, Modifier.fillMaxWidth(), quiet = true, busy = checking)
             }
         }
     }

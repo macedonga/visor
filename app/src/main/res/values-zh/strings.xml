@@ -1056,8 +1056,6 @@
     <string name="band_vibrate">震动</string>
     <string name="band_not_changed">未更改</string>
     <string name="band_refused">已拒绝</string>
-    <string name="band_fw_confirm">要安装 %1$s 吗？完成后手环会重启。</string>
-    <string name="band_fw_installed">已安装</string>
     <string name="band_glasses">眼镜</string>
     <string name="band_not_paired">未配对</string>
     <string name="band_paired_connected">已配对，已连接</string>

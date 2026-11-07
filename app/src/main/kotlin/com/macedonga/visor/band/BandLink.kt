@@ -88,9 +88,6 @@ class BandLink @Inject constructor(
     private val _peer = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 16)
     /** What the band says on svc41109, its messages and its error frames. */
     val peer: SharedFlow<SessionEvent> = _peer
-    private val _answers = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
-    /** Every RPC answer while the band is up, raw: a firmware update reads its chunk acks here. */
-    val answers: SharedFlow<ByteArray> = _answers
     private val _gestures = MutableSharedFlow<Band.Gesture>(extraBufferCapacity = 32)
     val gestures: SharedFlow<Band.Gesture> = _gestures
 
@@ -336,7 +333,6 @@ class BandLink @Inject constructor(
         if (Band.isGesture(type)) return onGesture(type, event.payload)
         if (type == Band.RESPONSE) {
             runCatching { Band.seqOf(event.payload) }.getOrNull()?.let { replies.remove(it)?.complete(event.payload) }
-            _answers.tryEmit(event.payload)
             runCatching { Band.otaInfo(event.payload) }.getOrNull()?.let { info -> _state.update { it.copy(firmware = info.firmware) } }
         }
         val battery = runCatching {
