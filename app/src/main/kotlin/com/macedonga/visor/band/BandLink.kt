@@ -1,9 +1,5 @@
 package com.macedonga.visor.band
 
-import kotlinx.coroutines.flow.onSubscription
-import com.macedonga.visor.core.identity.rawPublicKey
-import com.macedonga.visor.core.identity.keyHint
-import com.macedonga.visor.setup.NearbyGlasses
 import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.identity.BundleCredentials
@@ -11,7 +7,9 @@ import com.macedonga.visor.core.identity.BundleState
 import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.IdentityTrustExchange
+import com.macedonga.visor.core.identity.keyHint
 import com.macedonga.visor.core.identity.nowIso
+import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.protocol.Band
 import com.macedonga.visor.core.protocol.BtPeer
 import com.macedonga.visor.core.protocol.ServiceId
@@ -25,6 +23,7 @@ import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.log.EventLog
+import com.macedonga.visor.setup.NearbyGlasses
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,6 +43,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -190,7 +190,8 @@ class BandLink @Inject constructor(
     // The Display never reads the band's haptics answers: none is fine, an error code is not.
     private fun haptic(answer: Band.Response?, what: String): BandErrand {
         val code = answer?.let { it.haptics ?: it.code } ?: return BandErrand.DONE
-        if (code == Band.OK) return BandErrand.DONE
+        // The band answers a buzz it plays with 1, and plays it as it answers.
+        if (code == Band.OK || code == HAPTICS_PLAYED) return BandErrand.DONE
         log.add("Band: the $what was refused, code $code")
         return BandErrand.REFUSED
     }
@@ -289,7 +290,7 @@ class BandLink @Inject constructor(
         // the band is heard and reached, as the Meta app does. Pairing finds the band in pairing mode on its own.
         val address = if (pairing.value) band.address else {
             takeFromDisplay(band)
-            runCatching { nearby.bandNearby() }.getOrNull() ?: band.address
+            runCatching { nearby.bandNearby(first = true) }.getOrNull() ?: band.address
         }
         val identity = IdentityBundle(key, address, band.serial, nowIso(), "band", BundleState.VERIFIED)
         val opened = GlassesSession(
@@ -402,6 +403,7 @@ class BandLink @Inject constructor(
     }
 
     private companion object {
+        const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L
         const val POLL_MS = 5 * 60_000L
         const val INFO_WAIT_MS = 1_500L
