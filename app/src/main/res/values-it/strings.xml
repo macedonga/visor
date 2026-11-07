@@ -460,6 +460,8 @@
     <string name="kit_scope_name_voice">Voce</string>
     <string name="kit_scope_name_assistant">Assistente</string>
     <string name="kit_scope_name_notify">Notifiche</string>
+    <string name="kit_scope_raw">Inviare e leggere i messaggi del protocollo degli occhiali, per ricerca. Solo con la modalità sviluppatore attiva</string>
+    <string name="kit_scope_name_raw">Protocollo grezzo</string>
     <string name="settings_diagnostics">Diagnostica</string>
     <string name="settings_event_log">Registro eventi</string>
     <string name="diag_stage">Fase</string>

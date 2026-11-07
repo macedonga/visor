@@ -462,6 +462,8 @@
     <string name="kit_scope_name_voice">Voice</string>
     <string name="kit_scope_name_assistant">Assistant</string>
     <string name="kit_scope_name_notify">Notifications</string>
+    <string name="kit_scope_raw">Send and read the glasses\' own protocol messages, for research. Only with Developer mode on</string>
+    <string name="kit_scope_name_raw">Raw protocol</string>
     <string name="settings_diagnostics">Diagnostics</string>
     <string name="settings_event_log">Event log</string>
     <string name="diag_stage">Stage</string>

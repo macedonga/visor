@@ -23,6 +23,7 @@ import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.kit.KitException
@@ -40,11 +41,13 @@ import com.macedonga.visor.kit.protocol.GlassesStatus
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
+import com.macedonga.visor.kit.protocol.RawMessage
 import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.kit.protocol.VideoKind
 import com.macedonga.visor.kit.server.Caller
 import com.macedonga.visor.kit.server.Routes
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineStart
@@ -53,6 +56,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -79,6 +83,7 @@ class KitRoutes @Inject constructor(
     private val voices: KitVoices,
     private val tools: KitTools,
     private val notices: KitNotices,
+    private val developer: DeveloperMode,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(connection.state.value) }
@@ -139,6 +144,29 @@ class KitRoutes @Inject constructor(
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }
         answer(Methods.NOTIFY_POST) { caller, notice -> notices.post(caller.packageName, notice) }
         answer(Methods.NOTIFY_REMOVE) { caller, removal -> notices.remove(caller.packageName, removal.id) }
+
+        answer(Methods.RAW_SEND) { _, send ->
+            requireRaw(send.service)
+            ready()
+            val payload = try {
+                Base64.getDecoder().decode(send.payload)
+            } catch (e: IllegalArgumentException) {
+                throw KitException(ErrorCode.INVALID_PARAMS, "The payload is not Base64.")
+            }
+            connection.submit { it.sendOnService(send.service, send.type, payload) }
+        }
+        stream(Topics.RAW_MESSAGES) { _, filter ->
+            requireRaw(filter.service)
+            connection.serviceData.filter { it.serviceId == filter.service }.map {
+                RawMessage(it.serviceId, it.messageType, Base64.getEncoder().encodeToString(it.payload), System.currentTimeMillis())
+            }
+        }
+    }
+
+    /** Raw access is for research: only while Developer mode is on, and never to the services Visor keeps to itself. */
+    private fun requireRaw(service: Int) {
+        if (!developer.on.value) throw KitException(ErrorCode.UNSUPPORTED, "Raw access needs Developer mode on in Visor.")
+        if (service in KEPT_SERVICES) throw KitException(ErrorCode.REFUSED, "Visor keeps service $service to itself.")
     }
 
     private fun glassesStatus(state: GlassesState): GlassesStatus {
@@ -330,6 +358,9 @@ class KitRoutes @Inject constructor(
     )
 
     private companion object {
+        // A raw message there can lock the pair out: identity and ownership (36), the link's authentication (54
+        // AirShield, 79 constellation), and firmware updates (29).
+        val KEPT_SERVICES = setOf(ServiceId.IDENTITY.value, 54, 79, 29)
         const val WAKE_MS = 20_000L
         const val ANSWER_MS = 8_000L
         const val LIST_MS = 15_000L

@@ -480,6 +480,8 @@
     <string name="kit_scope_name_voice">Голос</string>
     <string name="kit_scope_name_assistant">Ассистент</string>
     <string name="kit_scope_name_notify">Уведомления</string>
+    <string name="kit_scope_raw">Отправлять и читать собственные сообщения протокола очков, для исследований. Только в режиме разработчика</string>
+    <string name="kit_scope_name_raw">Сырой протокол</string>
     <string name="settings_diagnostics">Диагностика</string>
     <string name="settings_event_log">Журнал событий</string>
     <string name="diag_stage">Этап</string>
