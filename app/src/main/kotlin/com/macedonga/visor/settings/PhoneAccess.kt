@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -82,6 +83,13 @@ enum class Need(val title: Int, val why: Int) {
         COMPANION -> !context.packageManager.hasSystemFeature(PackageManager.FEATURE_COMPANION_DEVICE_SETUP) || companionAssociated(context)
     }
 
+    /** Android withholds it from an app installed from a file until App info allows restricted settings (#88). */
+    fun restricted(context: Context): Boolean = when (this) {
+        SMS -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+        LISTENER -> Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        else -> false
+    } && installedFromFile(context)
+
     /** The runtime permissions to ask for next, or empty when only a system page can grant it. */
     fun ask(context: Context): Array<String> = when (this) {
         NEARBY -> arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
@@ -103,6 +111,11 @@ enum class Need(val title: Int, val why: Int) {
 }
 
 fun missingNeeds(context: Context): List<Need> = Need.entries.filter { !it.granted(context) }
+
+// A browser or a file manager installed it, not a store or adb.
+private fun installedFromFile(context: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+    runCatching { context.packageManager.getInstallSourceInfo(context.packageName).packageSource }.getOrNull()
+        .let { it == PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE || it == PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE }
 
 @HiltViewModel
 class PhoneAccessModel @Inject constructor(private val connection: GlassesConnection, val spotify: SpotifySearch) : ViewModel() {
@@ -138,7 +151,10 @@ fun PhoneAccessScreen(model: PhoneAccessModel = hiltViewModel()) {
                 *Need.entries.map { need ->
                     @Composable {
                         val granted = remember(tick) { need.granted(context) }
-                        RowFrame(stringResource(need.title), onClick = null, sub = if (granted) null else stringResource(need.why)) {
+                        val restricted = remember(tick) { !granted && need.restricted(context) }
+                        val why = stringResource(need.why)
+                        val steps = stringResource(R.string.access_restricted)
+                        RowFrame(stringResource(need.title), onClick = null, sub = if (granted) null else if (restricted) "$why\n$steps" else why) {
                             if (granted) {
                                 Icon(VisorIcons.Check, stringResource(R.string.access_allowed), Modifier.padding(start = 12.dp).size(20.dp), tint = Visor.colors.textSecondary)
                             } else {

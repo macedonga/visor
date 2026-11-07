@@ -623,6 +623,7 @@
     <string name="places_title">Annota dove sono state fatte le foto</string>
 
     <string name="access_allowed">Concesso</string>
+    <string name="access_restricted">Android lo blocca per le app installate da un file. In Informazioni app tocca ⋮, consenti le impostazioni con restrizioni e tocca di nuovo Consenti qui.</string>
     <string name="access_nearby">Dispositivi nelle vicinanze</string>
     <string name="access_nearby_why">Per trovare gli occhiali e tenere il collegamento Bluetooth.</string>
     <string name="access_listener">Accesso alle notifiche</string>

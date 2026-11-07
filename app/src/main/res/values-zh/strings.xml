@@ -600,6 +600,7 @@
     </plurals>
     <string name="places_title">记录照片拍摄地点</string>
     <string name="access_allowed">已允许</string>
+    <string name="access_restricted">Android 会对从文件安装的应用阻止此权限。在应用信息中点按 ⋮，允许受限设置，再回到这里点按“允许”。</string>
     <string name="access_nearby">附近的设备</string>
     <string name="access_nearby_why">用于查找眼镜并维持 Bluetooth 连接。</string>
     <string name="access_listener">通知使用权</string>

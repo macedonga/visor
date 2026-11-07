@@ -653,6 +653,7 @@
     <string name="places_title">Отмечать, где сделаны фото</string>
 
     <string name="access_allowed">Разрешено</string>
+    <string name="access_restricted">Android блокирует это для приложений, установленных из файла. В сведениях о приложении нажмите ⋮, разрешите настройки с ограничениями и снова нажмите «Разрешить» здесь.</string>
     <string name="access_nearby">Устройства поблизости</string>
     <string name="access_nearby_why">Чтобы найти очки и держать связь по Bluetooth.</string>
     <string name="access_listener">Доступ к уведомлениям</string>

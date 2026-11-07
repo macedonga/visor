@@ -627,6 +627,7 @@
     <string name="places_title">Note where photos were taken</string>
 
     <string name="access_allowed">Allowed</string>
+    <string name="access_restricted">Android blocks this for apps installed from a file. In App info, tap ⋮, then Allow restricted settings, and tap Allow here again.</string>
     <string name="access_nearby">Nearby devices</string>
     <string name="access_nearby_why">To find the glasses and hold the Bluetooth link.</string>
     <string name="access_listener">Notification access</string>
