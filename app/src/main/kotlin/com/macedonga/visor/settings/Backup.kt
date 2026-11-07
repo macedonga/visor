@@ -122,8 +122,7 @@ class Backups @Inject constructor(
                     .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.tts == TtsPath.GLASSES).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
                     .put("instructions", a.instructions).put("memoryMinutes", a.memoryMinutes)
                     .put("answerWaitSeconds", a.answerWaitSeconds)
-                    // The speech service's key is left out like the model provider's; the address and
-                    // the chosen model come along so a restored phone only needs the key typed again.
+                    // The speech service's key stays out, like the model's.
                     .put("tts", a.tts.name).put("ttsBaseUrl", a.ttsBaseUrl).put("ttsModel", a.ttsModel).put("ttsVoice", a.ttsVoice),
             )
             .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("muted", JSONArray(apps.muted.value.sorted())))
@@ -190,8 +189,9 @@ class Backups @Inject constructor(
                     webSearch = o.optBoolean("webSearch", it.webSearch),
                     vision = o.optBoolean("vision", it.vision),
                     voicePhotos = o.optBoolean("voicePhotos", it.voicePhotos),
-                    // "tts" from the version that added it; older backups carried the boolean instead.
-                    tts = runCatching { TtsPath.valueOf(o.getString("tts")) }.getOrDefault(if (o.optBoolean("glassesVoice", true)) TtsPath.GLASSES else TtsPath.PHONE),
+                    // Older backups carry only the glassesVoice boolean.
+                    tts = TtsPath.entries.firstOrNull { p -> p.name == o.optString("tts") }
+                        ?: if (!o.has("glassesVoice")) it.tts else if (o.getBoolean("glassesVoice")) TtsPath.GLASSES else TtsPath.PHONE,
                     ttsBaseUrl = o.optString("ttsBaseUrl", it.ttsBaseUrl),
                     ttsModel = o.optString("ttsModel", it.ttsModel),
                     ttsVoice = o.optString("ttsVoice", it.ttsVoice),

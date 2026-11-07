@@ -606,15 +606,11 @@
     <string name="ai_tts_cloud">Облако</string>
     <string name="ai_tts_url">Адрес речевого сервиса</string>
     <string name="ai_tts_key">Ключ речевого сервиса</string>
-    <string name="ai_tts_key_set">Ключ задан</string>
-    <string name="ai_tts_key_sub">Хранится только на этом телефоне. Подойдёт любой сервис, отвечающий на GET /models.</string>
     <string name="ai_tts_model">Речевая модель</string>
-    <string name="ai_tts_model_auto">По умолчанию сервиса</string>
-    <string name="ai_tts_model_sub">Если оставить пустым, сервис выберет модель сам. Список моделей читается по адресу выше.</string>
+    <string name="ai_tts_voice_default">По умолчанию сервиса</string>
     <string name="ai_tts_voice">Голос</string>
-    <string name="ai_tts_voice_sub">У каждого сервиса свои имена: у OpenAI — alloy и echo, у MiMo — mimo_default и другие. Если оставить пустым, сервис выберет голос сам.</string>
     <string name="ai_tts_try">Попробовать этот голос</string>
-    <string name="ai_tts_try_sub">Произносит одну фразу на этом телефоне. Ни модель, ни очки не нужны.</string>
+    <string name="ai_tts_sample">Привет. Так будут звучать ответы.</string>
     <string name="ai_tts_trying">Произносит…</string>
     <string name="ai_glasses_voice">Собственный голос очков</string>
     <string name="ai_glasses_voice_sub">Если выключено, ответы озвучивает голос телефона.</string>

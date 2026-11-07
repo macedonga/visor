@@ -21,12 +21,9 @@ data class AssistantConfig(
     val vision: Boolean = true,
     // Let a partner-language voice command take a photo; it turns on the glasses' Robusta switch, not Developer mode.
     val voicePhotos: Boolean = false,
-    // Who says the answer out loud. The frames' own voice speaks only the language their assistant runs in;
-    // the phone's engine is offline and free; a cloud service speaks any language and needs a network,
-    // which the answer needed anyway.
+    // Who says the answers: the glasses' own voice, the phone's engine streamed to them, or a cloud service.
     val tts: TtsPath = TtsPath.GLASSES,
-    // The cloud speech service's endpoint and credentials, the same shape as the model's. Two request
-    // shapes hide behind "OpenAI compatible", so the first call finds out which one this server answers.
+    // The cloud speech service, OpenAI compatible; the key stays out of backups like the model's.
     val ttsBaseUrl: String = "https://api.openai.com/v1",
     val ttsApiKey: String = "",
     val ttsModel: String = "",
@@ -134,7 +131,7 @@ class AssistantConfigStore(context: Context) {
             webSearch = prefs.getBoolean("web_search", d.webSearch),
             vision = prefs.getBoolean("vision", d.vision),
             voicePhotos = prefs.getBoolean("voice_photos", d.voicePhotos),
-            // "tts" from this version on; before it, the boolean chose between the frames and the phone.
+            // Before "tts", a boolean chose the glasses' voice or the phone's.
             tts = prefs.getString("tts", null)?.let { runCatching { TtsPath.valueOf(it) }.getOrNull() }
                 ?: if (prefs.getBoolean("glasses_voice", true)) TtsPath.GLASSES else TtsPath.PHONE,
             ttsBaseUrl = prefs.getString("tts_base_url", d.ttsBaseUrl).orEmpty(),

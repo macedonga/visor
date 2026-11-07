@@ -578,15 +578,11 @@
     <string name="ai_tts_cloud">Cloud</string>
     <string name="ai_tts_url">Indirizzo del servizio vocale</string>
     <string name="ai_tts_key">Chiave del servizio vocale</string>
-    <string name="ai_tts_key_set">Chiave impostata</string>
-    <string name="ai_tts_key_sub">Resta solo su questo telefono. Funziona con qualsiasi servizio che risponde a GET /models.</string>
     <string name="ai_tts_model">Modello vocale</string>
-    <string name="ai_tts_model_auto">Quello predefinito del servizio</string>
-    <string name="ai_tts_model_sub">Lasciato vuoto, il servizio ne sceglie uno. L\'elenco dei modelli viene letto dall\'indirizzo qui sopra.</string>
+    <string name="ai_tts_voice_default">Quella predefinita del servizio</string>
     <string name="ai_tts_voice">Voce</string>
-    <string name="ai_tts_voice_sub">Ogni servizio ha le sue: OpenAI ha alloy ed echo, MiMo ha mimo_default, e altri. Lasciato vuoto, il servizio ne sceglie una.</string>
     <string name="ai_tts_try">Prova questa voce</string>
-    <string name="ai_tts_try_sub">Dice una frase fissa su questo telefono. Non serve alcun modello né alcun occhiale.</string>
+    <string name="ai_tts_sample">Ciao. Le risposte suoneranno così.</string>
     <string name="ai_tts_trying">La sta dicendo…</string>
     <string name="ai_glasses_voice">Voce degli occhiali</string>
     <string name="ai_glasses_voice_sub">Spento, le risposte sono dette con la voce del telefono.</string>

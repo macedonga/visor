@@ -582,15 +582,11 @@
     <string name="ai_tts_cloud">Cloud</string>
     <string name="ai_tts_url">Speech service address</string>
     <string name="ai_tts_key">Speech service key</string>
-    <string name="ai_tts_key_set">Key set</string>
-    <string name="ai_tts_key_sub">Only kept on this phone. Any service that answers GET /models speaks it.</string>
     <string name="ai_tts_model">Speech model</string>
-    <string name="ai_tts_model_auto">The service\'s default</string>
-    <string name="ai_tts_model_sub">Left empty, the service picks one. The address above is checked for a list.</string>
+    <string name="ai_tts_voice_default">The service\'s default</string>
     <string name="ai_tts_voice">Voice</string>
-    <string name="ai_tts_voice_sub">Each service names its own: OpenAI has alloy and echo, MiMo has mimo_default, and others. Left empty, the service picks one.</string>
     <string name="ai_tts_try">Try this voice</string>
-    <string name="ai_tts_try_sub">Says one fixed sentence on this phone. No model is asked and no glasses are needed.</string>
+    <string name="ai_tts_sample">Hello. This is how answers will sound.</string>
     <string name="ai_tts_trying">Saying it…</string>
     <string name="ai_glasses_voice">Glasses\' own voice</string>
     <string name="ai_glasses_voice_sub">Off, answers are spoken with the phone\'s voice.</string>
