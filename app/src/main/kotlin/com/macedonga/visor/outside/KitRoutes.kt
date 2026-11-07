@@ -161,9 +161,10 @@ class KitRoutes @Inject constructor(
         stream(Topics.CAPTURES_IMPORTED) { caller, _ -> media.imported.mapNotNull { media.index.entries.value[it]?.let { kept -> kitCapture(caller, kept) } } }
         stream(Topics.CAPTURES_FAILED) { _, _ -> failures() }
 
-        answer(Methods.BAND_STATUS) { _, _ -> bandStatus(paired(), band.state.value) }
+        answer(Methods.BAND_STATUS) { _, _ -> bandStatus(band.state.value) }
+        // The Display reports the band it holds in its device state, so that changes the answer too.
         stream(Topics.BAND_STATUS) { _, _ ->
-            combine(connection.pair, bands.all, band.state) { _, _, state -> bandStatus(paired(), state) }.distinctUntilChanged()
+            combine(connection.pair, bands.all, band.state, connection.state) { _, _, state, _ -> bandStatus(state) }.distinctUntilChanged()
         }
         stream(Topics.BAND_GESTURES) { _, _ -> gestures() }
         answer(Methods.BAND_BUZZ) { _, request ->
@@ -432,7 +433,11 @@ class KitRoutes @Inject constructor(
     private fun paired(): Boolean = bands.forGlasses(connection.pair.value) != null
 
     private fun requireBand() {
-        if (!paired()) throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+        if (paired()) return
+        if (connection.state.value.device?.bandBattery != null) {
+            throw KitException(ErrorCode.UNSUPPORTED, "Only the Display holds this Neural Band. Set it up in Visor's band settings.", reason = "not_set_up")
+        }
+        throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
     }
 
     private fun requireDisplay() {
@@ -441,19 +446,27 @@ class KitRoutes @Inject constructor(
         if (connection.state.value.link != LinkState.READY) throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
     }
 
-    private fun bandStatus(paired: Boolean, state: BandState): BandStatus {
-        if (!paired) return BandStatus(paired = false, link = Link.DISCONNECTED)
+    /** The band Visor holds, or else the one the Display reports it holds, with the battery it reports. */
+    private fun bandStatus(state: BandState): BandStatus {
+        val held = paired()
+        val device = connection.state.value.device
+        if (!held && device?.bandBattery == null) return BandStatus(paired = false, link = Link.DISCONNECTED)
         return BandStatus(
             paired = true,
-            link = when (state.link) {
-                LinkState.READY -> Link.CONNECTED
-                LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
-                else -> Link.CONNECTING
+            link = if (!held) {
+                Link.DISCONNECTED
+            } else {
+                when (state.link) {
+                    LinkState.READY -> Link.CONNECTED
+                    LinkState.DISCONNECTED, LinkState.LOST -> Link.DISCONNECTED
+                    else -> Link.CONNECTING
+                }
             },
-            battery = state.battery,
-            charging = state.charging,
-            leftHanded = state.leftHanded,
-            borrowed = state.gestures,
+            battery = state.battery.takeIf { held } ?: device?.bandBattery,
+            charging = state.charging.takeIf { held } ?: device?.bandCharging,
+            leftHanded = state.leftHanded.takeIf { held },
+            borrowed = held && state.gestures,
+            held = held,
         )
     }
 
