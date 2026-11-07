@@ -436,6 +436,15 @@
     <string name="settings_developer_token_required">Actions need the token</string>
     <string name="settings_kit_apps">Apps with access</string>
     <string name="settings_kit_remove">Remove access</string>
+    <string name="settings_kit_network">Network access</string>
+    <string name="settings_kit_network_on">Open to clients</string>
+    <string name="settings_kit_network_lan">From the local network</string>
+    <string name="settings_kit_client_add">Add a client</string>
+    <string name="settings_kit_client_new">New client</string>
+    <string name="settings_kit_client_name">Name</string>
+    <string name="settings_kit_client_create">Create</string>
+    <string name="settings_kit_client_token">Token for %1$s</string>
+    <string name="settings_kit_client_token_once">Copy it now: Visor shows it only once.</string>
     <string name="kit_consent_title">Let %1$s use your glasses?</string>
     <string name="kit_consent_allow">Allow</string>
     <string name="kit_consent_deny">Don\'t allow</string>

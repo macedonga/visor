@@ -454,6 +454,15 @@
     <string name="settings_developer_token_required">Действия только с токеном</string>
     <string name="settings_kit_apps">Приложения с доступом</string>
     <string name="settings_kit_remove">Отозвать доступ</string>
+    <string name="settings_kit_network">Сетевой доступ</string>
+    <string name="settings_kit_network_on">Открыт для клиентов</string>
+    <string name="settings_kit_network_lan">Из локальной сети</string>
+    <string name="settings_kit_client_add">Добавить клиента</string>
+    <string name="settings_kit_client_new">Новый клиент</string>
+    <string name="settings_kit_client_name">Имя</string>
+    <string name="settings_kit_client_create">Создать</string>
+    <string name="settings_kit_client_token">Токен для %1$s</string>
+    <string name="settings_kit_client_token_once">Скопируйте его сейчас: Visor покажет его только один раз.</string>
     <string name="kit_consent_title">Разрешить %1$s использовать ваши очки?</string>
     <string name="kit_consent_allow">Разрешить</string>
     <string name="kit_consent_deny">Запретить</string>

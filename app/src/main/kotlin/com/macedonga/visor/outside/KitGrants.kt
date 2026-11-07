@@ -4,14 +4,14 @@ import android.content.Context
 import android.content.pm.PackageManager
 import com.macedonga.visor.kit.protocol.Scope
 import dagger.hilt.android.qualifiers.ApplicationContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
-import org.json.JSONObject
 
 /** What the person let one app do, and the certificate the app was signed with then. */
 data class KitGrant(val certificate: String, val scopes: Set<Scope>)

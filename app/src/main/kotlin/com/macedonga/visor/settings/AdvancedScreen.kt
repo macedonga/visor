@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.Composable
@@ -26,13 +27,17 @@ import com.macedonga.visor.RequestLogKey
 import com.macedonga.visor.SettingsGroupKey
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GROUPS
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
+import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.outside.KitConsentActivity
 import com.macedonga.visor.outside.KitGrants
+import com.macedonga.visor.outside.KitNetwork
+import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.ui.VisorIcons
 import com.macedonga.visor.ui.copy
 
@@ -85,6 +90,7 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     if (developer) row { ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) } else null,
                 )
                 KitApps(model.kitGrants)
+                NetworkRows(model.networkClients, model.kitNetwork)
             }
         }
     }
@@ -99,12 +105,94 @@ private fun KitApps(grants: KitGrants) {
     SectionLabel(stringResource(R.string.settings_kit_apps))
     val remove = stringResource(R.string.settings_kit_remove)
     Rows(all.keys.sorted()) { app ->
-        val scopes = all.getValue(app).scopes.map { scope -> KitConsentActivity.SCOPE_NAME[scope]?.let { stringResource(it) } ?: scope.id }
-        RowFrame(grants.labelOf(app), onClick = null, sub = scopes.joinToString(", ")) {
+        RowFrame(grants.labelOf(app), onClick = null, sub = scopeNames(all.getValue(app).scopes)) {
             RoundIcon(VisorIcons.Close, remove, { grants.set(app, emptySet()) }, size = 40.dp)
         }
     }
 }
+
+/** The kit's network door: the switch, the local network, and the clients with their scopes. */
+@Composable
+private fun NetworkRows(clients: NetworkClients, network: KitNetwork) {
+    val on by clients.on.collectAsStateWithLifecycle()
+    val lan by clients.lan.collectAsStateWithLifecycle()
+    val all by clients.all.collectAsStateWithLifecycle()
+    var adding by remember { mutableStateOf(false) }
+    var made by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val remove = stringResource(R.string.settings_kit_remove)
+    Spacer(Modifier.height(12.dp))
+    SectionLabel(stringResource(R.string.settings_kit_network))
+    Rows(
+        { ToggleRow(stringResource(R.string.settings_kit_network_on), on, clients::setOn, keyLine = network.address(lan).takeIf { on }) },
+        if (on) row { ToggleRow(stringResource(R.string.settings_kit_network_lan), lan, clients::setLan) } else null,
+        if (on) row { NavRow(VisorIcons.Plus, stringResource(R.string.settings_kit_client_add), null, onClick = { adding = true }, onCard = true, chevron = false) } else null,
+    )
+    if (on && all.isNotEmpty()) {
+        Spacer(Modifier.height(12.dp))
+        Rows(all) { client ->
+            RowFrame(client.name, onClick = null, sub = scopeNames(client.scopes)) {
+                RoundIcon(VisorIcons.Close, remove, { clients.remove(client.name) }, size = 40.dp)
+            }
+        }
+    }
+    if (adding) {
+        NewClientSheet(
+            onDismiss = { adding = false },
+            onCreate = { name, scopes -> made = name to clients.add(name, scopes) },
+        )
+    }
+    made?.let { (name, token) -> TokenSheet(name, token, onDismiss = { made = null }) }
+}
+
+/** A name and the scopes for a new network client. */
+@Composable
+private fun NewClientSheet(onDismiss: () -> Unit, onCreate: (String, Set<Scope>) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var scopes by remember { mutableStateOf(setOf<Scope>()) }
+    VisorSheet(onDismiss) {
+        SheetTitle(stringResource(R.string.settings_kit_client_new))
+        SheetField(name, { name = it }, hint = stringResource(R.string.settings_kit_client_name), focus = true)
+        Spacer(Modifier.height(8.dp))
+        for (scope in KitConsentActivity.KNOWN) {
+            ToggleRow(stringResource(KitConsentActivity.SCOPE_TEXT.getValue(scope)), scope in scopes, { scopes = if (it) scopes + scope else scopes - scope })
+        }
+        SheetAnswers(
+            stringResource(R.string.settings_kit_client_create),
+            {
+                onDismiss()
+                onCreate(name.trim(), scopes)
+            },
+            stringResource(R.string.cancel),
+            onDismiss,
+            enabled = name.isNotBlank() && scopes.isNotEmpty(),
+        )
+    }
+}
+
+/** A new client's token, which Visor shows this once. */
+@Composable
+private fun TokenSheet(name: String, token: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val host = LocalHost.current
+    val copied = stringResource(R.string.mcp_copied)
+    VisorSheet(onDismiss) {
+        SheetTitle(stringResource(R.string.settings_kit_client_token, name), stringResource(R.string.settings_kit_client_token_once))
+        Text(token, style = MONO, color = Visor.colors.textPrimary, modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 12.dp))
+        SheetAnswers(
+            stringResource(R.string.meta_ai_copy),
+            {
+                copy(context, token, "token", sensitive = true)
+                host.notice.show(copied)
+            },
+            stringResource(R.string.cancel),
+            onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun scopeNames(scopes: Set<Scope>): String =
+    scopes.map { scope -> KitConsentActivity.SCOPE_NAME[scope]?.let { stringResource(it) } ?: scope.id }.joinToString(", ")
 
 /** Asks the glasses for a bug report; it lands in Download/Visor. */
 @Composable

@@ -145,6 +145,8 @@ import com.macedonga.visor.notify.NotifyApps
 import com.macedonga.visor.notify.NotifyChoice
 import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.outside.KitGrants
+import com.macedonga.visor.outside.KitNetwork
+import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.stage.Choreography
 import com.macedonga.visor.stage.HOME_STRIP_SCALE
 import com.macedonga.visor.stage.LocalStage
@@ -193,6 +195,8 @@ class SettingsViewModel @Inject constructor(
     val bandUpdate: BandUpdate,
     val developer: DeveloperMode,
     val kitGrants: KitGrants,
+    val networkClients: NetworkClients,
+    val kitNetwork: KitNetwork,
     val media: MediaImport,
 ) : ViewModel()
 

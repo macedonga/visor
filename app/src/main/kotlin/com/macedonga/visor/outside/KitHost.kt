@@ -13,6 +13,7 @@ import com.macedonga.visor.kit.server.Caller
 import com.macedonga.visor.kit.server.Dispatcher
 import com.macedonga.visor.kit.server.Gate
 import com.macedonga.visor.kit.server.KitServer
+import com.macedonga.visor.kit.server.McpAdapter
 import com.macedonga.visor.kit.server.ShellServer
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.AndroidEntryPoint
@@ -22,6 +23,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -34,6 +36,8 @@ class KitHost @Inject constructor(
     private val developer: DeveloperMode,
     private val grants: KitGrants,
     routes: KitRoutes,
+    private val clients: NetworkClients,
+    private val network: KitNetwork,
     private val log: EventLog,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -44,7 +48,8 @@ class KitHost @Inject constructor(
             return Caller(uid, app)
         }
 
-        override fun granted(caller: Caller): Set<Scope> = grants.scopesOf(caller.packageName)
+        override fun granted(caller: Caller): Set<Scope> =
+            if (caller.network) clients.scopesOf(caller.packageName) else grants.scopesOf(caller.packageName)
 
         override fun grants(): Map<String, Set<Scope>> = grants.all.value.keys.associateWith(grants::scopesOf)
 
@@ -58,6 +63,7 @@ class KitHost @Inject constructor(
     private val dispatcher = Dispatcher(BuildConfig.VERSION_NAME, gate, routes.routes(), log::add)
     val server = KitServer(dispatcher)
     private val shell = ShellServer(dispatcher)
+    private val mcp = McpAdapter(dispatcher, "Visor", BuildConfig.VERSION_NAME)
 
     /** For the app's start: follows Developer mode and the grants for as long as the process lives. */
     fun start() {
@@ -66,7 +72,21 @@ class KitHost @Inject constructor(
         }
         scope.launch {
             // Streams of a scope the person took back end now.
-            grants.all.collect { dispatcher.recheck() }
+            combine(grants.all, clients.all) { _, _ -> }.collect { dispatcher.recheck() }
+        }
+        scope.launch(Dispatchers.IO) {
+            combine(clients.on, clients.lan) { on, lan -> on to lan }.collect { (on, lan) ->
+                if (on) openNetwork(lan) else network.stop()
+            }
+        }
+    }
+
+    private fun openNetwork(lan: Boolean) {
+        try {
+            network.start(dispatcher, mcp, lan)
+        } catch (e: Exception) {
+            // Ktor reports a taken port in its own exception types.
+            log.add("Kit: the network door did not open: $e")
         }
     }
 

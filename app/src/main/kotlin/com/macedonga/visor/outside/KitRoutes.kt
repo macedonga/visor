@@ -23,7 +23,6 @@ import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.MediaImport
-import com.macedonga.visor.core.protocol.Band as BandWire
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.kit.KitException
@@ -61,9 +60,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
+import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
 import com.macedonga.visor.core.media.Capture as GlassesCapture
 import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
-import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
+import com.macedonga.visor.core.protocol.Band as BandWire
 
 /** What the VDK's methods and topics do in Visor: each one is a thing Visor already does for its own screens. */
 @Singleton

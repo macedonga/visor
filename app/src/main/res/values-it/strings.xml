@@ -434,6 +434,15 @@
     <string name="settings_developer_token_required">Le azioni richiedono il token</string>
     <string name="settings_kit_apps">App con accesso</string>
     <string name="settings_kit_remove">Rimuovi accesso</string>
+    <string name="settings_kit_network">Accesso di rete</string>
+    <string name="settings_kit_network_on">Aperto ai client</string>
+    <string name="settings_kit_network_lan">Dalla rete locale</string>
+    <string name="settings_kit_client_add">Aggiungi un client</string>
+    <string name="settings_kit_client_new">Nuovo client</string>
+    <string name="settings_kit_client_name">Nome</string>
+    <string name="settings_kit_client_create">Crea</string>
+    <string name="settings_kit_client_token">Token per %1$s</string>
+    <string name="settings_kit_client_token_once">Copialo ora: Visor lo mostra una volta sola.</string>
     <string name="kit_consent_title">Consentire a %1$s di usare i tuoi occhiali?</string>
     <string name="kit_consent_allow">Consenti</string>
     <string name="kit_consent_deny">Non consentire</string>

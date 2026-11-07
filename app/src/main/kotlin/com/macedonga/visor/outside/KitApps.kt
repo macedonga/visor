@@ -11,18 +11,19 @@ import com.macedonga.visor.core.assistant.mcp.ToolResult
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.session.LinkState
-import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.ErrorCode
+import com.macedonga.visor.kit.protocol.KitInternal
+import com.macedonga.visor.kit.protocol.KitJson
 import com.macedonga.visor.kit.protocol.Notice
 import com.macedonga.visor.kit.protocol.ToolAnswer
 import com.macedonga.visor.kit.protocol.ToolCall
 import com.macedonga.visor.kit.protocol.ToolSpec
-import com.macedonga.visor.kit.protocol.KitInternal
-import com.macedonga.visor.kit.protocol.KitJson
 import com.macedonga.visor.kit.protocol.VoiceReply
 import com.macedonga.visor.kit.protocol.VoiceRequest
 import com.macedonga.visor.kit.server.Phrases
+import com.macedonga.visor.notify.GlassesNotification
+import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -37,7 +38,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import org.json.JSONObject
 
 /** The questions VDK apps answer: each app's phrases while it listens, and the answers it gives. */
 @Singleton
