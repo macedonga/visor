@@ -556,6 +556,15 @@
     <string name="ai_voice_phone">手机的声音</string>
     <string name="ai_speech_language">你所说的语言</string>
     <string name="ai_speech_language_glasses">眼镜的语言</string>
+    <string name="ai_tts_cloud">云端</string>
+    <string name="ai_tts_url">语音服务地址</string>
+    <string name="ai_tts_key">语音服务密钥</string>
+    <string name="ai_tts_model">语音模型</string>
+    <string name="ai_tts_voice_default">服务的默认音色</string>
+    <string name="ai_tts_voice">音色</string>
+    <string name="ai_tts_try">试听这个声音</string>
+    <string name="ai_tts_sample">你好。Hello。回答听起来会是这样。</string>
+    <string name="ai_tts_trying">正在播放…</string>
     <string name="ai_glasses_voice">眼镜自带语音</string>
     <string name="ai_glasses_voice_sub">关闭后，回答会用手机的声音朗读。</string>
     <string name="ai_vision">使用相机</string>
