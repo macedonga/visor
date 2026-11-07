@@ -463,6 +463,8 @@
     <string name="settings_kit_client_create">Создать</string>
     <string name="settings_kit_client_token">Токен для %1$s</string>
     <string name="settings_kit_client_token_once">Скопируйте его сейчас: Visor покажет его только один раз.</string>
+    <string name="settings_kit_client_webhook">URL вебхука (необязательно)</string>
+    <string name="settings_kit_client_posts">отправляет на %1$s</string>
     <string name="kit_consent_title">Разрешить %1$s использовать ваши очки?</string>
     <string name="kit_consent_allow">Разрешить</string>
     <string name="kit_consent_deny">Запретить</string>

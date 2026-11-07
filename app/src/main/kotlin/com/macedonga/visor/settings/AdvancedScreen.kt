@@ -36,6 +36,8 @@ import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.outside.KitConsentActivity
 import com.macedonga.visor.outside.KitGrants
+import androidx.compose.ui.text.input.KeyboardType
+import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.outside.KitNetwork
 import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.ui.VisorIcons
@@ -130,7 +132,8 @@ private fun NetworkRows(clients: NetworkClients, network: KitNetwork) {
     if (on && all.isNotEmpty()) {
         Spacer(Modifier.height(12.dp))
         Rows(all) { client ->
-            RowFrame(client.name, onClick = null, sub = scopeNames(client.scopes)) {
+            val posts = client.webhook?.let { " · " + stringResource(R.string.settings_kit_client_posts, it) }.orEmpty()
+            RowFrame(client.name, onClick = null, sub = scopeNames(client.scopes) + posts) {
                 RoundIcon(VisorIcons.Close, remove, { clients.remove(client.name) }, size = 40.dp)
             }
         }
@@ -138,7 +141,7 @@ private fun NetworkRows(clients: NetworkClients, network: KitNetwork) {
     if (adding) {
         NewClientSheet(
             onDismiss = { adding = false },
-            onCreate = { name, scopes -> made = name to clients.add(name, scopes) },
+            onCreate = { name, scopes, webhook, topics -> made = name to clients.add(name, scopes, webhook, topics) },
         )
     }
     made?.let { (name, token) -> TokenSheet(name, token, onDismiss = { made = null }) }
@@ -146,9 +149,11 @@ private fun NetworkRows(clients: NetworkClients, network: KitNetwork) {
 
 /** A name and the scopes for a new network client. */
 @Composable
-private fun NewClientSheet(onDismiss: () -> Unit, onCreate: (String, Set<Scope>) -> Unit) {
+private fun NewClientSheet(onDismiss: () -> Unit, onCreate: (String, Set<Scope>, String?, List<String>) -> Unit) {
     var name by remember { mutableStateOf("") }
     var scopes by remember { mutableStateOf(setOf<Scope>()) }
+    var webhook by remember { mutableStateOf("") }
+    var topics by remember { mutableStateOf(setOf<String>()) }
     VisorSheet(onDismiss) {
         SheetTitle(stringResource(R.string.settings_kit_client_new))
         SheetField(name, { name = it }, hint = stringResource(R.string.settings_kit_client_name), focus = true)
@@ -156,11 +161,20 @@ private fun NewClientSheet(onDismiss: () -> Unit, onCreate: (String, Set<Scope>)
         for (scope in KitConsentActivity.KNOWN) {
             ToggleRow(stringResource(KitConsentActivity.SCOPE_TEXT.getValue(scope)), scope in scopes, { scopes = if (it) scopes + scope else scopes - scope })
         }
+        Spacer(Modifier.height(8.dp))
+        SheetField(webhook, { webhook = it }, hint = stringResource(R.string.settings_kit_client_webhook), keyboard = KeyboardType.Uri)
+        // A webhook posts the events of the topics the client's scopes allow.
+        val offered = Topics.all.filter { it.scope != null && it.scope in scopes && it.params.descriptor.elementsCount == 0 }
+        if (webhook.isNotBlank()) {
+            for (topic in offered) {
+                ToggleRow(topic.name, topic.name in topics, { topics = if (it) topics + topic.name else topics - topic.name })
+            }
+        }
         SheetAnswers(
             stringResource(R.string.settings_kit_client_create),
             {
                 onDismiss()
-                onCreate(name.trim(), scopes)
+                onCreate(name.trim(), scopes, webhook.trim().ifEmpty { null }, offered.map { it.name }.filter { it in topics })
             },
             stringResource(R.string.cancel),
             onDismiss,

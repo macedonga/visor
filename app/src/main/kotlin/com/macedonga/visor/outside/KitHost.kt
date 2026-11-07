@@ -38,6 +38,7 @@ class KitHost @Inject constructor(
     routes: KitRoutes,
     private val clients: NetworkClients,
     private val network: KitNetwork,
+    private val webhooks: KitWebhooks,
     private val log: EventLog,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -67,6 +68,7 @@ class KitHost @Inject constructor(
 
     /** For the app's start: follows Developer mode and the grants for as long as the process lives. */
     fun start() {
+        webhooks.start(dispatcher)
         scope.launch {
             developer.on.collect { on -> if (on) openShell() else shell.stop() }
         }

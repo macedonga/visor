@@ -445,6 +445,8 @@
     <string name="settings_kit_client_create">Create</string>
     <string name="settings_kit_client_token">Token for %1$s</string>
     <string name="settings_kit_client_token_once">Copy it now: Visor shows it only once.</string>
+    <string name="settings_kit_client_webhook">Webhook URL (optional)</string>
+    <string name="settings_kit_client_posts">posts to %1$s</string>
     <string name="kit_consent_title">Let %1$s use your glasses?</string>
     <string name="kit_consent_allow">Allow</string>
     <string name="kit_consent_deny">Don\'t allow</string>

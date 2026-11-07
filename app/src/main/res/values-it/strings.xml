@@ -443,6 +443,8 @@
     <string name="settings_kit_client_create">Crea</string>
     <string name="settings_kit_client_token">Token per %1$s</string>
     <string name="settings_kit_client_token_once">Copialo ora: Visor lo mostra una volta sola.</string>
+    <string name="settings_kit_client_webhook">URL del webhook (facoltativo)</string>
+    <string name="settings_kit_client_posts">invia a %1$s</string>
     <string name="kit_consent_title">Consentire a %1$s di usare i tuoi occhiali?</string>
     <string name="kit_consent_allow">Consenti</string>
     <string name="kit_consent_deny">Non consentire</string>

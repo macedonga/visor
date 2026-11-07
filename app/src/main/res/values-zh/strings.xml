@@ -433,6 +433,8 @@
     <string name="settings_kit_client_create">创建</string>
     <string name="settings_kit_client_token">%1$s 的令牌</string>
     <string name="settings_kit_client_token_once">请立即复制：Visor 只显示一次。</string>
+    <string name="settings_kit_client_webhook">Webhook 地址（可选）</string>
+    <string name="settings_kit_client_posts">发送到 %1$s</string>
     <string name="kit_consent_title">允许 %1$s 使用你的眼镜？</string>
     <string name="kit_consent_allow">允许</string>
     <string name="kit_consent_deny">不允许</string>

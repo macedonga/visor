@@ -15,6 +15,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
@@ -23,6 +25,7 @@ import io.ktor.server.request.receiveText
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
@@ -45,7 +48,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /** A client of the kit's network door: the name the person gave it, its scopes, and the hash of its token. */
-data class NetworkClient(val name: String, val scopes: Set<Scope>, val tokenHash: String)
+data class NetworkClient(
+    val name: String,
+    val scopes: Set<Scope>,
+    val tokenHash: String,
+    /** Where Visor posts the events of [topics], or null for a client that connects itself. */
+    val webhook: String? = null,
+    val topics: List<String> = emptyList(),
+)
 
 /** The network door's switches and clients. A client's token is shown once, when it is made, and kept only as a hash. */
 @Singleton
@@ -73,11 +83,15 @@ class NetworkClients @Inject constructor(@ApplicationContext context: Context) {
         _lan.value = lan
     }
 
-    /** Makes a client named [name], or replaces the one of that name, and returns its token. */
+    /**
+     * Makes a client named [name], or replaces the one of that name, and returns its token. With a [webhook], Visor
+     * posts the events of [topics] there.
+     */
     @Synchronized
-    fun add(name: String, scopes: Set<Scope>): String {
+    fun add(name: String, scopes: Set<Scope>, webhook: String?, topics: List<String>): String {
         val token = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(TOKEN_BYTES).also(SecureRandom()::nextBytes))
-        _all.value = _all.value.filter { it.name != name } + NetworkClient(name, scopes, hash(token))
+        val client = NetworkClient(name, scopes, hash(token), webhook?.takeIf { it.isNotBlank() }, if (webhook.isNullOrBlank()) emptyList() else topics)
+        _all.value = _all.value.filter { it.name != name } + client
         write()
         return token
     }
@@ -104,13 +118,22 @@ class NetworkClients @Inject constructor(@ApplicationContext context: Context) {
         return (0 until list.length()).map { i ->
             val c = list.getJSONObject(i)
             val scopes = c.getJSONArray("scopes")
-            NetworkClient(c.getString("name"), (0 until scopes.length()).mapTo(LinkedHashSet()) { Scope(scopes.getString(it)) }, c.getString("hash"))
+            val topics = c.optJSONArray("topics") ?: JSONArray()
+            NetworkClient(
+                c.getString("name"), (0 until scopes.length()).mapTo(LinkedHashSet()) { Scope(scopes.getString(it)) }, c.getString("hash"),
+                c.optString("webhook").ifEmpty { null }, (0 until topics.length()).map(topics::getString),
+            )
         }
     }
 
     private fun write() {
         val list = JSONArray()
-        for (c in _all.value) list.put(JSONObject().put("name", c.name).put("hash", c.tokenHash).put("scopes", JSONArray(c.scopes.map { it.id })))
+        for (c in _all.value) {
+            list.put(
+                JSONObject().put("name", c.name).put("hash", c.tokenHash).put("scopes", JSONArray(c.scopes.map { it.id }))
+                    .put("webhook", c.webhook ?: "").put("topics", JSONArray(c.topics)),
+            )
+        }
         prefs.edit().putString(CLIENTS, list.toString()).apply()
     }
 
@@ -142,22 +165,31 @@ class KitNetwork @Inject constructor(
         server = embeddedServer(CIO, port = PORT, host = host) {
             install(WebSockets)
             routing {
-                webSocket("/rpc") {
-                    val client = clientOf(call) ?: return@webSocket close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "No valid token."))
-                    // Messages wait in order here, so a slow reader never makes the kit think the client went away.
-                    val out = Channel<String>(Channel.UNLIMITED)
-                    val writer = launch { for (message in out) outgoing.send(Frame.Text(message)) }
-                    val session = JsonRpcSession(
-                        dispatcher, Caller(NETWORK_UID, client.name, network = true),
-                        send = { out.trySend(it).isSuccess },
-                        close = { out.close() },
-                    )
-                    try {
-                        for (frame in incoming) if (frame is Frame.Text) session.receive(frame.readText())
-                    } finally {
-                        session.end()
-                        out.close()
-                        writer.join()
+                route("/rpc") {
+                    // Turned away before the upgrade, so a client with a wrong token sees 401, not a socket that closes.
+                    intercept(ApplicationCallPipeline.Plugins) {
+                        if (clientOf(call) == null) {
+                            call.respond(HttpStatusCode.Unauthorized)
+                            finish()
+                        }
+                    }
+                    webSocket {
+                        val client = clientOf(call) ?: return@webSocket close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "No valid token."))
+                        // Messages wait in order here, so a slow reader never makes the kit think the client went away.
+                        val out = Channel<String>(Channel.UNLIMITED)
+                        val writer = launch { for (message in out) outgoing.send(Frame.Text(message)) }
+                        val session = JsonRpcSession(
+                            dispatcher, Caller(NETWORK_UID, client.name, network = true),
+                            send = { out.trySend(it).isSuccess },
+                            close = { out.close() },
+                        )
+                        try {
+                            for (frame in incoming) if (frame is Frame.Text) session.receive(frame.readText())
+                        } finally {
+                            session.end()
+                            out.close()
+                            writer.join()
+                        }
                     }
                 }
                 post("/mcp") {

@@ -99,8 +99,11 @@ class KitRoutes @Inject constructor(
     private val live: LiveStream,
 ) {
     fun routes(): Routes = Routes().apply {
-        answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(connection.state.value) }
-        stream(Topics.GLASSES_STATUS) { _, _ -> connection.state.map(::glassesStatus).distinctUntilChanged() }
+        answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
+        // Not before Visor has read its store: until then, no pair reads the same as none set up.
+        stream(Topics.GLASSES_STATUS) { _, _ ->
+            connection.state.filter { it.target != null || it.noGlasses }.map(::glassesStatus).distinctUntilChanged()
+        }
         answer(Methods.GLASSES_PAIRS) { _, _ -> pairsNow() }
         stream(Topics.GLASSES_PAIRS) { _, _ ->
             val active = combine(connection.pair, connection.state.map { it.link }) { pair, link -> pair to link }
@@ -189,6 +192,10 @@ class KitRoutes @Inject constructor(
         if (!developer.on.value) throw KitException(ErrorCode.UNSUPPORTED, "Raw access needs Developer mode on in Visor.")
         if (service in KEPT_SERVICES) throw KitException(ErrorCode.REFUSED, "Visor keeps service $service to itself.")
     }
+
+    /** The state once Visor knows whether it has glasses: just after a start, its store is still being read. */
+    private suspend fun known(): GlassesState =
+        withTimeoutOrNull(READ_MS) { connection.state.first { it.target != null || it.noGlasses } } ?: connection.state.value
 
     private fun glassesStatus(state: GlassesState): GlassesStatus {
         val target = state.target ?: return GlassesStatus(paired = false, link = Link.DISCONNECTED)
