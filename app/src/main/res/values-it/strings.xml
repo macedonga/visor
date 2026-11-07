@@ -454,6 +454,8 @@
     <string name="kit_scope_display">Mostrare testo sul Display</string>
     <string name="kit_scope_name_state">Stato</string>
     <string name="kit_scope_pairs">Vedere tutti i tuoi occhiali configurati in Visor, con nomi e aspetto, e scegliere a quale paio si collega Visor</string>
+    <string name="kit_scope_name_inputs">Tocchi e tasti</string>
+    <string name="kit_scope_inputs">Sapere quando tocchi o scorri il touchpad o premi un tasto dei tuoi occhiali</string>
     <string name="kit_scope_name_pairs">I tuoi occhiali</string>
     <string name="kit_scope_name_camera">Fotocamera</string>
     <string name="kit_scope_name_band">Neural Band</string>

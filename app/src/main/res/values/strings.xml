@@ -456,6 +456,8 @@
     <string name="kit_scope_display">Show text on the Display</string>
     <string name="kit_scope_name_state">Status</string>
     <string name="kit_scope_pairs">See all your glasses set up in Visor, with their names and looks, and choose which pair Visor connects to</string>
+    <string name="kit_scope_name_inputs">Touch and buttons</string>
+    <string name="kit_scope_inputs">Know when you tap or swipe the touchpad or press a button on your glasses</string>
     <string name="kit_scope_name_pairs">Your glasses</string>
     <string name="kit_scope_name_camera">Camera</string>
     <string name="kit_scope_name_band">Neural Band</string>

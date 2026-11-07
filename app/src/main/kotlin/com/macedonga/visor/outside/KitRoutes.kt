@@ -19,6 +19,10 @@ import com.macedonga.visor.core.connection.PrompterLook
 import com.macedonga.visor.core.connection.PrompterPhase
 import com.macedonga.visor.core.connection.Shutter
 import com.macedonga.visor.core.connection.Teleprompter
+import com.macedonga.visor.core.connection.SVC_STATUS
+import com.macedonga.visor.core.connection.decodeInputs
+import com.macedonga.visor.core.connection.isDeviceStateType
+import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
@@ -43,7 +47,10 @@ import com.macedonga.visor.kit.protocol.Gesture
 import com.macedonga.visor.kit.protocol.GestureAction
 import com.macedonga.visor.kit.protocol.GlassesLook
 import com.macedonga.visor.kit.protocol.GlassesPair
+import com.macedonga.visor.kit.protocol.GlassesInput
 import com.macedonga.visor.kit.protocol.GlassesStatus
+import com.macedonga.visor.kit.protocol.InputAction
+import com.macedonga.visor.kit.protocol.InputSource
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
@@ -72,9 +79,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
+import com.macedonga.visor.core.connection.GlassesInput as GlassesTouch
 import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
 import com.macedonga.visor.core.identity.look.GlassesLook as MetaLook
 import com.macedonga.visor.core.media.Capture as GlassesCapture
@@ -115,6 +125,15 @@ class KitRoutes @Inject constructor(
             }.onStart { readPairs() }.distinctUntilChanged()
         }
         answer(Methods.GLASSES_SELECT) { _, selection -> select(selection.serial) }
+        // Over Wi-Fi while the Live runs, over Bluetooth otherwise.
+        stream(Topics.GLASSES_INPUTS) { _, _ ->
+            merge(connection.serviceData, live.wifiData)
+                .filter { it.serviceId == SVC_STATUS && isDeviceStateType(it.messageType) }
+                .transform { push ->
+                    val display = isDisplayBuild(connection.state.value.info?.build)
+                    runCatching { decodeInputs(push.messageType, push.payload, display) }.getOrDefault(emptyList()).forEach { emit(kitInput(it)) }
+                }
+        }
 
         answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
         answer(Methods.CAMERA_VIDEO_START) { _, request ->
@@ -269,6 +288,24 @@ class KitRoutes @Inject constructor(
                 ?: throw KitException(ErrorCode.TIMEOUT, "Visor did not switch to $serial.")
         }
         return pairsNow().first { it.serial == serial }
+    }
+
+    private fun kitInput(input: GlassesTouch): GlassesInput {
+        val source = when (input.source) {
+            "captouch" -> InputSource.TOUCHPAD
+            "capture_button" -> InputSource.CAPTURE_BUTTON
+            else -> InputSource.ACTION_BUTTON
+        }
+        val action = when (input.action) {
+            "SINGLE_TAP" -> InputAction.TAP
+            "PRESENCE_TOUCHED" -> InputAction.TOUCH
+            "PRESENCE_CLEAR", "SHORT_PRESS_UP" -> InputAction.RELEASE
+            "SHORT_PRESS_DOWN" -> InputAction.PRESS
+            "LONG_PRESS_UP" -> InputAction.LONG_RELEASE
+            "VERY_VERY_LONG_PRESS_UP" -> InputAction("very_very_long_release")
+            else -> InputAction(input.action.lowercase())
+        }
+        return GlassesInput(source, action, System.currentTimeMillis())
     }
 
     private fun kitLink(link: LinkState) = when (link) {

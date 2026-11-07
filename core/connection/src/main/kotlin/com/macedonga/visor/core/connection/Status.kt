@@ -18,6 +18,7 @@ val DISPLAY_STATUS_TYPES: Set<Int> = (
 
 /** Every svc28 type that carries a DeviceState. 2005 is the snapshot; the rest name one field. */
 private val DEVICE_STATE_TYPES: Set<Int> = (2005..2037).toSet() + (2039..2044)
+private const val MT_DEVICE_STATE_START = 2005
 
 private val CHARGE_STATE: Map<Long, String> = mapOf(
     0L to "NO_DATA", 1L to "CHARGING", 2L to "CHARGING_FULL", 3L to "CHARGING_LOW", 4L to "NOT_CHARGING",
@@ -124,6 +125,38 @@ data class DeviceState(
 }
 
 fun isDeviceStateType(messageType: Int): Boolean = messageType in DEVICE_STATE_TYPES
+
+/** A touch of the touchpad or a press of a button: [source] `captouch`, `capture_button` or `action_button`. */
+data class GlassesInput(val source: String, val action: String)
+
+// The Meta app's CaptouchState, CaptureButtonState and ActionButtonState.
+private val CAPTOUCH: Map<Long, String> = mapOf(
+    1L to "SINGLE_TAP", 2L to "DOUBLE_TAP", 3L to "TAP_HOLD", 4L to "SWIPE_BACKWARD", 5L to "SWIPE_FORWARD",
+    6L to "SLIDE_BACKWARD", 7L to "SLIDE_FORWARD", 8L to "TRIPLE_TAP", 9L to "PRESENCE_TOUCHED", 10L to "PRESENCE_CLEAR",
+    11L to "PALM_TAP", 12L to "PALM_HOLD",
+)
+private val CAPTURE_BUTTON: Map<Long, String> = mapOf(
+    1L to "SHORT_PRESS_DOWN", 2L to "LONG_PRESS", 3L to "VERY_LONG_PRESS", 4L to "VERY_VERY_LONG_PRESS",
+    5L to "SHORT_PRESS_UP", 6L to "EXTREMELY_LONG_PRESS", 7L to "VERY_VERY_LONG_PRESS_UP", 8L to "DOUBLE_PRESS",
+)
+private val ACTION_BUTTON: Map<Long, String> = mapOf(1L to "SHORT_PRESS_DOWN", 2L to "SHORT_PRESS_UP", 3L to "LONG_PRESS_UP")
+
+/**
+ * The touches and presses one svc28 push carries (fields 4, 5 and 29), each an event of its own: the merged
+ * [DeviceState] would hide a second tap like the first. The opening snapshot only repeats the last ones, so it has none.
+ */
+fun decodeInputs(messageType: Int, payload: ByteArray, display: Boolean): List<GlassesInput> {
+    if (messageType == MT_DEVICE_STATE_START) return emptyList()
+    val top = Wire.parse(if (display) Wire.parse(payload).bytes(1) else payload)
+    return listOfNotNull(
+        input(top, 5, "captouch", CAPTOUCH),
+        input(top, 4, "capture_button", CAPTURE_BUTTON),
+        input(top, 29, "action_button", ACTION_BUTTON),
+    )
+}
+
+private fun input(top: Wire.Fields, field: Int, source: String, table: Map<Long, String>): GlassesInput? =
+    if (top.has(field)) table[top.varint(field)]?.let { GlassesInput(source, it) } else null
 
 /**
  * [base] with what a svc28 DeviceState message, full or partial, carries. The Display sends it wrapped,
