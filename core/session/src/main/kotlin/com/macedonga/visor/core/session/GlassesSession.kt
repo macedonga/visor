@@ -307,6 +307,9 @@ class GlassesSession(
                         ),
                     )
                 }
+                // A service not up yet (0xC001) or a channel it dropped (0xC002) leaves the channel dead: the next
+                // send opens a new one. A service that starts later, such as the data collection daemon, is reached.
+                if (info.errorId == SERVICE_NOT_FOUND || info.errorId == CHANNEL_GONE) mux.forgetServiceChannel(info.channelId)
                 publish(DataXError(serviceId, info.channelId, info.errorId))
             }
             return
@@ -364,6 +367,9 @@ class GlassesSession(
 
         /** DataX service_not_found: what a peer answers for a service it does not host. */
         private const val SERVICE_NOT_FOUND = 0xC001
+
+        /** DataX status for a channel the peer no longer has, as the toolkit app answers after it restarts. */
+        private const val CHANNEL_GONE = 0xC002
 
         private val REFUSED_PEER_SERVICES = setOf(30, 79)
 

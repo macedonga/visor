@@ -133,6 +133,15 @@ class DataXConnection(
         send(channel, payload, messageType = messageType, serviceId = serviceId)
     }
 
+    /**
+     * Forgets [channelId] as its service's channel, so the next [sendOnService] opens a new one. The glasses answer on
+     * the mirrored id, so the originator bit does not count.
+     */
+    fun forgetServiceChannel(channelId: Int) {
+        val id = channelId and (ORIGINATOR_BIT - 1)
+        synchronized(serviceChannels) { serviceChannels.entries.removeAll { (it.value and (ORIGINATOR_BIT - 1)) == id } }
+    }
+
     /** Send a bare DataX status frame: an error id tag, zero payload, on [channelId]. */
     suspend fun sendStatus(channelId: Int, errorId: Int) {
         write(Header.build(channelId, 0, errorId = errorId))
