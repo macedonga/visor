@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.LocationManager
+import android.os.SystemClock
 import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
@@ -41,6 +42,8 @@ class Panels @Inject constructor(
     // The last click scripts Meta's cards carried, for when Meta's fetch fails.
     @Volatile private var template: Template? = null
 
+    @Volatile private var meta: Cached? = null
+
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val reply = DataXConnection.mirror(message.info.channelId)
         when (message.info.messageType) {
@@ -64,7 +67,7 @@ class Panels @Inject constructor(
         try {
             val ours = apps.all.value
             // Meta's cards failing leaves the apps' ones.
-            val g = runCatching { fetch(host) }.getOrElse { if (ours.isEmpty()) throw it else JSONObject() }
+            val g = runCatching { metaCards(host) }.getOrElse { if (ours.isEmpty()) throw it else JSONObject() }
             val hashes = mutableMapOf<String, String>()
             val payloads = g.optJSONArray("l1_payload_list") ?: JSONArray()
             var bloks = ByteArray(0)
@@ -105,7 +108,7 @@ class Panels @Inject constructor(
                         Wire.fieldVarint(4, 1) + Wire.fieldString(6, hashes[card.key].orEmpty()) + Wire.fieldString(7, "drawable://${card.icon}_filled_32"),
                 )
             }
-            // With apps' cards on it, the Display asks again within a minute, so an app's change shows soon.
+            // With apps' cards on it, the Display asks again within seconds, so an app's live card keeps up.
             val fresh = g.optLong("fresh_ttl", FRESH_S).let { if (ours.isEmpty()) it else minOf(it, APPS_FRESH_S) }
             data += Wire.fieldVarint(3, fresh) + Wire.fieldVarint(4, g.optLong("ttl", TTL_S))
             val ms = (System.nanoTime() - started) / 1_000_000f
@@ -119,6 +122,20 @@ class Panels @Inject constructor(
             runCatching { mux.send(reply, Wire.fieldVarint(1, COMMAND_ERROR) + Wire.fieldBytes(11, details), messageType = MT_OPEN) }
         }
     }
+
+    /**
+     * Meta's cards for [host], from Meta or from its last answer to the same question while that is fresh: with apps'
+     * cards the Display asks every few seconds, and Meta's change far less often.
+     */
+    private fun metaCards(host: Host): JSONObject {
+        val key = listOf(host.versioningId, host.designSystem, host.persist, host.cards.filter { it.enabled }.map { it.id to it.hash }).toString()
+        meta?.takeIf { it.key == key && SystemClock.elapsedRealtime() < it.until }?.let { return it.glanceables }
+        val g = fetch(host)
+        meta = Cached(key, g, SystemClock.elapsedRealtime() + g.optLong("fresh_ttl", FRESH_S) * 1_000)
+        return g
+    }
+
+    private class Cached(val key: String, val glanceables: JSONObject, val until: Long)
 
     private fun fetch(host: Host): JSONObject {
         val vars = JSONObject()
@@ -211,7 +228,7 @@ class Panels @Inject constructor(
         private const val BRIEFING = 30
         private const val TTL_S = 3600L
         private const val FRESH_S = 300L
-        private const val APPS_FRESH_S = 60L
+        private const val APPS_FRESH_S = 15L
         private const val RENDERER_BLOKS = 2L
         private const val PROVIDER_DATAX = 1L
         private const val CACHE_ENABLED = 1L
