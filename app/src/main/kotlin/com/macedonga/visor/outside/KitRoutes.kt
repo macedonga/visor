@@ -129,13 +129,15 @@ class KitRoutes @Inject constructor(
         }
         answer(Methods.GLASSES_SELECT) { _, selection -> select(selection.serial) }
         // Over Wi-Fi while the Live runs, over Bluetooth otherwise.
-        stream(Topics.GLASSES_INPUTS) { _, _ ->
+        // The Display's own navigation (nav, select, back, drag) and keepBack come with its toolkit session.
+        stream(Topics.GLASSES_INPUTS) { _, request ->
             merge(connection.serviceData, live.wifiData)
                 .filter { it.serviceId == SVC_STATUS && isDeviceStateType(it.messageType) }
                 .transform { push ->
                     val display = isDisplayBuild(connection.state.value.info?.build)
                     runCatching { decodeInputs(push.messageType, push.payload, display) }.getOrDefault(emptyList()).forEach { emit(kitInput(it)) }
                 }
+                .filter { request.sources?.contains(it.source) ?: true }
         }
 
         answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
