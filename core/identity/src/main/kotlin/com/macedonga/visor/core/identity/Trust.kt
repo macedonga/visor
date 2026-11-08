@@ -12,6 +12,7 @@ import com.macedonga.visor.core.session.TrustExchange
 import com.macedonga.visor.core.session.TrustResult
 import java.math.BigInteger
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.Signature
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -41,11 +42,14 @@ private fun buildEnableTrust(credentials: BundleCredentials, txChallenge: ByteAr
         Wire.fieldVarint(3, RESIGN_PROVISIONING_CAPABILITIES.toLong())
 }
 
-/** The link's channel binding signed as the glasses check it: NONEwithECDSA over the digest, r then low s, 64 bytes. */
-internal fun signChallenge(credentials: BundleCredentials, challenge: ByteArray): ByteArray {
+/** The link's channel binding signed as the glasses check it. */
+internal fun signChallenge(credentials: BundleCredentials, challenge: ByteArray): ByteArray = signDigest(credentials.appEcKey, challenge)
+
+/** A SHA-256 [digest] signed as the glasses check signatures: NONEwithECDSA, r then low s, 64 bytes. */
+internal fun signDigest(key: PrivateKey, digest: ByteArray): ByteArray {
     val signer = Signature.getInstance("NONEwithECDSA")
-    signer.initSign(credentials.appEcKey)
-    signer.update(challenge)
+    signer.initSign(key)
+    signer.update(digest)
     val (r, s) = decodeDerSignature(signer.sign())
     val canonical = if (s > HALF_ORDER) SECP256R1_ORDER.subtract(s) else s
     return r.to32() + canonical.to32()
