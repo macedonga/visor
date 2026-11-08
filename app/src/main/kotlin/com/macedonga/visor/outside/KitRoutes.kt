@@ -146,7 +146,10 @@ class KitRoutes @Inject constructor(
             val wanted = request.sources
             val session = isDisplayBuild(connection.state.value.info?.build) &&
                 (wanted == null || InputSource.TOUCHPAD in wanted || InputSource.BAND in wanted)
-            (if (session) merge(pushed, toolkit.inputs(caller.packageName).mapNotNull(::sessionInput)) else pushed)
+            // While a layout shows, the toolkit app's navigation gives the swipes as nav, so the session's go.
+            val gestures = toolkit.inputs(caller.packageName).mapNotNull(::sessionInput)
+                .filter { !(toolkit.navigating && it.action in NAV_ACTIONS) }
+            (if (session) merge(pushed, gestures, toolkit.navigation(request.keepBack).mapNotNull(::navigationInput)) else pushed)
                 .filter { wanted?.contains(it.source) ?: true }
         }
 
@@ -524,6 +527,32 @@ class KitRoutes @Inject constructor(
         time = System.currentTimeMillis(),
     )
 
+    // The toolkit app's navigation, as DAT gives it.
+    private fun navigationInput(n: Dat.Navigation): GlassesInput? {
+        val source = when (n.source) {
+            Dat.NAV_TOUCHPAD -> InputSource.TOUCHPAD
+            Dat.NAV_BAND, Dat.NAV_BAND_DRAG -> InputSource.BAND
+            else -> return null
+        }
+        val action = when (n.kind) {
+            Dat.NAV -> NAV_DIRECTIONS[n.direction]
+            Dat.SELECT -> InputAction.SELECT
+            Dat.BACK -> InputAction.BACK
+            Dat.DRAG -> DRAG_ACTIONS[n.dragAction]
+            else -> null
+        } ?: return null
+        val drag = n.kind == Dat.DRAG
+        return GlassesInput(
+            source = source,
+            action = action,
+            time = System.currentTimeMillis(),
+            x = n.x.toDouble().takeIf { drag },
+            y = n.y.toDouble().takeIf { drag },
+            dx = n.dx.toDouble().takeIf { drag },
+            dy = n.dy.toDouble().takeIf { drag },
+        )
+    }
+
     private fun kitGesture(input: Dat.SessionInput) = Gesture(
         finger = when (input.actuator) {
             3 -> Finger.THUMB
@@ -553,6 +582,9 @@ class KitRoutes @Inject constructor(
             1 to InputAction.TAP, 2 to InputAction.DOUBLE_TAP, 3 to InputAction.TRIPLE_TAP, 4 to InputAction.TAP_HOLD,
             5 to InputAction.NAV_UP, 6 to InputAction.NAV_DOWN, 7 to InputAction.NAV_LEFT, 8 to InputAction.NAV_RIGHT,
         )
+        val NAV_ACTIONS = setOf(InputAction.NAV_UP, InputAction.NAV_DOWN, InputAction.NAV_LEFT, InputAction.NAV_RIGHT)
+        val NAV_DIRECTIONS = mapOf(1 to InputAction.NAV_UP, 2 to InputAction.NAV_DOWN, 3 to InputAction.NAV_LEFT, 4 to InputAction.NAV_RIGHT)
+        val DRAG_ACTIONS = mapOf(1 to InputAction.DRAG_START, 2 to InputAction.DRAG_MOVE, 3 to InputAction.DRAG_END)
         val SESSION_GESTURES = mapOf(
             1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction("triple_tap"), 4 to GestureAction.HOLD,
             5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,

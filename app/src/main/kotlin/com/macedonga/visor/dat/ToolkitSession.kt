@@ -81,6 +81,50 @@ class ToolkitSession @Inject constructor(
     private var inputUsers = 0
     private var keeper: Job? = null
 
+    // The toolkit app's navigation (nav, select, back, drags), heard while a layout shows; who keeps back for itself.
+    private val navigations = MutableSharedFlow<Dat.Navigation>(extraBufferCapacity = 64)
+    private var navigationUsers = 0
+    private var backKeepers = 0
+
+    /** True while the shown layout's session gives the toolkit app's navigation, which also covers the swipes. */
+    val navigating: Boolean get() = layoutSession?.let { !it.ended.isCompleted && it.navigation != null } == true
+
+    /**
+     * The toolkit app's navigation while a layout shows: nav, select, back and drags, from the touchpad and the band.
+     * With [keepBack] back comes here and the layout stays.
+     */
+    fun navigation(keepBack: Boolean): Flow<Dat.Navigation> = flow {
+        opening.withLock {
+            navigationUsers++
+            if (keepBack) backKeepers++
+        }
+        scope.launch { layoutSession?.let { navigate(it) } }
+        try {
+            navigations.collect { emit(it) }
+        } finally {
+            withContext(NonCancellable) {
+                opening.withLock {
+                    navigationUsers--
+                    if (keepBack) backKeepers--
+                }
+                layoutSession?.let { navigate(it) }
+            }
+        }
+    }
+
+    // Gives [session] the input capability while someone listens, with back kept as the listeners want it.
+    private suspend fun navigate(session: Live) {
+        if (!session.dam || session.ended.isCompleted) return
+        val (wanted, keep) = opening.withLock { (navigationUsers > 0) to (backKeepers > 0) }
+        val now = session.navigation
+        if (!wanted || now == keep) return
+        runCatching {
+            if (Dat.INPUT !in session.capabilities) session.add(Dat.INPUT)
+            session.request(Dat.INPUT, Dat.inputStart(listOf(Dat.NAV_TOUCHPAD, Dat.NAV_BAND, Dat.NAV_BAND_DRAG), keep))
+            session.navigation = keep
+        }.onFailure { log.add("Toolkit: no navigation from the toolkit app: ${it.message}") }
+    }
+
     /** The wearer's gestures, from the band and the touchpad, while collected; [app] names the request to set up. */
     fun inputs(app: String): Flow<Dat.SessionInput> = flow {
         opening.withLock { if (inputUsers++ == 0) keeper = scope.launch { keep(app) } }
@@ -131,6 +175,7 @@ class ToolkitSession @Inject constructor(
         layoutSession?.let(::release)
         layoutSession = session
         owner.value = app
+        navigate(session)
         if (before != app) {
             before?.let { states.tryEmit(it to LayoutState(showing = false, reason = LayoutEnd.REPLACED, time = now())) }
             states.tryEmit(app to LayoutState(showing = true, time = now()))
@@ -210,6 +255,10 @@ class ToolkitSession @Inject constructor(
     private inner class Live(val link: GlassesSession, val dam: Boolean) {
         var users = 0
         val capabilities: MutableSet<Int> = ConcurrentHashMap.newKeySet()
+
+        // Null until the input capability runs; then whether it keeps back for the app.
+        @Volatile
+        var navigation: Boolean? = null
         val ended = CompletableDeferred<String>()
         private val started = CompletableDeferred<Dat.SessionStarted>()
         private val answers = ConcurrentHashMap<String, CompletableDeferred<Dat.Response>>()
@@ -302,6 +351,7 @@ class ToolkitSession @Inject constructor(
         private fun event(e: Dat.Event) {
             val payload = e.payload ?: return
             when (e.capability) {
+                Dat.INPUT -> Dat.navigation(payload).forEach { navigations.tryEmit(it) }
                 Dat.DISPLAY -> {
                     val app = owner.value ?: return
                     Dat.displayClick(payload)?.let { clicks.tryEmit(app to LayoutClick(it, now())) }

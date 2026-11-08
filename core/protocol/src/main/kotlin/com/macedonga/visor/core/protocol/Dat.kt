@@ -178,6 +178,62 @@ object Dat {
         return Wire.parse(event).has(2)
     }
 
+    // The input capability's sources.
+    const val NAV_TOUCHPAD = 1
+    const val NAV_BAND = 2
+    const val NAV_CAPTURE_BUTTON = 3
+    const val NAV_ACTION_BUTTON = 4
+    const val NAV_BAND_DRAG = 5
+
+    /** InputRequestPayload {1 input_start {1 packed sources, 2 consume_back}}: with [consumeBack], back is the app's. */
+    fun inputStart(sources: List<Int>, consumeBack: Boolean): ByteArray {
+        val packed = sources.fold(ByteArray(0)) { out, s -> out + Wire.encodeVarint(s.toLong()) }
+        return Wire.fieldBytes(1, Wire.fieldBytes(1, packed) + Wire.fieldVarint(2, if (consumeBack) 1 else 0))
+    }
+
+    /**
+     * One event of the input capability: InputEvent {1 source, 2 timestamp_ms, then one of 3 nav {1 direction: 1 up,
+     * 2 down, 3 left, 4 right}, 4 select, 5 back, 6 button {1 type}, 7 capture {1 press}, 8 drag {1 action: 1 down,
+     * 2 move, 3 up; 2 x, 3 y, 4 dx, 5 dy, floats}}. [kind] is the field of the one that came.
+     */
+    class Navigation(
+        val source: Int,
+        val timeMs: Long,
+        val kind: Int,
+        val direction: Int = 0,
+        val dragAction: Int = 0,
+        val x: Float = 0f,
+        val y: Float = 0f,
+        val dx: Float = 0f,
+        val dy: Float = 0f,
+    )
+
+    const val NAV = 3
+    const val SELECT = 4
+    const val BACK = 5
+    const val DRAG = 8
+
+    /** InputEventPayload {1 input_data {1 repeated InputEvent}}. */
+    fun navigation(eventPayload: ByteArray): List<Navigation> {
+        val data = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return emptyList()
+        return Wire.parse(data).repeatedBytes(1).map { raw ->
+            val e = Wire.parse(raw)
+            val kind = listOf(NAV, SELECT, BACK, 6, 7, DRAG).firstOrNull(e::has) ?: 0
+            val body = if (kind != 0) Wire.parse(e.bytes(kind)) else null
+            Navigation(
+                source = e.varint(1).toInt(),
+                timeMs = e.varint(2),
+                kind = kind,
+                direction = if (kind == NAV) body?.varint(1)?.toInt() ?: 0 else 0,
+                dragAction = if (kind == DRAG) body?.varint(1)?.toInt() ?: 0 else 0,
+                x = if (kind == DRAG) body?.float(2) ?: 0f else 0f,
+                y = if (kind == DRAG) body?.float(3) ?: 0f else 0f,
+                dx = if (kind == DRAG) body?.float(4) ?: 0f else 0f,
+                dy = if (kind == DRAG) body?.float(5) ?: 0f else 0f,
+            )
+        }
+    }
+
     /** The IMU's rates, in Hz, in the order of their enum: 5 Hz is 1. */
     val MOTION_RATES = listOf(5, 10, 15, 24, 30, 60)
 
