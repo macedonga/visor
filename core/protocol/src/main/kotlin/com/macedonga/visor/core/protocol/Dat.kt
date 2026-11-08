@@ -165,6 +165,25 @@ object Dat {
     /** DisplayRequestPayload {8 display_clear}. */
     fun displayClear(): ByteArray = Wire.fieldBytes(8, ByteArray(0))
 
+    /** DisplayRequestPayload {4 video_view {1 uri}}: the toolkit app fetches and plays the video, alone on the screen. */
+    fun videoView(url: String): ByteArray = Wire.fieldBytes(4, Wire.fieldString(1, url))
+
+    /** DisplayRequestPayload {7 video_stop}. */
+    fun videoStop(): ByteArray = Wire.fieldBytes(7, ByteArray(0))
+
+    // VideoPlaybackEvent types and errors.
+    const val VIDEO_STARTED = 1
+    const val VIDEO_ENDED = 2
+    const val VIDEO_STOPPED = 3
+    const val VIDEO_ERROR = 4
+
+    /** A video's change, from DisplayEventPayload {2 video_event {1 type, 2 error}}: (type, error), or null for another event. */
+    fun videoEvent(eventPayload: ByteArray): Pair<Int, Int>? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(2) }?.bytes(2) ?: return null
+        val f = Wire.parse(event)
+        return f.varint(1).toInt() to f.varint(2).toInt()
+    }
+
     /** The id of a click in a DisplayEventPayload {1 display_event {1 click {1 identifier}}}, or null for anything else. */
     fun displayClick(eventPayload: ByteArray): String? {
         val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return null

@@ -220,7 +220,7 @@ class KitRoutes @Inject constructor(
         answer(Methods.DISPLAY_LAYOUT_CLOSE) { caller, _ -> toolkit.close(caller.packageName) }
         stream(Topics.DISPLAY_LAYOUT_CLICKS) { caller, _ -> toolkit.clicks(caller.packageName) }
         stream(Topics.DISPLAY_LAYOUT_STATE) { caller, _ -> toolkit.state(caller.packageName) }
-        stream(Topics.DISPLAY_VIDEO) { _, _ -> emptyFlow() }
+        stream(Topics.DISPLAY_VIDEO) { caller, _ -> toolkit.video(caller.packageName) }
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
         stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }

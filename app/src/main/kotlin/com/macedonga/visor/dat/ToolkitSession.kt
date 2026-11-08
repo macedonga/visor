@@ -22,6 +22,8 @@ import com.macedonga.visor.kit.protocol.LayoutEnd
 import com.macedonga.visor.kit.protocol.LayoutNode
 import com.macedonga.visor.kit.protocol.LayoutState
 import com.macedonga.visor.kit.protocol.LayoutType
+import com.macedonga.visor.kit.protocol.LayoutVideoEvent
+import com.macedonga.visor.kit.protocol.LayoutVideoState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.KitGrants
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -76,6 +78,10 @@ class ToolkitSession @Inject constructor(
     private var layoutSession: Live? = null
     private val states = MutableSharedFlow<Pair<String, LayoutState>>(replay = 0, extraBufferCapacity = 16)
     private val clicks = MutableSharedFlow<Pair<String, LayoutClick>>(extraBufferCapacity = 64)
+    private val videos = MutableSharedFlow<Pair<String, LayoutVideoEvent>>(extraBufferCapacity = 16)
+
+    // Whether the shown layout is a video, which the toolkit app plays alone on the screen.
+    @Volatile private var showingVideo = false
 
     private val inputs = MutableSharedFlow<Dat.SessionInput>(extraBufferCapacity = 64)
     private var inputUsers = 0
@@ -158,19 +164,26 @@ class ToolkitSession @Inject constructor(
         }
     }
 
-    /** Shows [layout] for [app], in place of the one shown before, which goes with the reason `replaced`. */
+    /**
+     * Shows [layout] for [app], in place of the one shown before, which goes with the reason `replaced`. A layout with a
+     * video is that video alone, as on DAT: the toolkit app fetches the URL and plays it.
+     */
     suspend fun show(app: String, layout: Layout) {
-        if (layout.root.all().any { it.type == LayoutType.VIDEO }) {
-            throw KitException(ErrorCode.UNSUPPORTED, "Visor does not play videos on the Display yet.", reason = "video")
+        val video = layout.root.all().firstOrNull { it.type == LayoutType.VIDEO }?.let { node ->
+            node.url?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                ?: throw KitException(ErrorCode.INVALID_PARAMS, "A video needs an https:// URL.", reason = "invalid_url")
         }
         val session = acquire(app)
         try {
             if (Dat.DISPLAY !in session.capabilities) session.add(Dat.DISPLAY)
-            session.request(Dat.DISPLAY, Dat.displayContent(DatLayout.payload(layout)))
+            if (showingVideo && video == null) session.request(Dat.DISPLAY, Dat.videoStop())
+            session.request(Dat.DISPLAY, if (video != null) Dat.videoView(video) else Dat.displayContent(DatLayout.payload(layout)))
         } catch (e: KitException) {
             release(session)
             throw e
         }
+        showingVideo = video != null
+        if (video != null) videos.tryEmit(app to LayoutVideoEvent(LayoutVideoState.STARTING, time = now()))
         val before = owner.value
         layoutSession?.let(::release)
         layoutSession = session
@@ -190,12 +203,17 @@ class ToolkitSession @Inject constructor(
         val session = layoutSession ?: return
         layoutSession = null
         if (!session.ended.isCompleted) {
+            if (showingVideo) runCatching { session.request(Dat.DISPLAY, Dat.videoStop()) }
             runCatching { session.request(Dat.DISPLAY, Dat.displayClear()) }
         }
+        showingVideo = false
         release(session)
     }
 
     fun clicks(app: String): Flow<LayoutClick> = clicks.filter { it.first == app }.map { it.second }
+
+    /** The video in [app]'s layout as it starts, ends or fails. */
+    fun video(app: String): Flow<LayoutVideoEvent> = videos.filter { it.first == app }.map { it.second }
 
     fun state(app: String): Flow<LayoutState> =
         states.filter { it.first == app }.map { it.second }.onStart { emit(LayoutState(showing = owner.value == app, time = now())) }
@@ -355,6 +373,7 @@ class ToolkitSession @Inject constructor(
                 Dat.DISPLAY -> {
                     val app = owner.value ?: return
                     Dat.displayClick(payload)?.let { clicks.tryEmit(app to LayoutClick(it, now())) }
+                    Dat.videoEvent(payload)?.let { (type, error) -> videoEvent(type, error)?.let { videos.tryEmit(app to it) } }
                     if (Dat.displayBack(payload) && layoutSession === this) {
                         owner.value = null
                         layoutSession = null
@@ -396,6 +415,14 @@ class ToolkitSession @Inject constructor(
 
     private fun LayoutNode.all(): List<LayoutNode> = listOf(this) + children.flatMap { it.all() }
 
+    // The toolkit app's VideoPlaybackEvent as the VDK names it; stopped means our own stop.
+    private fun videoEvent(type: Int, error: Int): LayoutVideoEvent? = when (type) {
+        Dat.VIDEO_STARTED -> LayoutVideoEvent(LayoutVideoState.PLAYING, time = now())
+        Dat.VIDEO_ENDED, Dat.VIDEO_STOPPED -> LayoutVideoEvent(LayoutVideoState.ENDED, time = now())
+        Dat.VIDEO_ERROR -> LayoutVideoEvent(LayoutVideoState.FAILED, VIDEO_ERRORS[error] ?: "playback_failed", now())
+        else -> null
+    }
+
     private fun now() = System.currentTimeMillis()
 
     private companion object {
@@ -408,5 +435,8 @@ class ToolkitSession @Inject constructor(
         const val STOP_GRACE_MS = 500L
         const val REOPEN_MS = 3_000L
         const val REPEAT_MS = 30L
+
+        // VideoPlaybackEvent errors: 1 URL_INVALID, 2 ALREADY_PLAYING, 3 PLAYBACK_FAILED, 4 INVALID_DIMENSIONS.
+        val VIDEO_ERRORS = mapOf(1 to "invalid_url", 2 to "playback_failed", 3 to "playback_failed", 4 to "invalid_dimensions")
     }
 }
