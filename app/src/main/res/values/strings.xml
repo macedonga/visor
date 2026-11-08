@@ -1142,7 +1142,7 @@
     <string name="toolkit_channel">Glasses setup for apps</string>
     <string name="toolkit_notification">Setting up your glasses for apps</string>
     <string name="toolkit_title">Let apps use your glasses\' screen and motion?</string>
-    <string name="toolkit_body">%1$s wants your glasses\' screen or motion. Visor installs Meta\'s toolkit app on your glasses and adds itself to the devices they trust. After this the Meta AI app can no longer change that list. You do this once for each pair.</string>
+    <string name="toolkit_body">%1$s wants to use your glasses\' screen or motion. Visor sets your glasses up for it once.</string>
     <string name="toolkit_allow">Set up</string>
     <string name="toolkit_deny">Not now</string>
     <string name="toolkit_ready">Your glasses are ready</string>
@@ -1152,11 +1152,14 @@
     <string name="toolkit_step_app">Installing Meta\'s toolkit app</string>
     <string name="toolkit_step_manifest">Adding Visor to your glasses</string>
     <string name="toolkit_step_permissions">Allowing the toolkit</string>
-    <string name="toolkit_step_done">Done</string>
-    <string name="toolkit_step_running">Now</string>
     <string name="toolkit_card_title">Motion on</string>
     <string name="toolkit_card_text">%1$s is using your glasses\' movement.</string>
     <string name="toolkit_card_back">Go back to stop.</string>
     <string name="kit_scope_name_motion">Motion</string>
     <string name="kit_scope_motion">Read how your glasses move and turn, many times a second, from their motion sensors.</string>
+    <string name="toolkit_point_app">Installs Meta\'s toolkit app on your glasses</string>
+    <string name="toolkit_point_trust">Adds Visor to the devices your glasses trust</string>
+    <string name="toolkit_point_once">Once for each pair of glasses</string>
+    <string name="toolkit_background">You can close this. Setup goes on, and its notification shows how far it has come.</string>
+    <string name="toolkit_ready_sub">Apps can use your glasses\' screen and motion now.</string>
 </resources>

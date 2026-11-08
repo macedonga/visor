@@ -109,8 +109,11 @@ class Toolkit @Inject constructor(
         if (current != null && current.granted && current.format == MANIFEST_FORMAT && devices(info.serial, address, info.build).map { it.publicKey.toHexString() }.toSet() == current.devices) {
             return ToolkitReady(address, appKey, appPublic, current.version, current.salt)
         }
-        // A pair set up before only needs its manifest built again: the person allowed the setup already.
-        if (!store.allowed && !ask(app)) {
+        // Asked once; after that the setup only shows how far it has come.
+        if (store.allowed) {
+            step(ToolkitStep.KEY)
+            open()
+        } else if (!ask(app)) {
             throw KitException(ErrorCode.REFUSED, "The person did not allow Visor to set the glasses up for apps.", reason = "setup_declined")
         }
         store.allowed = true
@@ -141,11 +144,15 @@ class Toolkit @Inject constructor(
     private suspend fun ask(app: String): Boolean {
         val waiting = CompletableDeferred<Boolean>().also { answer = it }
         _progress.value = ToolkitProgress.Asking(app)
-        // Visor's companion device association lets it open its screen from the background.
-        context.startActivity(Intent(context, ToolkitActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        open()
         val allowed = withTimeoutOrNull(ASK_MS) { waiting.await() } ?: false
         if (!allowed) _progress.value = ToolkitProgress.Idle
         return allowed
+    }
+
+    // Visor's companion device association lets it open its screen from the background.
+    private fun open() {
+        context.startActivity(Intent(context, ToolkitActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private suspend fun run(serial: String, address: String, build: String, release: String, appPublic: ByteArray, before: ToolkitPair?): ToolkitPair {

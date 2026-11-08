@@ -1178,7 +1178,7 @@
     <string name="toolkit_channel">Настройка очков для приложений</string>
     <string name="toolkit_notification">Настройка очков для приложений</string>
     <string name="toolkit_title">Разрешить приложениям использовать экран и движение очков?</string>
-    <string name="toolkit_body">%1$s хочет использовать экран или движение очков. Visor установит на очки приложение инструментов Meta и добавит себя в список доверенных устройств. После этого приложение Meta AI не сможет менять этот список. Это делается один раз для каждой пары.</string>
+    <string name="toolkit_body">%1$s хочет использовать экран или движение очков. Visor один раз настроит для этого очки.</string>
     <string name="toolkit_allow">Настроить</string>
     <string name="toolkit_deny">Не сейчас</string>
     <string name="toolkit_ready">Очки готовы</string>
@@ -1188,11 +1188,14 @@
     <string name="toolkit_step_app">Установка приложения инструментов Meta</string>
     <string name="toolkit_step_manifest">Добавление Visor в очки</string>
     <string name="toolkit_step_permissions">Разрешения для инструментов</string>
-    <string name="toolkit_step_done">Готово</string>
-    <string name="toolkit_step_running">Сейчас</string>
     <string name="toolkit_card_title">Движение включено</string>
     <string name="toolkit_card_text">%1$s использует движение очков.</string>
     <string name="toolkit_card_back">Вернитесь назад, чтобы остановить.</string>
     <string name="kit_scope_name_motion">Движение</string>
     <string name="kit_scope_motion">Узнавать, как очки двигаются и поворачиваются, много раз в секунду, по их датчикам движения.</string>
+    <string name="toolkit_point_app">Установит на очки приложение инструментов Meta</string>
+    <string name="toolkit_point_trust">Добавит Visor в список доверенных устройств очков</string>
+    <string name="toolkit_point_once">Один раз для каждой пары очков</string>
+    <string name="toolkit_background">Этот экран можно закрыть. Настройка продолжится, а уведомление покажет её ход.</string>
+    <string name="toolkit_ready_sub">Теперь приложения могут использовать экран и движение очков.</string>
 </resources>

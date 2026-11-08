@@ -1092,7 +1092,7 @@
     <string name="toolkit_channel">为应用设置眼镜</string>
     <string name="toolkit_notification">正在为应用设置眼镜</string>
     <string name="toolkit_title">允许应用使用眼镜的屏幕和动作吗？</string>
-    <string name="toolkit_body">%1$s 想使用眼镜的屏幕或动作。Visor 会在眼镜上安装 Meta 的工具包应用，并把自己加入眼镜信任的设备列表。此后 Meta AI 应用将无法再更改该列表。每副眼镜只需设置一次。</string>
+    <string name="toolkit_body">%1$s 想使用眼镜的屏幕或动作。Visor 会为此设置一次眼镜。</string>
     <string name="toolkit_allow">设置</string>
     <string name="toolkit_deny">以后再说</string>
     <string name="toolkit_ready">眼镜已准备好</string>
@@ -1102,11 +1102,14 @@
     <string name="toolkit_step_app">正在安装 Meta 的工具包应用</string>
     <string name="toolkit_step_manifest">正在把 Visor 加入眼镜</string>
     <string name="toolkit_step_permissions">正在授予工具包权限</string>
-    <string name="toolkit_step_done">完成</string>
-    <string name="toolkit_step_running">进行中</string>
     <string name="toolkit_card_title">动作已开启</string>
     <string name="toolkit_card_text">%1$s 正在使用眼镜的动作。</string>
     <string name="toolkit_card_back">返回即可停止。</string>
     <string name="kit_scope_name_motion">动作</string>
     <string name="kit_scope_motion">通过眼镜的动作传感器，每秒多次读取眼镜如何移动和转动。</string>
+    <string name="toolkit_point_app">在眼镜上安装 Meta 的工具包应用</string>
+    <string name="toolkit_point_trust">把 Visor 加入眼镜信任的设备</string>
+    <string name="toolkit_point_once">每副眼镜只需一次</string>
+    <string name="toolkit_background">你可以关闭此页面。设置会继续进行，通知会显示进度。</string>
+    <string name="toolkit_ready_sub">现在应用可以使用眼镜的屏幕和动作了。</string>
 </resources>

@@ -1134,7 +1134,7 @@
     <string name="toolkit_channel">Configurazione degli occhiali per le app</string>
     <string name="toolkit_notification">Configurazione degli occhiali per le app</string>
     <string name="toolkit_title">Permettere alle app di usare lo schermo e il movimento degli occhiali?</string>
-    <string name="toolkit_body">%1$s vuole usare lo schermo o il movimento degli occhiali. Visor installa sugli occhiali l\'app del toolkit di Meta e si aggiunge ai dispositivi di cui si fidano. Da quel momento l\'app Meta AI non potrà più cambiare quell\'elenco. Lo fai una volta per ogni paio.</string>
+    <string name="toolkit_body">%1$s vuole usare lo schermo o il movimento degli occhiali. Visor prepara gli occhiali una volta sola.</string>
     <string name="toolkit_allow">Configura</string>
     <string name="toolkit_deny">Non ora</string>
     <string name="toolkit_ready">Gli occhiali sono pronti</string>
@@ -1144,11 +1144,14 @@
     <string name="toolkit_step_app">Installazione dell\'app del toolkit di Meta</string>
     <string name="toolkit_step_manifest">Aggiunta di Visor agli occhiali</string>
     <string name="toolkit_step_permissions">Autorizzazioni del toolkit</string>
-    <string name="toolkit_step_done">Fatto</string>
-    <string name="toolkit_step_running">In corso</string>
     <string name="toolkit_card_title">Movimento attivo</string>
     <string name="toolkit_card_text">%1$s sta usando il movimento degli occhiali.</string>
     <string name="toolkit_card_back">Torna indietro per fermare.</string>
     <string name="kit_scope_name_motion">Movimento</string>
     <string name="kit_scope_motion">Leggere come si muovono e girano gli occhiali, più volte al secondo, dai loro sensori di movimento.</string>
+    <string name="toolkit_point_app">Installa sugli occhiali l\'app del toolkit di Meta</string>
+    <string name="toolkit_point_trust">Aggiunge Visor ai dispositivi di cui gli occhiali si fidano</string>
+    <string name="toolkit_point_once">Una volta per ogni paio di occhiali</string>
+    <string name="toolkit_background">Puoi chiudere questa schermata. La configurazione continua e la notifica ne mostra l\'avanzamento.</string>
+    <string name="toolkit_ready_sub">Ora le app possono usare lo schermo e il movimento degli occhiali.</string>
 </resources>
