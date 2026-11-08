@@ -117,6 +117,7 @@ class KitRoutes @Inject constructor(
     private val settings: KitSettings,
     private val conversations: KitConversations,
     private val toolkit: ToolkitSession,
+    private val motion: GlassesMotion,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -199,12 +200,13 @@ class KitRoutes @Inject constructor(
 
         stream(Topics.VOICE_REQUESTS) { caller, offer -> voices.offer(caller.packageName, offer.phrases) }
         stream(Topics.VOICE_TRANSCRIPTS) { caller, request -> transcripts.transcripts(caller, request) }
-        // Motion and layouts come from Meta's toolkit app on the glasses, through a toolkit session of Visor's own.
-        stream(Topics.GLASSES_MOTION) { caller, request ->
+        // Motion comes from the glasses' data collection daemon, with nothing on their screen; layouts from Meta's
+        // toolkit app, through a toolkit session of Visor's own.
+        stream(Topics.GLASSES_MOTION) { _, request ->
             if (request.rateHz !in MotionRequest.RATES) {
                 throw KitException(ErrorCode.INVALID_PARAMS, "The glasses sample at ${MotionRequest.RATES.joinToString()} Hz.")
             }
-            toolkit.motion(caller.packageName, request.rateHz)
+            motion.samples(request.rateHz)
         }
         answer(Methods.DISPLAY_LAYOUT_SHOW) { caller, layout -> requireDisplay(); toolkit.show(caller.packageName, layout) }
         answer(Methods.DISPLAY_LAYOUT_CLOSE) { caller, _ -> toolkit.close(caller.packageName) }

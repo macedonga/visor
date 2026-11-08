@@ -1141,8 +1141,8 @@
     <string name="phone_steady">Phone stabilization</string>
     <string name="toolkit_channel">Glasses setup for apps</string>
     <string name="toolkit_notification">Setting up your glasses for apps</string>
-    <string name="toolkit_title">Let apps use your glasses\' screen and motion?</string>
-    <string name="toolkit_body">%1$s wants to use your glasses\' screen or motion. Visor sets your glasses up for it once.</string>
+    <string name="toolkit_title">Let apps use your glasses\' screen?</string>
+    <string name="toolkit_body">%1$s wants to show things on your glasses\' screen. Visor sets your glasses up for it once.</string>
     <string name="toolkit_allow">Set up</string>
     <string name="toolkit_deny">Not now</string>
     <string name="toolkit_ready">Your glasses are ready</string>

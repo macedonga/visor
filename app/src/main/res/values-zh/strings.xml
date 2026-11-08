@@ -1091,8 +1091,8 @@
     <string name="phone_steady">手机防抖</string>
     <string name="toolkit_channel">为应用设置眼镜</string>
     <string name="toolkit_notification">正在为应用设置眼镜</string>
-    <string name="toolkit_title">允许应用使用眼镜的屏幕和动作吗？</string>
-    <string name="toolkit_body">%1$s 想使用眼镜的屏幕或动作。Visor 会为此设置一次眼镜。</string>
+    <string name="toolkit_title">允许应用使用眼镜的屏幕吗？</string>
+    <string name="toolkit_body">%1$s 想在眼镜的屏幕上显示内容。Visor 会为此设置一次眼镜。</string>
     <string name="toolkit_allow">设置</string>
     <string name="toolkit_deny">以后再说</string>
     <string name="toolkit_ready">眼镜已准备好</string>

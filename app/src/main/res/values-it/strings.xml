@@ -1133,8 +1133,8 @@
     <string name="phone_steady">Stabilizzazione sul telefono</string>
     <string name="toolkit_channel">Configurazione degli occhiali per le app</string>
     <string name="toolkit_notification">Configurazione degli occhiali per le app</string>
-    <string name="toolkit_title">Permettere alle app di usare lo schermo e il movimento degli occhiali?</string>
-    <string name="toolkit_body">%1$s vuole usare lo schermo o il movimento degli occhiali. Visor prepara gli occhiali una volta sola.</string>
+    <string name="toolkit_title">Permettere alle app di usare lo schermo degli occhiali?</string>
+    <string name="toolkit_body">%1$s vuole mostrare contenuti sullo schermo degli occhiali. Visor prepara gli occhiali una volta sola.</string>
     <string name="toolkit_allow">Configura</string>
     <string name="toolkit_deny">Non ora</string>
     <string name="toolkit_ready">Gli occhiali sono pronti</string>

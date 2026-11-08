@@ -1177,8 +1177,8 @@
     <string name="phone_steady">Стабилизация на телефоне</string>
     <string name="toolkit_channel">Настройка очков для приложений</string>
     <string name="toolkit_notification">Настройка очков для приложений</string>
-    <string name="toolkit_title">Разрешить приложениям использовать экран и движение очков?</string>
-    <string name="toolkit_body">%1$s хочет использовать экран или движение очков. Visor один раз настроит для этого очки.</string>
+    <string name="toolkit_title">Разрешить приложениям использовать экран очков?</string>
+    <string name="toolkit_body">%1$s хочет показывать содержимое на экране очков. Visor один раз настроит для этого очки.</string>
     <string name="toolkit_allow">Настроить</string>
     <string name="toolkit_deny">Не сейчас</string>
     <string name="toolkit_ready">Очки готовы</string>

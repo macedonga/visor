@@ -22,10 +22,6 @@ import com.macedonga.visor.kit.protocol.LayoutEnd
 import com.macedonga.visor.kit.protocol.LayoutNode
 import com.macedonga.visor.kit.protocol.LayoutState
 import com.macedonga.visor.kit.protocol.LayoutType
-import com.macedonga.visor.kit.protocol.MotionSample
-import com.macedonga.visor.kit.protocol.MotionSource
-import com.macedonga.visor.kit.protocol.Quaternion
-import com.macedonga.visor.kit.protocol.Vector3
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.KitGrants
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -43,12 +39,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -56,10 +49,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The toolkit session apps share: an app link of Visor's own to the active pair (its app key proved on svc79), a
- * svc7009 session, and Meta's toolkit app on svc6500, which serves motion and draws layouts. It opens on the first
- * app that needs it and closes a little after the last one leaves; the wearer ends it by going back on the glasses.
- * While no layout shows, the toolkit app's screen stays black, which the Display does not light: motion shows nothing,
- * as with DAT.
+ * svc7009 session, and Meta's toolkit app on svc6500, which draws the layouts. It opens on the first app that needs
+ * it and closes a little after the last one leaves; the wearer ends it by going back on the glasses. Motion does not
+ * use it: [com.macedonga.visor.outside.GlassesMotion] reads the glasses' sensors with nothing on their screen.
  */
 @Singleton
 class ToolkitSession @Inject constructor(
@@ -73,34 +65,12 @@ class ToolkitSession @Inject constructor(
     private var live: Live? = null
     private var closing: Job? = null
 
-    private val motionUsers = ConcurrentHashMap<String, AtomicInteger>()
     private val owner = MutableStateFlow<String?>(null)
 
     // The session the shown layout holds open; a layout holds one use of it, whoever shows it.
     private var layoutSession: Live? = null
     private val states = MutableSharedFlow<Pair<String, LayoutState>>(replay = 0, extraBufferCapacity = 16)
     private val clicks = MutableSharedFlow<Pair<String, LayoutClick>>(extraBufferCapacity = 64)
-
-    /** The motion sensors at [rateHz] for [app], while collected. The first app's rate serves the others too. */
-    fun motion(app: String, rateHz: Int): Flow<MotionSample> = flow {
-        val session = acquire(app)
-        motionUsers.getOrPut(app) { AtomicInteger() }.incrementAndGet()
-        try {
-            if (Dat.IMU !in session.capabilities) {
-                session.add(Dat.IMU)
-                session.request(Dat.IMU, Dat.motionStart(rateHz))
-            }
-            emitAll(session.motion.takeWhile { it != null }.map { sample(it!!) })
-            throw KitException(ErrorCode.CLOSED, "The wearer left the toolkit app on the glasses.", reason = "back")
-        } finally {
-            if (motionUsers[app]?.decrementAndGet() == 0) motionUsers.remove(app)
-            if (motionUsers.isEmpty() && !session.ended.isCompleted && Dat.IMU in session.capabilities) {
-                runCatching { session.request(Dat.IMU, Dat.motionStop()) }
-                session.capabilities -= Dat.IMU
-            }
-            release(session)
-        }
-    }
 
     /** Shows [layout] for [app], in place of the one shown before, which goes with the reason `replaced`. */
     suspend fun show(app: String, layout: Layout) {
@@ -173,19 +143,9 @@ class ToolkitSession @Inject constructor(
         ConstellationTrustExchange(ready.appKey, ready.appPublicKey, ready.version, ready.salt),
     )
 
-    private fun sample(s: Dat.Sample) = MotionSample(
-        time = s.timeNs,
-        accelerometer = s.accelerometer?.let { Vector3(it.x, it.y, it.z) },
-        gyroscope = s.gyroscope?.let { Vector3(it.x, it.y, it.z) },
-        magnetometer = s.magnetometer?.let { Vector3(it.x, it.y, it.z) },
-        orientation = s.orientation?.let { Quaternion(it.x, it.y, it.z, it.w) },
-        source = if (s.band) MotionSource.BAND else MotionSource.GLASSES,
-    )
-
     private fun ended(session: Live, why: String) {
         if (!session.ended.complete(why)) return
         log.add("Toolkit: session ended ($why)")
-        session.motion.tryEmit(null)
         if (layoutSession === session) {
             owner.value?.let { states.tryEmit(it to LayoutState(showing = false, reason = LayoutEnd.BACK, time = now())) }
             owner.value = null
@@ -201,7 +161,6 @@ class ToolkitSession @Inject constructor(
         var users = 0
         val capabilities: MutableSet<Int> = ConcurrentHashMap.newKeySet()
         val ended = CompletableDeferred<String>()
-        val motion = MutableSharedFlow<Dat.Sample?>(extraBufferCapacity = 512)
         private val started = CompletableDeferred<Dat.SessionStarted>()
         private val answers = ConcurrentHashMap<String, CompletableDeferred<Dat.Response>>()
         private val ids = AtomicInteger()
@@ -292,7 +251,6 @@ class ToolkitSession @Inject constructor(
         private fun event(e: Dat.Event) {
             val payload = e.payload ?: return
             when (e.capability) {
-                Dat.IMU -> Dat.motionSamples(payload).forEach(motion::tryEmit)
                 Dat.DISPLAY -> {
                     val app = owner.value ?: return
                     Dat.displayClick(payload)?.let { clicks.tryEmit(app to LayoutClick(it, now())) }
