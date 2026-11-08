@@ -41,18 +41,19 @@ internal object MirandaProbe {
     )
 
     // ConfigParser::parseConfigFromJson and parseSensorsConfig in the daemon: motion sensors only.
-    private fun config(periodUs: Int, rateHz: Int) =
+    // [extra] is more sensor entries, as JSON members, for trying the daemon's other sources.
+    private fun config(periodUs: Int, rateHz: Int, extra: String) =
         "{\"session_info\":{\"session_id\":\"visor-motion\"},\"config\":{\"sensors\":{" +
             "\"accelerometer\":{\"enabled\":true,\"period_us\":$periodUs,\"use_sensor_manager\":true}," +
             "\"gyroscope\":{\"enabled\":true,\"period_us\":$periodUs,\"use_sensor_manager\":true}," +
             "\"magnetometer\":{\"enabled\":true,\"sampling_rate_hz\":$rateHz}," +
-            "\"heading\":{\"enabled\":true,\"sampling_rate_hz\":$rateHz}}}}"
+            "\"heading\":{\"enabled\":true,\"sampling_rate_hz\":$rateHz}" + (if (extra.isBlank()) "" else ",$extra") + "}}}"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private val batches = AtomicInteger()
 
-    fun start(connection: GlassesConnection, rateHz: Int, channels: List<String>, log: EventLog): String {
+    fun start(connection: GlassesConnection, rateHz: Int, channels: List<String>, log: EventLog, extra: String = ""): String {
         stop(connection, log, quiet = true)
         batches.set(0)
         job = scope.launch {
@@ -65,7 +66,7 @@ internal object MirandaProbe {
             connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_SNINTENT, SnApp.intent(START)) }
             log.add("Miranda: asked the glasses to start data collection")
             delay(2_500)
-            val json = config(1_000_000 / rateHz.coerceAtLeast(1), rateHz)
+            val json = config(1_000_000 / rateHz.coerceAtLeast(1), rateHz, extra)
             connection.submit { it.sendOnService(SERVICE, CONFIGURE, Wire.fieldString(1, "visor-config") + Wire.fieldString(2, json)) }
             log.add("Miranda: configured $json")
             delay(1_500)

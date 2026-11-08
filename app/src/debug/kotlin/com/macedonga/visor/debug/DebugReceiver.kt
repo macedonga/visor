@@ -221,6 +221,7 @@ class DebugReceiver : BroadcastReceiver() {
             "MIRANDA" -> resultData = MirandaProbe.start(
                 connection, intent.getIntExtra("rate", 10),
                 intent.getStringExtra("channels")?.split(',')?.filter { it.isNotBlank() } ?: MirandaProbe.CANDIDATES, log,
+                intent.getStringExtra("sensors").orEmpty(),
             )
             "MIRANDA_STOP" -> resultData = MirandaProbe.stop(connection, log)
             // The glasses say --es text in their own voice, through the data collection daemon's speech.
