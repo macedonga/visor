@@ -19,6 +19,11 @@ data class IdentityBundle(
     /** How this pair was set up: `change-owner` or `band`. */
     val provenance: String,
     val state: String,
+    /**
+     * The glasses' key as Meta's final receipt names it (`additional_data.device_ec_public_key`), 64 raw bytes: the
+     * key their constellation manifest lists them by. Null for pairs set up before Visor kept it.
+     */
+    val devicePublicKey: ByteArray? = null,
 ) {
 
     override fun equals(other: Any?): Boolean {
@@ -29,7 +34,8 @@ data class IdentityBundle(
             serial == other.serial &&
             createdAt == other.createdAt &&
             provenance == other.provenance &&
-            state == other.state
+            state == other.state &&
+            devicePublicKey.contentEquals(other.devicePublicKey)
     }
 
     override fun hashCode(): Int {
@@ -39,6 +45,7 @@ data class IdentityBundle(
         result = 31 * result + createdAt.hashCode()
         result = 31 * result + provenance.hashCode()
         result = 31 * result + state.hashCode()
+        result = 31 * result + devicePublicKey.contentHashCode()
         return result
     }
 
@@ -70,6 +77,7 @@ internal class BundleJson(
     @SerialName("created_at") val createdAt: String,
     @SerialName("provenance") val provenance: String,
     @SerialName("state") val state: String,
+    @SerialName("device_public_key") val devicePublicKey: String? = null,
 )
 
 internal val BundleFormat = Json { ignoreUnknownKeys = true }
@@ -81,6 +89,7 @@ internal fun IdentityBundle.toJsonModel(): BundleJson = BundleJson(
     createdAt = createdAt,
     provenance = provenance,
     state = state,
+    devicePublicKey = devicePublicKey?.let { Base64.getEncoder().encodeToString(it) },
 )
 
 internal fun BundleJson.toBundle(): IdentityBundle = IdentityBundle(
@@ -90,6 +99,7 @@ internal fun BundleJson.toBundle(): IdentityBundle = IdentityBundle(
     createdAt = createdAt,
     provenance = provenance,
     state = state,
+    devicePublicKey = devicePublicKey?.let { Base64.getDecoder().decode(it) },
 )
 
 /** The store's contents: a JSON array of bundles. */
