@@ -289,7 +289,7 @@ class ToolkitSession @Inject constructor(
                     Dat.SESSION_SERVICE -> when (event.messageType) {
                         Dat.SESSION_START_RESPONSE -> started.complete(Dat.sessionStarted(event.payload))
                         Dat.SESSION_STOP -> ended(this, if (dam) "the wearer left the toolkit app" else "the glasses ended it")
-                        Dat.SESSION_INPUT -> runCatching { inputs.tryEmit(Dat.sessionInput(event.payload)) }
+                        Dat.SESSION_INPUT -> runCatching { Dat.sessionInput(event.payload) }.getOrNull()?.let(::input)
                     }
                     Dat.DWA_SERVICE -> when (event.messageType) {
                         Dat.RESPONSE -> Dat.response(event.payload).let { answers[it.requestId]?.complete(it) }
@@ -333,6 +333,17 @@ class ToolkitSession @Inject constructor(
         }
     }
 
+    // One gesture comes as several key codes (the finger's or the touchpad's, and the generic one) within milliseconds.
+    @Volatile private var lastInput: Dat.SessionInput? = null
+
+    private fun input(input: Dat.SessionInput) {
+        val repeat = lastInput?.let {
+            it.source == input.source && it.gesture == input.gesture && it.actuator == input.actuator && input.timeMs - it.timeMs in 0..REPEAT_MS
+        } == true
+        lastInput = input
+        if (!repeat) inputs.tryEmit(input)
+    }
+
     private fun LayoutNode.all(): List<LayoutNode> = listOf(this) + children.flatMap { it.all() }
 
     private fun now() = System.currentTimeMillis()
@@ -346,5 +357,6 @@ class ToolkitSession @Inject constructor(
         const val IDLE_MS = 5_000L
         const val STOP_GRACE_MS = 500L
         const val REOPEN_MS = 3_000L
+        const val REPEAT_MS = 30L
     }
 }

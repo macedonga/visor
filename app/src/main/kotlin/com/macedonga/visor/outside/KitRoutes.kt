@@ -134,16 +134,20 @@ class KitRoutes @Inject constructor(
             }.onStart { readPairs() }.distinctUntilChanged()
         }
         answer(Methods.GLASSES_SELECT) { _, selection -> select(selection.serial) }
-        // Over Wi-Fi while the Live runs, over Bluetooth otherwise.
-        // The Display's own navigation (nav, select, back, drag) and keepBack come with its toolkit session.
-        stream(Topics.GLASSES_INPUTS) { _, request ->
-            merge(connection.serviceData, live.wifiData)
+        // Over Wi-Fi while the Live runs, over Bluetooth otherwise. On a Display the touchpad and the band come through
+        // a toolkit session instead, which needs no toolkit app: the Display does not push their gestures on svc28.
+        stream(Topics.GLASSES_INPUTS) { caller, request ->
+            val pushed = merge(connection.serviceData, live.wifiData)
                 .filter { it.serviceId == SVC_STATUS && isDeviceStateType(it.messageType) }
                 .transform { push ->
                     val display = isDisplayBuild(connection.state.value.info?.build)
                     runCatching { decodeInputs(push.messageType, push.payload, display) }.getOrDefault(emptyList()).forEach { emit(kitInput(it)) }
                 }
-                .filter { request.sources?.contains(it.source) ?: true }
+            val wanted = request.sources
+            val session = isDisplayBuild(connection.state.value.info?.build) &&
+                (wanted == null || InputSource.TOUCHPAD in wanted || InputSource.BAND in wanted)
+            (if (session) merge(pushed, toolkit.inputs(caller.packageName).mapNotNull(::sessionInput)) else pushed)
+                .filter { wanted?.contains(it.source) ?: true }
         }
 
         answer(Methods.CAMERA_PHOTO) { caller, request -> photo(caller, request.import) }
@@ -503,16 +507,19 @@ class KitRoutes @Inject constructor(
     // The band stays on the Display: its gestures come forwarded through a toolkit session, which needs no toolkit app.
     private fun gestures(app: String): Flow<Gesture> = flow {
         requireBand()
-        // One hold comes as several key codes (the finger's and the generic one) within a few milliseconds.
-        var last: Dat.SessionInput? = null
-        emitAll(
-            toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.filter { input ->
-                val repeat = last?.let { it.gesture == input.gesture && it.actuator == input.actuator && input.timeMs - it.timeMs in 0..REPEAT_MS } == true
-                last = input
-                !repeat
-            }.map(::kitGesture),
-        )
+        emitAll(toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.map(::kitGesture))
     }
+
+    // A touchpad or band gesture forwarded by a toolkit session, as DAT names them.
+    private fun sessionInput(input: Dat.SessionInput): GlassesInput? = GlassesInput(
+        source = when (input.source) {
+            Dat.INPUT_CAPTOUCH -> InputSource.TOUCHPAD
+            Dat.INPUT_EMG -> InputSource.BAND
+            else -> return null
+        },
+        action = SESSION_INPUTS[input.gesture] ?: InputAction("unknown"),
+        time = System.currentTimeMillis(),
+    )
 
     private fun kitGesture(input: Dat.SessionInput) = Gesture(
         finger = when (input.actuator) {
@@ -537,7 +544,10 @@ class KitRoutes @Inject constructor(
         const val IMPORT_MS = 10 * 60_000L
 
         // EmgImu$GestureEvent's action and derived action, as Band.Gesture documents them.
-        const val REPEAT_MS = 30L
+        val SESSION_INPUTS = mapOf(
+            1 to InputAction.TAP, 2 to InputAction.DOUBLE_TAP, 3 to InputAction.TRIPLE_TAP, 4 to InputAction.TAP_HOLD,
+            5 to InputAction.NAV_UP, 6 to InputAction.NAV_DOWN, 7 to InputAction.NAV_LEFT, 8 to InputAction.NAV_RIGHT,
+        )
         val SESSION_GESTURES = mapOf(
             1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction("triple_tap"), 4 to GestureAction.HOLD,
             5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,
