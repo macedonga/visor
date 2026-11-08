@@ -212,6 +212,12 @@ class DebugReceiver : BroadcastReceiver() {
                 ),
             )
             "APP_STOP" -> resultData = AppLinkProbe.stop()
+            // The glasses' motion from their data collection daemon (svc1027), no toolkit app: --ei rate, --es channels a,b.
+            "MIRANDA" -> resultData = MirandaProbe.start(
+                connection, intent.getIntExtra("rate", 10),
+                intent.getStringExtra("channels")?.split(',')?.filter { it.isNotBlank() } ?: MirandaProbe.CANDIDATES, log,
+            )
+            "MIRANDA_STOP" -> resultData = MirandaProbe.stop(connection, log)
             // Grants a phone app the glasses' permissions over RLDrive, as the Meta app does: --es pkg (Visor by default)
             // --es perms DEV_MODE,IMU (short names); then lists what the namespace holds.
             "GRANT" -> answerLater {
