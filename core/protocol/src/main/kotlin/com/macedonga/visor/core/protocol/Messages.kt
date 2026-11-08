@@ -95,13 +95,38 @@ class EnableEncryption(
     }
 }
 
-/** Final handshake message: {1 asMain, 2 scope uuid, 3 lease uuid}. */
+/**
+ * Final handshake message: {1 state, 2 the sender's stream uuid, 3 the sender's link uuid}. [MAIN] makes the link the
+ * one in use; [READY] keeps it beside the main link for a switch. The glasses file the link under the two sides' link
+ * uuids, and a SwitchTransportLink names it by the sender's.
+ */
 object EndLinkSetup {
-    fun encode(asMain: Int, scopeUuid: ByteArray, leaseUuid: ByteArray): ByteArray {
+    const val READY = 0
+    const val MAIN = 1
+
+    fun encode(state: Int, streamUuid: ByteArray, linkUuid: ByteArray): ByteArray {
         // The glasses drop the channel silently on a non-v4 uuid.
-        require(LinkUuid.isValid(scopeUuid) && LinkUuid.isValid(leaseUuid)) { "EndLinkSetup uuids must be RFC 4122 v4" }
-        return Wire.fieldVarint(1, asMain.toLong()) + Wire.fieldBytes(2, scopeUuid) + Wire.fieldBytes(3, leaseUuid)
+        require(LinkUuid.isValid(streamUuid) && LinkUuid.isValid(linkUuid)) { "EndLinkSetup uuids must be RFC 4122 v4" }
+        return Wire.fieldVarint(1, state.toLong()) + Wire.fieldBytes(2, streamUuid) + Wire.fieldBytes(3, linkUuid)
     }
+
+    /** The link uuid in a peer's EndLinkSetup, which its switch messages name this link by. */
+    fun linkUuid(payload: ByteArray): ByteArray? = runCatching { Wire.parse(payload).bytes(3) }.getOrNull()?.takeIf { it.size == 16 }
+}
+
+/**
+ * svc10 switch messages, {1 target}, the link uuid the sender gave the link. SwitchLink moves only the peer's
+ * receiving side; SwitchTransportLink moves both: the glasses read the named link, flush the old one, answer with a
+ * switch message of their own on the old link and send on the new one from then on.
+ */
+object LinkSwitch {
+    const val SERVICE = 10
+    const val SWITCH_LINK = 4117
+    const val SWITCH_TRANSPORT_LINK = 4128
+
+    fun encode(target: ByteArray): ByteArray = Wire.fieldBytes(1, target)
+
+    fun target(payload: ByteArray): ByteArray? = runCatching { Wire.parse(payload).bytes(1) }.getOrNull()
 }
 
 /** The 16-byte UUIDs EndLinkSetup carries, and the firmware check they have to pass. */

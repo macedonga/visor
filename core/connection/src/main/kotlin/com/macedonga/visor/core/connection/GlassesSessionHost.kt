@@ -5,14 +5,22 @@ import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityTrustExchange
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.GlassesSession
+import com.macedonga.visor.core.session.LinkMove
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
+import com.macedonga.visor.core.session.TrustExchange
+import com.macedonga.visor.core.transport.Transport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
 /** The real session, behind the seam the connection is written against. */
-class GlassesSessionHost(private val session: GlassesSession) : SessionHost {
+class GlassesSessionHost(
+    private val session: GlassesSession,
+    // A second link's byte pipe and its trust exchange, for [addLink].
+    private val transports: ((GlassesLink) -> Transport)? = null,
+    private val trust: () -> TrustExchange? = { null },
+) : SessionHost {
 
     override val events: Flow<SessionEvent> get() = session.events
 
@@ -23,6 +31,15 @@ class GlassesSessionHost(private val session: GlassesSession) : SessionHost {
     override val handshake: String? get() = session.handshake
 
     override fun start(scope: CoroutineScope) = session.start(scope)
+
+    override val onAddedLink: Boolean get() = session.onExtraLink
+
+    override suspend fun addLink(link: GlassesLink): LinkMove {
+        val pipes = transports ?: return LinkMove(false, "this session cannot add a link")
+        return session.addLink(pipes(link), trust())
+    }
+
+    override suspend fun dropLink(): LinkMove = session.dropLink()
 
     override suspend fun stop() = session.stop()
 
@@ -49,6 +66,6 @@ class RealSessionHostFactory(
         val trust = bundle?.let { IdentityTrustExchange(BundleCredentials(it)) }
         val session = GlassesSession(transport, trust)
         responders.forEach(session::addResponder)
-        return GlassesSessionHost(session)
+        return GlassesSessionHost(session, transports::create) { bundle?.let { IdentityTrustExchange(BundleCredentials(it)) } }
     }
 }

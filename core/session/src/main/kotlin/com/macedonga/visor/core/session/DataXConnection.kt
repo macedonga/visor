@@ -9,6 +9,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** One decoded DataX message: its header and its application payload. On a close, [closedService] is the channel's service. */
 class DataXMessage(val info: MessageInfo, val payload: ByteArray, val closedService: Int = 0)
@@ -16,11 +19,24 @@ class DataXMessage(val info: MessageInfo, val payload: ByteArray, val closedServ
 /** A send on a channel this connection has not opened, or under another service's tag. Nothing went out. */
 class ChannelRefused(message: String) : IllegalStateException(message)
 
-/** The channel mux riding on one [SecureLink]. */
+/** The channel mux riding on one [SecureLink], whose frames may come from another link's transport after a switch. */
 class DataXConnection(
     private val link: SecureLink,
     private val registry: ChannelRegistry,
+    frames: FrameSource = FrameSource { link.nextSdu() },
 ) {
+
+    // Where sealed frames come in from. A link switch moves it once the peer's switch message has come.
+    @Volatile
+    private var rx: FrameSource = frames
+
+    // Keeps a send from slipping between a switch message and the move of the link's sends.
+    private val writeLock = Mutex()
+
+    private class RxMove(val next: FrameSource, val trigger: (DataXMessage) -> Boolean, val done: CompletableDeferred<FrameSource>)
+
+    @Volatile
+    private var rxMove: RxMove? = null
 
     // Messages waiting in front of anything the reader has produced.
     private val inbox = ArrayDeque<DataXMessage>()
@@ -52,7 +68,17 @@ class DataXConnection(
         val job = scope.launch {
             try {
                 while (true) {
-                    for (message in decode(link.receive())) fromReader.send(message)
+                    val plaintext = link.open(rx.receive()) ?: continue
+                    for (message in decode(plaintext)) {
+                        fromReader.send(message)
+                        val move = rxMove
+                        if (move != null && move.trigger(message)) {
+                            rxMove = null
+                            val left = rx
+                            rx = move.next
+                            move.done.complete(left)
+                        }
+                    }
                 }
             } catch (cancellation: CancellationException) {
                 fromReader.close()
@@ -112,9 +138,38 @@ class DataXConnection(
         ) + (if (payload.size <= TRACE_PAYLOAD) " data=" + payload.toHexString() else "")
 
     // The transport under a gone link may already be open again for the next one, under other keys.
-    private suspend fun write(plaintext: ByteArray) {
+    private suspend fun write(plaintext: ByteArray) = writeLock.withLock { writeNow(plaintext) }
+
+    private suspend fun writeNow(plaintext: ByteArray) {
         check(!gone.isCompleted) { "the link under this connection has gone" }
         link.send(plaintext)
+    }
+
+    /**
+     * Send [payload] for [serviceId] on a channel of its own, then send nothing until a message passes [answer]: from
+     * then on frames come from [next], and [move] runs before the next send. False, with nothing moved, when no answer
+     * comes in [waitMillis]. The new channel's opening frame names the service, which the glasses' link switch
+     * watches for in the raw stream; until their answer, a frame on either link would reach a path they are clearing.
+     */
+    suspend fun switchLinks(
+        serviceId: Int,
+        messageType: Int,
+        payload: ByteArray,
+        next: FrameSource,
+        answer: (DataXMessage) -> Boolean,
+        waitMillis: Long,
+        move: () -> Unit,
+    ): Boolean = writeLock.withLock {
+        val done = CompletableDeferred<FrameSource>()
+        rxMove = RxMove(next, answer, done)
+        val header = Header.build(channelId = openChannel(serviceId), dataLen = payload.size, serviceId = serviceId, messageType = messageType)
+        writeNow(header + payload)
+        if (withTimeoutOrNull(waitMillis) { done.await() } == null) {
+            rxMove = null
+            return@withLock false
+        }
+        move()
+        true
     }
 
     // This connection's one channel per service. The glasses answer on every open channel of a
@@ -154,7 +209,7 @@ class DataXConnection(
         inbox.removeFirstOrNull()?.let { return it }
         if (reader != null) return fromReader.receive()
         while (inbox.isEmpty()) {
-            inbox.addAll(decode(link.receive()))
+            link.open(rx.receive())?.let { inbox.addAll(decode(it)) }
         }
         return inbox.removeFirst()
     }
