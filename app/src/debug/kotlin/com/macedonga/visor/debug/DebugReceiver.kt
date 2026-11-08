@@ -69,6 +69,7 @@ import com.macedonga.visor.core.settings.contactObject
 import com.macedonga.visor.core.settings.contactsNamespace
 import com.macedonga.visor.core.settings.permissionObject
 import com.macedonga.visor.dat.DatLayout
+import com.macedonga.visor.dat.ToolkitStore
 import com.macedonga.visor.display.CaptionPacks
 import com.macedonga.visor.gallery.PhoneLibrary
 import com.macedonga.visor.home.PairSeen
@@ -149,6 +150,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var classicBond: ClassicBond
     @Inject lateinit var albums: Albums
     @Inject lateinit var library: PhoneLibrary
+    @Inject lateinit var toolkit: ToolkitStore
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -174,7 +176,15 @@ class DebugReceiver : BroadcastReceiver() {
             "PROVISION_STATUS" -> resultData = provisioner.status.value.toString()
             // Visor's own app link to the Display (AppLinkProbe): --es pem <base64 PEM of the app key> --ei version N
             // --es salt <hex>; then APP_MOTION [--ei rate], APP_LAYOUT, APP_STOP. Steps go to LOG as "AppLink:".
-            "APP_LINK" -> resultData = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address?.let { address ->
+            // Without a pem: Visor's toolkit key and the manifest it installed on this pair.
+            "APP_LINK" -> resultData = if (!intent.hasExtra("pem")) {
+                val address = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
+                val pair = connection.state.value.info?.serial?.let(toolkit::pair)
+                if (address == null || pair == null) "no pair over Bluetooth, or no toolkit setup on it" else {
+                    val (key, public) = toolkit.appKey()
+                    AppLinkProbe.start(context, address, key, public, pair.version, pair.salt, 0, 0, intent.getBooleanExtra("dam", true), log)
+                }
+            } else (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address?.let { address ->
                 AppLinkProbe.start(
                     context, address, Base64.decode(intent.getStringExtra("pem").orEmpty(), Base64.DEFAULT),
                     intent.getIntExtra("version", 0).toLong(), intent.getStringExtra("salt").orEmpty().hexToByteArray(),

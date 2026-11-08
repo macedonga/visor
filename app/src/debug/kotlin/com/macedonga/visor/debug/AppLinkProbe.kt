@@ -15,6 +15,7 @@ import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.log.EventLog
+import java.security.PrivateKey
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -39,9 +40,13 @@ internal object AppLinkProbe {
     private val samples = AtomicInteger()
 
     fun start(context: Context, address: String, pem: ByteArray, version: Long, salt: ByteArray, tag: Int, sign: Int, dam: Boolean, log: EventLog): String {
-        stop()
         val credentials = BundleCredentials(IdentityBundle(pem, address, "visor-app", nowIso(), "app", BundleState.VERIFIED))
-        val trust = ProbeConstellationTrust(credentials.appEcKey, credentials.appPublicKey, version, salt, tag, sign) { log.add("AppLink: $it") }
+        return start(context, address, credentials.appEcKey, credentials.appPublicKey, version, salt, tag, sign, dam, log)
+    }
+
+    fun start(context: Context, address: String, key: PrivateKey, publicKey: ByteArray, version: Long, salt: ByteArray, tag: Int, sign: Int, dam: Boolean, log: EventLog): String {
+        stop()
+        val trust = ProbeConstellationTrust(key, publicKey, version, salt, tag, sign) { log.add("AppLink: $it") }
         val opened = GlassesSession(BluetoothLeTransport(context, address), trust)
         session = opened
         job = scope.launch {
@@ -111,7 +116,7 @@ internal object AppLinkProbe {
                 val started = Dat.sessionStarted(event.payload)
                 log.add("AppLink: session status ${started.status}, toolkit app ${started.dwaVersion}, launch ${started.dwaLaunch}, compatibility ${started.compatibility}")
                 // The toolkit app needs about a second to come up after the launch before it hears svc6500.
-                if (started.status == Dat.START_OK) scope.launch {
+                if (started.status == Dat.START_OK && started.dwaLaunch == 1) scope.launch {
                     delay(2_000)
                     log.add("AppLink: ${capability(Dat.IMU, Dat.motionStart(10))}")
                 }
