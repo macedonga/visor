@@ -34,24 +34,29 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The toolkit session apps share: an app link of Visor's own to the active pair (its app key proved on svc79), a
  * svc7009 session, and Meta's toolkit app on svc6500, which draws the layouts. It opens on the first app that needs
- * it and closes a little after the last one leaves; the wearer ends it by going back on the glasses. Motion does not
- * use it: [com.macedonga.visor.outside.GlassesMotion] reads the glasses' sensors with nothing on their screen.
+ * it and closes a little after the last one leaves; the wearer ends it by going back on the glasses. Every session
+ * forwards the wearer's band and touchpad gestures: with no layout to show, one without the toolkit app does, so the
+ * screen stays as it was and the band stays on the Display. Motion does not use it:
+ * [com.macedonga.visor.outside.GlassesMotion] reads the glasses' sensors with nothing on their screen.
  */
 @Singleton
 class ToolkitSession @Inject constructor(
@@ -71,6 +76,43 @@ class ToolkitSession @Inject constructor(
     private var layoutSession: Live? = null
     private val states = MutableSharedFlow<Pair<String, LayoutState>>(replay = 0, extraBufferCapacity = 16)
     private val clicks = MutableSharedFlow<Pair<String, LayoutClick>>(extraBufferCapacity = 64)
+
+    private val inputs = MutableSharedFlow<Dat.SessionInput>(extraBufferCapacity = 64)
+    private var inputUsers = 0
+    private var keeper: Job? = null
+
+    /** The wearer's gestures, from the band and the touchpad, while collected; [app] names the request to set up. */
+    fun inputs(app: String): Flow<Dat.SessionInput> = flow {
+        opening.withLock { if (inputUsers++ == 0) keeper = scope.launch { keep(app) } }
+        try {
+            inputs.collect { emit(it) }
+        } finally {
+            withContext(NonCancellable) {
+                opening.withLock {
+                    if (--inputUsers == 0) {
+                        keeper?.cancel()
+                        keeper = null
+                        live?.takeIf { it.users <= 0 }?.let {
+                            it.stop()
+                            live = null
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A session without the toolkit app ends when another app comes to the front, and starts only while the glasses
+    // are worn: while an app listens, a session is opened again.
+    private suspend fun keep(app: String) {
+        while (true) {
+            val session = runCatching { opening.withLock { live?.takeIf { !it.ended.isCompleted } ?: openSession(app, dam = false) } }
+                .onFailure { log.add("Toolkit: no session for gestures yet: ${it.message}") }
+                .getOrNull()
+            session?.ended?.await()
+            delay(REOPEN_MS)
+        }
+    }
 
     /** Shows [layout] for [app], in place of the one shown before, which goes with the reason `replaced`. */
     suspend fun show(app: String, layout: Layout) {
@@ -115,13 +157,21 @@ class ToolkitSession @Inject constructor(
 
     private suspend fun acquire(app: String): Live = opening.withLock {
         closing?.cancel()
-        live?.takeIf { !it.ended.isCompleted }?.let { it.users++; return it }
-        val ready = toolkit.ready(grants.labelOf(app))
-        val session = Live(open(ready))
-        live = session
-        session.start()
+        live?.takeIf { !it.ended.isCompleted && it.dam }?.let { it.users++; return it }
+        // A session without the toolkit app cannot draw: it gives way to one with it, which forwards gestures too.
+        live?.takeIf { !it.ended.isCompleted }?.stop()
+        val session = openSession(app, dam = true)
         session.users++
         session
+    }
+
+    // Under [opening].
+    private suspend fun openSession(app: String, dam: Boolean): Live {
+        val ready = toolkit.ready(grants.labelOf(app))
+        val session = Live(open(ready), dam)
+        live = session
+        session.start()
+        return session
     }
 
     private fun release(session: Live) {
@@ -156,8 +206,8 @@ class ToolkitSession @Inject constructor(
         session.close()
     }
 
-    /** One open session: the link, the toolkit app's channel, and the requests waiting for their answers. */
-    private inner class Live(val link: GlassesSession) {
+    /** One open session: the link, the toolkit app's channel ([dam]: launched), and the requests waiting for answers. */
+    private inner class Live(val link: GlassesSession, val dam: Boolean) {
         var users = 0
         val capabilities: MutableSet<Int> = ConcurrentHashMap.newKeySet()
         val ended = CompletableDeferred<String>()
@@ -178,7 +228,7 @@ class ToolkitSession @Inject constructor(
                 stop()
                 throw KitException(ErrorCode.FAILED, "The glasses did not start the toolkit session (status ${result?.status}).", reason = "session_failed")
             }
-            log.add("Toolkit: session open, toolkit app ${result.dwaVersion}")
+            log.add(if (dam) "Toolkit: session open, toolkit app ${result.dwaVersion}" else "Toolkit: session open without the toolkit app")
         }
 
         /** Adds [capability], retrying while the toolkit app comes up after its launch. */
@@ -227,7 +277,7 @@ class ToolkitSession @Inject constructor(
         private fun heard(event: Any) {
             when (event) {
                 is LinkStateChanged -> when (event.state) {
-                    LinkState.READY -> log.add("Toolkit: app link ready, trust ${link.trustResult}").also { send7009(Dat.SESSION_START_REQUEST, Dat.sessionStart(context.packageName, sessionId, "Visor", SDK_VERSION)) }
+                    LinkState.READY -> log.add("Toolkit: app link ready, trust ${link.trustResult}").also { send7009(Dat.SESSION_START_REQUEST, Dat.sessionStart(context.packageName, sessionId, "Visor", SDK_VERSION, usesDam = dam)) }
                     // Before the session starts, a lost link reconnects on its own: [start] waits for it.
                     LinkState.LOST, LinkState.DISCONNECTED -> if (started.isCompleted) ended(this, "link ${event.state.name.lowercase()}")
                     else -> Unit
@@ -238,7 +288,8 @@ class ToolkitSession @Inject constructor(
                 is ServiceData -> when (event.serviceId) {
                     Dat.SESSION_SERVICE -> when (event.messageType) {
                         Dat.SESSION_START_RESPONSE -> started.complete(Dat.sessionStarted(event.payload))
-                        Dat.SESSION_STOP -> ended(this, "the wearer left the toolkit app")
+                        Dat.SESSION_STOP -> ended(this, if (dam) "the wearer left the toolkit app" else "the glasses ended it")
+                        Dat.SESSION_INPUT -> runCatching { inputs.tryEmit(Dat.sessionInput(event.payload)) }
                     }
                     Dat.DWA_SERVICE -> when (event.messageType) {
                         Dat.RESPONSE -> Dat.response(event.payload).let { answers[it.requestId]?.complete(it) }
@@ -294,5 +345,6 @@ class ToolkitSession @Inject constructor(
         const val ADD_RETRY_MS = 700L
         const val IDLE_MS = 5_000L
         const val STOP_GRACE_MS = 500L
+        const val REOPEN_MS = 3_000L
     }
 }

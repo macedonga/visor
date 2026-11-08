@@ -34,7 +34,7 @@ import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
-import com.macedonga.visor.core.protocol.Band as BandWire
+import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.dat.ToolkitSession
@@ -81,6 +81,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
@@ -175,7 +176,7 @@ class KitRoutes @Inject constructor(
         stream(Topics.BAND_STATUS) { _, _ ->
             combine(connection.pair, bands.all, band.state, connection.state) { _, _, state, _ -> bandStatus(state) }.distinctUntilChanged()
         }
-        stream(Topics.BAND_GESTURES) { _, _ -> gestures() }
+        stream(Topics.BAND_GESTURES) { caller, _ -> gestures(caller.packageName) }
         answer(Methods.BAND_BUZZ) { _, request ->
             requireBand()
             when (band.vibrate(request.durationMs.toLong(), request.strength)) {
@@ -499,25 +500,28 @@ class KitRoutes @Inject constructor(
     }
 
     /** The band's gestures while collected: the band is borrowed from the Display for as long as that lasts. */
-    private fun gestures(): Flow<Gesture> = flow {
+    // The band stays on the Display: its gestures come forwarded through a toolkit session, which needs no toolkit app.
+    private fun gestures(app: String): Flow<Gesture> = flow {
         requireBand()
-        band.startLesson()
-        try {
-            band.gestures.collect { emit(kitGesture(it)) }
-        } finally {
-            band.endLesson()
-        }
+        // One hold comes as several key codes (the finger's and the generic one) within a few milliseconds.
+        var last: Dat.SessionInput? = null
+        emitAll(
+            toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.filter { input ->
+                val repeat = last?.let { it.gesture == input.gesture && it.actuator == input.actuator && input.timeMs - it.timeMs in 0..REPEAT_MS } == true
+                last = input
+                !repeat
+            }.map(::kitGesture),
+        )
     }
 
-    private fun kitGesture(g: BandWire.Gesture) = Gesture(
-        finger = when (g.finger) {
-            1 -> Finger.THUMB
-            2 -> Finger.INDEX
-            3 -> Finger.MIDDLE
+    private fun kitGesture(input: Dat.SessionInput) = Gesture(
+        finger = when (input.actuator) {
+            3 -> Finger.THUMB
+            4 -> Finger.INDEX
+            5 -> Finger.MIDDLE
             else -> Finger("unknown")
         },
-        action = ACTIONS[g.action] ?: GestureAction.UNKNOWN,
-        derived = if (g.derived == 0) null else DERIVED[g.derived] ?: GestureAction.UNKNOWN,
+        action = SESSION_GESTURES[input.gesture] ?: GestureAction.UNKNOWN,
         time = System.currentTimeMillis(),
     )
 
@@ -533,12 +537,9 @@ class KitRoutes @Inject constructor(
         const val IMPORT_MS = 10 * 60_000L
 
         // EmgImu$GestureEvent's action and derived action, as Band.Gesture documents them.
-        val ACTIONS = mapOf(
-            1 to GestureAction.PRESS, 2 to GestureAction.RELEASE, 3 to GestureAction.TAP, 4 to GestureAction.DOUBLE_TAP,
-            5 to GestureAction.CLICK, 6 to GestureAction.UP, 7 to GestureAction.DOWN, 8 to GestureAction.LEFT, 9 to GestureAction.RIGHT,
-        )
-        val DERIVED = mapOf(
-            1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction.HOLD, 4 to GestureAction.RELEASE,
+        const val REPEAT_MS = 30L
+        val SESSION_GESTURES = mapOf(
+            1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction("triple_tap"), 4 to GestureAction.HOLD,
             5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,
         )
     }

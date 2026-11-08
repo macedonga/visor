@@ -52,6 +52,23 @@ object Dat {
     /** SessionStopRequest {1 session_id, 2 is_dev_mode}. */
     fun sessionStop(sessionId: String): ByteArray = Wire.fieldString(1, sessionId) + Wire.fieldVarint(2, 1)
 
+    /**
+     * A gesture the glasses forward during a session, with or without the toolkit app: svc7009 type 1 from the glasses,
+     * SessionInput {1 source, 2 gesture, 3 actuator, 4 timestamp_ms}. Measured on the Display, 2026-11-08.
+     */
+    const val SESSION_INPUT = 1
+    const val INPUT_EMG = 1
+    const val INPUT_CAPTOUCH = 2
+
+    // Gestures: 1 tap, 2 double tap, 3 triple tap, 4 hold, 5 to 8 a swipe up, down, left, right.
+    // Actuators: 3 thumb, 4 index, 5 middle.
+    class SessionInput(val source: Int, val gesture: Int, val actuator: Int, val timeMs: Long)
+
+    fun sessionInput(payload: ByteArray): SessionInput {
+        val f = Wire.parse(payload)
+        return SessionInput(f.varint(1).toInt(), f.varint(2).toInt(), f.varint(3).toInt(), f.varint(4))
+    }
+
     // svc6500 message types.
     const val REQUEST = 1
     const val RESPONSE = 2
