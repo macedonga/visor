@@ -472,6 +472,8 @@
     <string name="kit_scope_name_notify">Notifications</string>
     <string name="kit_scope_settings">Read your glasses\' settings and change everyday ones, like the volume or the camera\'s resolution</string>
     <string name="kit_scope_name_settings">Settings</string>
+    <string name="kit_scope_conversations">Read what you ask the assistant and what it answers</string>
+    <string name="kit_scope_name_conversations">Conversations</string>
     <string name="kit_scope_raw">Send and read the glasses\' own protocol messages, for research. Only with Developer mode on</string>
     <string name="kit_scope_name_raw">Raw protocol</string>
     <string name="settings_diagnostics">Diagnostics</string>

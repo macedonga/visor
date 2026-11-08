@@ -80,7 +80,7 @@ class KitConsentActivity : ComponentActivity() {
 
     companion object {
         /** The scopes this Visor grants, in the order the screen lists them. */
-        val KNOWN = listOf(Scope.STATE, Scope.PAIRS, Scope.INPUTS, Scope.MICROPHONE, Scope.CAMERA, Scope.BAND, Scope.DISPLAY, Scope.VOICE, Scope.ASSISTANT, Scope.NOTIFY, Scope.SETTINGS, Scope.RAW)
+        val KNOWN = listOf(Scope.STATE, Scope.PAIRS, Scope.INPUTS, Scope.MICROPHONE, Scope.CAMERA, Scope.BAND, Scope.DISPLAY, Scope.VOICE, Scope.ASSISTANT, Scope.NOTIFY, Scope.SETTINGS, Scope.CONVERSATIONS, Scope.RAW)
 
         val SCOPE_NAME = mapOf(
             Scope.STATE to R.string.kit_scope_name_state,
@@ -94,6 +94,7 @@ class KitConsentActivity : ComponentActivity() {
             Scope.ASSISTANT to R.string.kit_scope_name_assistant,
             Scope.NOTIFY to R.string.kit_scope_name_notify,
             Scope.SETTINGS to R.string.kit_scope_name_settings,
+            Scope.CONVERSATIONS to R.string.kit_scope_name_conversations,
             Scope.RAW to R.string.kit_scope_name_raw,
         )
 
@@ -109,6 +110,7 @@ class KitConsentActivity : ComponentActivity() {
             Scope.ASSISTANT to R.string.kit_scope_assistant,
             Scope.NOTIFY to R.string.kit_scope_notify,
             Scope.SETTINGS to R.string.kit_scope_settings,
+            Scope.CONVERSATIONS to R.string.kit_scope_conversations,
             Scope.RAW to R.string.kit_scope_raw,
         )
     }

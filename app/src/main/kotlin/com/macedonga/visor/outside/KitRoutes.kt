@@ -112,6 +112,7 @@ class KitRoutes @Inject constructor(
     private val kitLive: KitLive,
     private val transcripts: KitTranscripts,
     private val settings: KitSettings,
+    private val conversations: KitConversations,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -195,6 +196,8 @@ class KitRoutes @Inject constructor(
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
         stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }
+        answer(Methods.ASSISTANT_HISTORY) { _, query -> conversations.history(query) }
+        stream(Topics.ASSISTANT_TURNS) { _, _ -> conversations.turns() }
         answer(Methods.NOTIFY_POST) { caller, notice -> notices.post(caller.packageName, notice) }
         answer(Methods.NOTIFY_REMOVE) { caller, removal -> notices.remove(caller.packageName, removal.id) }
         answer(Methods.SETTINGS_LIST) { _, query -> settings.list(query) }

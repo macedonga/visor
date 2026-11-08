@@ -490,6 +490,8 @@
     <string name="kit_scope_name_notify">Уведомления</string>
     <string name="kit_scope_settings">Читать настройки очков и менять повседневные, например громкость или разрешение камеры</string>
     <string name="kit_scope_name_settings">Настройки</string>
+    <string name="kit_scope_conversations">Читать, что вы спрашиваете у ассистента и что он отвечает</string>
+    <string name="kit_scope_name_conversations">Разговоры</string>
     <string name="kit_scope_raw">Отправлять и читать собственные сообщения протокола очков, для исследований. Только в режиме разработчика</string>
     <string name="kit_scope_name_raw">Сырой протокол</string>
     <string name="settings_diagnostics">Диагностика</string>

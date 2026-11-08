@@ -470,6 +470,8 @@
     <string name="kit_scope_name_notify">Notifiche</string>
     <string name="kit_scope_settings">Leggere le impostazioni degli occhiali e cambiare quelle di tutti i giorni, come il volume o la risoluzione della fotocamera</string>
     <string name="kit_scope_name_settings">Impostazioni</string>
+    <string name="kit_scope_conversations">Leggere ciò che chiedi all\'assistente e ciò che risponde</string>
+    <string name="kit_scope_name_conversations">Conversazioni</string>
     <string name="kit_scope_raw">Inviare e leggere i messaggi del protocollo degli occhiali, per ricerca. Solo con la modalità sviluppatore attiva</string>
     <string name="kit_scope_name_raw">Protocollo grezzo</string>
     <string name="settings_diagnostics">Diagnostica</string>
