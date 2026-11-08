@@ -1,10 +1,10 @@
 package com.macedonga.visor.debug
 
-import android.bluetooth.le.ScanSettings
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.BluetoothManager
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -38,11 +38,13 @@ import com.macedonga.visor.core.connection.CaptionsMode
 import com.macedonga.visor.core.connection.CaptionsPhase
 import com.macedonga.visor.core.connection.DISPLAY_STATUS_TYPES
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.PrompterLook
 import com.macedonga.visor.core.connection.PrompterPhase
 import com.macedonga.visor.core.connection.SVC_STATUS
 import com.macedonga.visor.core.connection.Teleprompter
 import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.look.GlassesLook
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.Albums
@@ -77,6 +79,7 @@ import com.macedonga.visor.pairs.KnownPair
 import com.macedonga.visor.pairs.Looks
 import com.macedonga.visor.pairs.Pairs
 import com.macedonga.visor.phone.PhoneActions
+import com.macedonga.visor.setup.Provisioner
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.StageDebug
 import dagger.hilt.android.AndroidEntryPoint
@@ -106,6 +109,8 @@ import org.json.JSONObject
 class DebugReceiver : BroadcastReceiver() {
 
     @Inject lateinit var connection: GlassesConnection
+    @Inject lateinit var provisioner: Provisioner
+    @Inject lateinit var identities: IdentityStore
     @Inject lateinit var live: LiveStream
     @Inject lateinit var stream: StreamReceiver
     @Inject lateinit var media: MediaImport
@@ -155,6 +160,12 @@ class DebugReceiver : BroadcastReceiver() {
             "THREADS" -> resultData = texts.describeThreads(intent.getIntExtra("count", 15))
             // A second pair on the home, a black Skyler, never connected; --ez on false takes it away.
             "DEMO_PAIR" -> resultData = demoPair(intent.getBooleanExtra("on", true))
+            // Changes the owner of the connected pair again, reusing the owner key, as setup does; the steps go to the log.
+            "PROVISION" -> resultData = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
+                ?.let { provisioner.start(it); "started on $it; follow LOG" } ?: "no pair over Bluetooth"
+            "PROVISION_STATUS" -> resultData = provisioner.status.value.toString()
+            // Each pair's receipt key, the key its constellation manifest names it by: public, so it may be printed.
+            "DEVICE_KEYS" -> resultData = identities.all().joinToString("\n") { "${it.serial} ${it.devicePublicKey?.toHexString() ?: "none"}" }
             "CONNECT" -> resultData = runCatching { GlassesService.start(context); "connecting" }.getOrElse { "could not start the service: $it" }
             "DISCONNECT" -> {
                 GlassesService.disconnect(context)
