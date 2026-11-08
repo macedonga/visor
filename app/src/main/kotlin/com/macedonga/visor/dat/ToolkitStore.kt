@@ -28,10 +28,12 @@ data class ToolkitPair(
     val granted: Boolean,
     /** How the manifest was built: one built before [MANIFEST_FORMAT] is built again. */
     val format: Int = MANIFEST_FORMAT,
+    /** The signed manifest itself, sent again to a device that holds another. */
+    val manifest: ByteArray? = null,
 )
 
-/** 4: the band gets Visor's authority key and the manifest too. 3: wraps made with the authority key. */
-const val MANIFEST_FORMAT = 4
+/** 5: the manifest is kept, to send again. 4: the band gets it too. 3: wraps made with the authority key. */
+const val MANIFEST_FORMAT = 5
 
 /**
  * Visor's toolkit state, sealed with a key in the phone's keystore: one app key for every pair (the key Visor's app
@@ -71,6 +73,7 @@ class ToolkitStore @Inject constructor(@ApplicationContext context: Context) {
             devices = o.optString("devices").split(',').filter { it.isNotEmpty() }.toSet(),
             granted = o.optBoolean("granted"),
             format = o.optInt("format", 1),
+            manifest = o.optString("manifest").takeIf { it.isNotEmpty() }?.let { Base64.decode(it, Base64.NO_WRAP) },
         )
     }
 
@@ -88,7 +91,8 @@ class ToolkitStore @Inject constructor(@ApplicationContext context: Context) {
                 .put("group", pair.groupId.toHexString())
                 .put("devices", pair.devices.joinToString(","))
                 .put("granted", pair.granted)
-                .put("format", pair.format),
+                .put("format", pair.format)
+                .put("manifest", pair.manifest?.let { Base64.encodeToString(it, Base64.NO_WRAP) } ?: ""),
         )
         write(json.put("pairs", pairs))
     }

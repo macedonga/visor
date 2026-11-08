@@ -23,6 +23,7 @@ import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
 import com.macedonga.visor.core.transport.BluetoothLeTransport
+import com.macedonga.visor.dat.ToolkitStore
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.setup.NearbyGlasses
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -78,6 +79,7 @@ class BandLink @Inject constructor(
     private val store: IdentityStore,
     private val peers: BandPeers,
     private val nearby: NearbyGlasses,
+    private val toolkit: ToolkitStore,
     private val log: EventLog,
 ) {
     // The band the Display let go of for this phone, by its address as the Display names it and its key hint.
@@ -228,19 +230,38 @@ class BandLink @Inject constructor(
      * against its own authority key, and refuses the Display with 0xc004 until it holds the key that signed it. Then
      * the two hand each other newer manifests. The version the band holds afterwards, or null when it did not answer.
      */
-    suspend fun installManifest(authority: ByteArray, manifest: ByteArray): Long? = holdFor {
-        // svc102 on bands with AirShield 0x11 and up, svc10 before, as the Meta app picks.
+    suspend fun installManifest(authority: ByteArray, manifest: ByteArray): Long? = holdFor { install(authority, manifest, salt = null) }
+
+    // As the Meta app does on every band connection: a band holding another manifest than Visor's for its glasses gets
+    // Visor's. The band stays here until it is done: half a manifest would leave it with none.
+    private suspend fun syncManifest(glasses: String) {
+        val pair = toolkit.pair(glasses) ?: return
+        val manifest = pair.manifest ?: return
+        errands.update { it + 1 }
+        try {
+            install(pair.authorityPublic, manifest, salt = pair.salt)
+        } catch (away: BandAway) {
+            log.add("Band: the link went down while its manifest was checked")
+        } finally {
+            errands.update { it - 1 }
+        }
+    }
+
+    // svc102 on bands with AirShield 0x11 and up, svc10 before, as the Meta app picks. With [salt], a band already
+    // holding that manifest is left alone. The version the band holds afterwards, or null.
+    private suspend fun install(authority: ByteArray, manifest: ByteArray, salt: ByteArray?): Long? {
         for (service in MANIFEST_SERVICES) {
             val before = manifestVersion(service) ?: continue
+            if (salt != null && before.salt.contentEquals(salt)) return before.version
             log.add("Band: manifest ${before.version} on svc$service; installing Visor's")
             sendOn(service, ConstellationManifest.SET_AUTHORITY_KEY, ConstellationManifest.authorityKey(authority))
             ConstellationManifest.chunks(manifest).forEach { (type, chunk) -> sendOn(service, type, chunk) }
             val after = manifestVersion(service)
             log.add("Band: holds manifest ${after?.version}")
-            return@holdFor after?.version
+            return after?.version
         }
         log.add("Band: no manifest service answered")
-        null
+        return null
     }
 
     private suspend fun manifestVersion(service: Int): ConstellationManifest.Version? = withTimeoutOrNull(REPLY_MS) {
@@ -349,6 +370,7 @@ class BandLink @Inject constructor(
                         if (event.state == LinkState.READY) {
                             log.add("Band: link up")
                             ask(opened, info = true)
+                            band.glasses?.let { glasses -> launch { syncManifest(glasses) } }
                             // The gestures wait for the device info, which picks how to ask for them; not for long.
                             if (lessons.value > 0) launch {
                                 delay(INFO_WAIT_MS)

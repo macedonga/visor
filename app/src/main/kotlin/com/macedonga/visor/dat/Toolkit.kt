@@ -41,10 +41,7 @@ import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -88,6 +85,7 @@ class Toolkit @Inject constructor(
     private val provisioner: Provisioner,
     private val bands: Bands,
     private val bandLink: BandLink,
+    private val manifests: ManifestSync,
     private val settings: GlassesSettings,
     private val login: MetaLogin,
     private val airship: AirshipReceiver,
@@ -169,21 +167,20 @@ class Toolkit @Inject constructor(
         val authority = before?.let { ToolkitStore.pkcs8(it.authority) to it.authorityPublic }
             ?: Ecdh.generateEphemeral().let { it.privateKey to it.publicKey64 }
         val group = before?.groupId ?: ByteArray(16).also(SecureRandom()::nextBytes)
-        val installed = manifestVersion() ?: throw KitException(ErrorCode.FAILED, "The glasses did not say which manifest they hold.")
+        val installed = manifests.version() ?: throw KitException(ErrorCode.FAILED, "The glasses did not say which manifest they hold.")
         val version = installed.version + 1
         val manifest = ConstellationManifest.build(authority.first, authority.second, devices, listOf(ConstellationManifest.App(appPublic, context.packageName)), version, group)
-        connection.submit { it.sendOnService(ConstellationManifest.SERVICE, ConstellationManifest.SET_AUTHORITY_KEY, ConstellationManifest.authorityKey(authority.second)) }
-        ConstellationManifest.chunks(manifest).forEach { (type, chunk) -> connection.submit { it.sendOnService(ConstellationManifest.SERVICE, type, chunk) } }
-        val now = manifestVersion()
-        if (now?.version != version) throw KitException(ErrorCode.FAILED, "The glasses did not take Visor's manifest (they hold version ${now?.version}).")
-        val pair = ToolkitPair(authority.first.encoded, authority.second, version, now.salt, group, devices.map { it.publicKey.toHexString() }.toSet(), granted = false)
-        store.save(serial, pair)
-        log.add("Toolkit: manifest $version installed on $serial with ${devices.size} devices")
-        // The band checks the Display's manifest against its own authority key, so it gets Visor's key and the manifest.
+        // The band first: a band left out of a new manifest refuses the Display (0xc004), while a Display behind the
+        // band takes the band's newer manifest from it, signed by the same authority.
         if (bands.all.value.any { it.glasses == serial }) {
             val held = runCatching { bandLink.installManifest(authority.second, manifest) }.getOrNull()
             if (held != version) throw KitException(ErrorCode.FAILED, "The band did not take Visor's manifest (it holds version $held).")
         }
+        val now = manifests.install(authority.second, manifest)
+        if (now?.version != version) throw KitException(ErrorCode.FAILED, "The glasses did not take Visor's manifest (they hold version ${now?.version}).")
+        val pair = ToolkitPair(authority.first.encoded, authority.second, version, now.salt, group, devices.map { it.publicKey.toHexString() }.toSet(), granted = false, manifest = manifest)
+        store.save(serial, pair)
+        log.add("Toolkit: manifest $version installed on $serial with ${devices.size} devices")
 
         step(ToolkitStep.PERMISSIONS)
         val grants = GRANTS.map { permissionObject(context.packageName, "android.permission.$it", "ALWAYS") }
@@ -261,16 +258,6 @@ class Toolkit @Inject constructor(
     }
 
     /** svc10's answer to GET_VERSION, or null when the glasses say nothing within five seconds. */
-    private suspend fun manifestVersion(): ConstellationManifest.Version? = coroutineScope {
-        val reply = async(start = CoroutineStart.UNDISPATCHED) {
-            withTimeoutOrNull(5_000) {
-                connection.serviceData.first { it.serviceId == ConstellationManifest.SERVICE && it.messageType == ConstellationManifest.VERSION_INFO }
-            }
-        }
-        connection.submit { it.sendOnService(ConstellationManifest.SERVICE, ConstellationManifest.GET_VERSION, ByteArray(0)) }
-        reply.await()?.let { ConstellationManifest.version(it.payload) }
-    }
-
     private fun step(step: ToolkitStep, fraction: Float? = null) {
         val next = ToolkitProgress.Running(step, fraction)
         if (_progress.value == next) return
