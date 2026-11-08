@@ -81,6 +81,8 @@ class BandLink @Inject constructor(
 ) {
     // The band the Display let go of for this phone, by its address as the Display names it and its key hint.
     @Volatile private var lent: Pair<ByteArray, ByteArray>? = null
+    // A borrow ended while the glasses' link was down: the band still has to go back to the Display.
+    @Volatile private var pendingBack = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val gate = Mutex()
     private val seq = AtomicInteger(1)
@@ -113,6 +115,12 @@ class BandLink @Inject constructor(
             combine(connection.running, connection.pair, bands.all, wanted, held) { running, pair, all, want, hold ->
                 pair?.let { p -> all.firstOrNull { it.glasses == p } }?.takeIf { running && hold && want }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
+        }
+        // A band given back while the glasses' link was down goes back once it is up again.
+        scope.launch {
+            connection.state.collect { glasses ->
+                if (glasses.link == LinkState.READY && session == null && pendingBack) gate.withLock { if (session == null) giveBack() }
+            }
         }
     }
 
@@ -325,11 +333,17 @@ class BandLink @Inject constructor(
         opened.start(scope)
     }
 
-    /** Asks the Display on svc41109 to let go of the band it holds, and waits until it says it did. */
+    /**
+     * Asks the Display on svc41109 to let go of the band it holds, and waits until it says it did. A band the Display
+     * lists but does not hold, still on its way back from the last borrow, goes back after this one all the same.
+     */
     private suspend fun takeFromDisplay(band: BandRecord) {
         if (connection.state.value.link != LinkState.READY) return
-        val held = peers.refresh()?.peers?.firstOrNull { it.connected } ?: return
+        val listed = peers.refresh()?.peers.orEmpty()
+        val held = listed.firstOrNull { it.connected } ?: listed.firstOrNull() ?: return log.add("Band: the Display lists no band")
         val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return log.add("Band: no key to name the band to the Display")
+        lent = held.identity to hint
+        if (!held.connected) return log.add("Band: the Display does not hold the band now")
         log.add("Band: asking the Display to let go of the band")
         val released = withTimeoutOrNull(RELEASE_MS) {
             connection.serviceData
@@ -339,16 +353,31 @@ class BandLink @Inject constructor(
                         BtPeer.connectionEvent(it.payload).let { e -> e.event == BtPeer.DISCONNECTED && BtPeer.sameAddress(e.identity, held.identity) }
                 }
         } != null
-        lent = held.identity to hint
         log.add(if (released) "Band: the Display let go" else "Band: the Display did not say it let go in ${RELEASE_MS / 1000} s")
     }
 
-    /** Hands the band back to the Display after a borrow. */
-    private fun giveBack() {
-        val (identity, hint) = lent ?: return
+    /**
+     * Hands the band back to the Display after a borrow: the one it let go of, or, when the borrow began before the
+     * Display could be asked, the band it lists but does not hold. The Display does not reach for a band it let go of.
+     */
+    private suspend fun giveBack() {
+        if (connection.state.value.link != LinkState.READY) {
+            pendingBack = true
+            return
+        }
+        pendingBack = false
+        val (identity, hint) = lent ?: listedBand() ?: return
         lent = null
         log.add("Band: handing the band back to the Display")
         connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.CONNECT, BtPeer.connect(identity, hint)) }
+    }
+
+    // The band the Display lists and does not hold, as the Display names it, with its key hint.
+    private suspend fun listedBand(): Pair<ByteArray, ByteArray>? {
+        val peer = peers.refresh()?.peers?.firstOrNull()?.takeIf { !it.connected } ?: return null
+        val band = bands.all.value.firstOrNull { it.serial == _state.value.serial } ?: return null
+        val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return null
+        return peer.identity to hint
     }
 
     // The band pushes battery changes too; a slow read keeps the reading fresh when it does not.
