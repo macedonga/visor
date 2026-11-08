@@ -43,12 +43,7 @@ class LeaseService @Inject constructor(
                 connection.send(channel, Wire.fieldBytes(1, id) + refusal(ERROR_USE_DEVICE_WIFI, "ERROR_CODE_USE_DEVICE_WIFI"), messageType = MT_INTERNET_RESPONSE)
             }
             MT_LINK_REQUEST -> {
-                // Field 7 is a link (2 Wi-Fi Direct, 3 SoftAP, 4 local Wi-Fi); field 6 a bandwidth (1 medium, 2 high).
-                val wifi = when {
-                    request.has(7) -> request.varint(7) in 2..4
-                    request.has(6) -> request.varint(6) >= 1
-                    else -> null
-                }
+                val wifi = wantsWifi(request)
                 val unavailable = if (wifi == true) wifiLink.get().refusal() else null
                 val (reply, line) = when {
                     wifi == null -> Wire.fieldBytes(1, id) + refusal(ERROR_BAD_REQUEST, "Invalid Request") to
@@ -73,6 +68,25 @@ class LeaseService @Inject constructor(
             }
             else -> log.add("Lease: message type ${message.info.messageType} is not handled")
         }
+    }
+
+    /**
+     * The link a LinkLeaseRequest needs, as the Meta app's LeaseService.getLinkType reads it (294.1, bytecode): field 7
+     * names a link (0 BLE, 1 Bluetooth Classic, 2 Wi-Fi Direct, 3 SoftAP, 4 local Wi-Fi); field 6 a bandwidth, where
+     * only high (2) is Wi-Fi, medium (1) is Bluetooth Classic and low (0) is no link; fields 4 and 5 a throughput, Wi-Fi
+     * from 1000 and 600 up. True for Wi-Fi, false for a Bluetooth link, null for none. The toolkit app asks for medium
+     * at every session: read as Wi-Fi, it moved the session and reset every channel on the glasses.
+     */
+    private fun wantsWifi(request: Wire.Fields): Boolean? = when {
+        request.has(7) -> request.varint(7) in 2..4
+        request.has(6) -> when (request.varint(6)) {
+            1L -> false
+            2L -> true
+            else -> null
+        }
+        request.has(4) -> request.varint(4) >= 1000
+        request.has(5) -> request.varint(5) >= 600
+        else -> null
     }
 
     private fun refusal(code: Int, text: String): ByteArray =
