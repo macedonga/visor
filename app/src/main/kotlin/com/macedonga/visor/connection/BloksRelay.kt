@@ -45,7 +45,7 @@ class BloksRelay @Inject constructor(
     }
 
     private suspend fun serve(r: Request, q: Query, reply: Int, mux: DataXConnection) {
-        val id = requests.start("bloks://${r.appId}", RequestSource.META, r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }.orEmpty())
+        val id = requests.start("bloks://${r.appId}", RequestSource.META, type(r).orEmpty())
         if (r.appId.isEmpty() || r.appId.startsWith("com.bloks.fox_edge.")) {
             mux.send(reply, ByteArray(0), messageType = q.answer)
             requests.finish(id, "empty, as the Meta app answers", failed = false)
@@ -62,7 +62,7 @@ class BloksRelay @Inject constructor(
             val bundle = fetch(r, q)
             // Debug builds keep the Briefing's detail screens, the model for apps' own.
             if (BuildConfig.DEBUG && r.appId.contains("Glanceables")) {
-                runCatching { context.filesDir.resolve("bloks-${r.appId.substringAfterLast('.')}.json").writeText(JSONObject().put("params", JSONObject(r.params as Map<*, *>)).put("type", q.answer).put("bundle", bundle).toString()) }
+                runCatching { context.filesDir.resolve("bloks-${r.appId.substringAfterLast('.')}${type(r)?.let { "-$it" }.orEmpty()}.json").writeText(JSONObject().put("params", JSONObject(r.params as Map<*, *>)).put("type", q.answer).put("bundle", bundle).toString()) }
             }
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bundle.toByteArray()) } }.toByteArray()
             mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
@@ -73,11 +73,14 @@ class BloksRelay @Inject constructor(
         }
     }
 
-    // An app's Briefing card whose detail the Briefing asks for, by the data type its click preloaded.
+    // The card a Briefing request is for, named by the data type its click preloaded.
+    private fun type(r: Request): String? =
+        r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }?.takeIf { it.isNotEmpty() }
+
+    // An app's Briefing card whose detail the Briefing asks for.
     private fun card(r: Request): BriefingCards.Card? {
         if (!r.appId.endsWith(DETAIL_QUERY)) return null
-        val type = r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() } ?: return null
-        return cards.byKey(type)?.takeIf { it.detail != null }
+        return type(r)?.let(cards::byKey)?.takeIf { it.detail != null }
     }
 
     // The detail as Meta's server answers it: one component, its tree the app's.

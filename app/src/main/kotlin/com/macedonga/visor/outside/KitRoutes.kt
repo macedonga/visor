@@ -227,7 +227,7 @@ class KitRoutes @Inject constructor(
             if (card.id.isBlank() || card.name.isBlank() || card.name.length > BriefingCard.MAX_NAME) {
                 throw KitException(ErrorCode.INVALID_PARAMS, "A card needs an id and a name of 1 to ${BriefingCard.MAX_NAME} characters.")
             }
-            briefing.set(caller.packageName, card.id, card.name, card.icon.id, card.layout, null)
+            briefing.set(caller.packageName, card.id, card.name, card.icon.id, card.layout, card.detail)
         }
         answer(Methods.DISPLAY_CARDS_REMOVE) { caller, removal -> briefing.remove(caller.packageName, removal.id) }
         stream(Topics.DISPLAY_LAYOUT_CLICKS) { caller, _ -> toolkit.clicks(caller.packageName) }

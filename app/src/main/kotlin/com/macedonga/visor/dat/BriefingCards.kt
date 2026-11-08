@@ -32,8 +32,6 @@ class BriefingCards @Inject constructor(@ApplicationContext context: Context) {
         /** The id the Display knows the card by: plain letters, as it goes inside the Briefing's own scripts. */
         val key: String get() = "app_" + md5("$app/$id").take(16)
 
-        val hash: String get() = md5(payload)
-
         val detailHash: String get() = md5(detail.orEmpty())
     }
 

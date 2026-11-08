@@ -16,6 +16,7 @@ import com.macedonga.visor.login.MetaLogin
 import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.TimeZone
 import java.util.zip.GZIPOutputStream
@@ -78,7 +79,9 @@ class Panels @Inject constructor(
             val template = template
             for (card in ours) {
                 val payload = if (card.detail != null && template != null) template.onto(card) else card.payload
-                bloks += Wire.fieldBytes(1, Wire.fieldString(1, card.key) + Wire.fieldString(2, payload) + Wire.fieldString(3, card.hash))
+                // The Display keeps a card while its hash stays: the hash of what it gets, click scripts and all.
+                hashes[card.key] = md5(payload)
+                bloks += Wire.fieldBytes(1, Wire.fieldString(1, card.key) + Wire.fieldString(2, payload) + Wire.fieldString(3, hashes.getValue(card.key)))
             }
             bloks += Wire.fieldString(2, g.optString("preview"))
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bloks) } }.toByteArray()
@@ -99,7 +102,7 @@ class Panels @Inject constructor(
                 data += Wire.fieldBytes(
                     2,
                     Wire.fieldString(1, card.key) + Wire.fieldString(2, card.name) + Wire.fieldString(3, "Shows ${card.name}") +
-                        Wire.fieldVarint(4, 1) + Wire.fieldString(6, card.hash) + Wire.fieldString(7, "drawable://${card.icon}_filled_32"),
+                        Wire.fieldVarint(4, 1) + Wire.fieldString(6, hashes[card.key].orEmpty()) + Wire.fieldString(7, "drawable://${card.icon}_filled_32"),
                 )
             }
             // With apps' cards on it, the Display asks again within a minute, so an app's change shows soon.
@@ -180,6 +183,8 @@ class Panels @Inject constructor(
             }.sortedBy { it.name != "Stocks" }.firstOrNull()
         }
     }
+
+    private fun md5(text: String) = MessageDigest.getInstance("MD5").digest(text.encodeToByteArray()).joinToString("") { "%02x".format(it) }
 
     private class Card(val id: String, val name: String, val enabled: Boolean, val hash: String)
 

@@ -75,10 +75,18 @@ import com.macedonga.visor.display.CaptionPacks
 import com.macedonga.visor.gallery.PhoneLibrary
 import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.kit.protocol.Layout
+import com.macedonga.visor.kit.protocol.BriefingCard
 import com.macedonga.visor.kit.protocol.LayoutAlign
+import com.macedonga.visor.kit.protocol.LayoutColor
+import com.macedonga.visor.kit.protocol.LayoutCorners
 import com.macedonga.visor.kit.protocol.LayoutIconName
 import com.macedonga.visor.kit.protocol.LayoutStyle
 import com.macedonga.visor.kit.protocol.Scope
+import com.macedonga.visor.kit.protocol.change
+import com.macedonga.visor.kit.protocol.field
+import com.macedonga.visor.kit.protocol.header
+import com.macedonga.visor.kit.protocol.progress
+import com.macedonga.visor.kit.protocol.stat
 import com.macedonga.visor.language.LanguageInstaller
 import com.macedonga.visor.language.restartGlassesAssistant
 import com.macedonga.visor.log.EventLog
@@ -776,6 +784,12 @@ class DebugReceiver : BroadcastReceiver() {
                 briefing.set("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test", intent.getStringExtra("name") ?: "Visor test", "bell", layout, detail)
                 resultData = "set; the Briefing shows it when it asks again"
             }
+            // A card that shows every card feature: CARD_SHOWCASE.
+            "CARD_SHOWCASE" -> {
+                val card = showcase()
+                briefing.set("com.macedonga.visor.debug", card.id, card.name, card.icon.id, card.layout, card.detail)
+                resultData = "set; the Briefing shows it when it asks again"
+            }
             "CARD_REMOVE" -> resultData = briefing.remove("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test").toString()
             "NET_CLIENT_REMOVE" -> {
                 networkClients.remove(intent.getStringExtra("name") ?: "debug")
@@ -868,5 +882,84 @@ class DebugReceiver : BroadcastReceiver() {
         // Meta's own picture of a black Skyler, as its asset service hands it out.
         const val DEMO_PICTURE = "https://scontent.xx.fbcdn.net/mci_ab/uap/asset_manager/name_revision/?ab_b=e&ab_page=AssetManagerNameAndRevision" +
             "&ab_entry=RBM2-Skyler-ShinyBlack-Clear-Concord&set=mwa_device_image_assets&revision=1837680503843762&density=3&mode=dark"
+    }
+
+    // The card an app would write with the VDK's builder and blocks.
+    private fun showcase() = BriefingCard("showcase", "Lake weather", LayoutIconName.CLOUD) {
+        header(LayoutIconName.CLOUD, "Lake weather")
+        stat("18°", "Low 9°")
+        change("2° warmer than yesterday", rising = true)
+        text("Partly cloudy over the lake, clearing tonight with a light breeze from the north") { style = LayoutStyle.META; maxLines = 1 }
+        icon(LayoutIconName.WEATHER_PARTLY_CLOUDY) { size = 96; pinTop = 0; pinEnd = 0 }
+        pages {
+            page {
+                gap = 8
+                text("Brugnera") { style = LayoutStyle.META }
+                row {
+                    crossAlign = LayoutAlign.CENTER
+                    column {
+                        grow = 1.0
+                        stat("18°", "H 21°  L 9°")
+                        text("Partly cloudy")
+                    }
+                    icon(LayoutIconName.WEATHER_PARTLY_CLOUDY) { size = 112 }
+                }
+                image("https://picsum.photos/id/1036/560/240") { height = 140; corners = LayoutCorners.MEDIUM }
+            }
+            page {
+                gap = 16
+                header("Next hours")
+                row {
+                    align = LayoutAlign.SPACE_BETWEEN
+                    listOf(
+                        Triple("Now", LayoutIconName.WEATHER_PARTLY_CLOUDY, 18), Triple("15", LayoutIconName.WEATHER_SUNNY, 19),
+                        Triple("16", LayoutIconName.WEATHER_SUNNY, 18), Triple("17", LayoutIconName.WEATHER_CLOUDY, 16),
+                        Triple("18", LayoutIconName.WEATHER_NIGHT_CLEAR, 14),
+                    ).forEach { (hour, glyph, temp) ->
+                        column {
+                            gap = 8
+                            text(hour) { style = LayoutStyle.META; align = LayoutAlign.CENTER }
+                            icon(glyph) { size = 48; alignSelf = LayoutAlign.CENTER }
+                            text("$temp°") { align = LayoutAlign.CENTER }
+                        }
+                    }
+                }
+                chart(listOf(18.0, 19.0, 18.0, 16.0, 14.0, 13.0, 12.0, 12.0, 11.0, 10.0)) { height = 90 }
+            }
+            page {
+                gap = 14
+                header("This week")
+                listOf(Triple("Mon", 9, 21), Triple("Tue", 11, 23), Triple("Wed", 8, 17), Triple("Thu", 6, 14)).forEach { (day, low, high) ->
+                    row {
+                        gap = 12
+                        crossAlign = LayoutAlign.CENTER
+                        text(day) { style = LayoutStyle.META }
+                        text("$low°") { style = LayoutStyle.META }
+                        // The day's range on the week's, 5 to 25 degrees.
+                        row {
+                            grow = 1.0
+                            height = 8
+                            crossAlign = LayoutAlign.STRETCH
+                            background = LayoutColor.TRACK
+                            row { grow = (low - 5) / 20.0 }
+                            row { grow = (high - low) / 20.0; background = LayoutColor.BLUE }
+                            row { grow = (25 - high) / 20.0 }
+                        }
+                        text("$high°")
+                    }
+                }
+                chart(listOf(2.0, 0.0, 5.0, 8.0, 1.0, 0.0, 3.0)) { style = LayoutStyle.BARS; height = 60 }
+            }
+            page {
+                gap = 12
+                header(LayoutIconName.CHART_LINE, "Stocks")
+                stat("27,012.40")
+                change("+481.50 (+1.8%)", rising = true)
+                change("-12.10 (-0.4%)", rising = false)
+                field("Market cap", "$1.6T")
+                field("52W high", "$31,400.80")
+                progress(0.72)
+            }
+        }
     }
 }
