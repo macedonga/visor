@@ -2,6 +2,7 @@ package com.macedonga.visor.band
 
 import android.content.Context
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.identity.ConstellationManifest
 import com.macedonga.visor.core.identity.BundleCredentials
 import com.macedonga.visor.core.identity.BundleState
 import com.macedonga.visor.core.identity.IdentityBundle
@@ -99,6 +100,8 @@ class BandLink @Inject constructor(
     /** What the band says on svc41109, its messages and its error frames. */
     val peer: SharedFlow<SessionEvent> = _peer
     private val _gestures = MutableSharedFlow<Band.Gesture>(extraBufferCapacity = 32)
+    // What the band says on its manifest services.
+    private val manifestFrames = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 16)
     val gestures: SharedFlow<Band.Gesture> = _gestures
 
     @Volatile private var session: GlassesSession? = null
@@ -220,6 +223,37 @@ class BandLink @Inject constructor(
         outcome
     }
 
+    /**
+     * Installs [manifest] under [authority] on the band, as the Meta app does: the band checks the Display's manifest
+     * against its own authority key, and refuses the Display with 0xc004 until it holds the key that signed it. Then
+     * the two hand each other newer manifests. The version the band holds afterwards, or null when it did not answer.
+     */
+    suspend fun installManifest(authority: ByteArray, manifest: ByteArray): Long? = holdFor {
+        // svc102 on bands with AirShield 0x11 and up, svc10 before, as the Meta app picks.
+        for (service in MANIFEST_SERVICES) {
+            val before = manifestVersion(service) ?: continue
+            log.add("Band: manifest ${before.version} on svc$service; installing Visor's")
+            sendOn(service, ConstellationManifest.SET_AUTHORITY_KEY, ConstellationManifest.authorityKey(authority))
+            ConstellationManifest.chunks(manifest).forEach { (type, chunk) -> sendOn(service, type, chunk) }
+            val after = manifestVersion(service)
+            log.add("Band: holds manifest ${after?.version}")
+            return@holdFor after?.version
+        }
+        log.add("Band: no manifest service answered")
+        null
+    }
+
+    private suspend fun manifestVersion(service: Int): ConstellationManifest.Version? = withTimeoutOrNull(REPLY_MS) {
+        manifestFrames
+            .onSubscription { sendOn(service, ConstellationManifest.GET_VERSION, ByteArray(0)) }
+            .first { (it is ServiceData && it.serviceId == service && it.messageType == ConstellationManifest.VERSION_INFO) || (it is DataXError && it.serviceId == service) }
+    }?.let { (it as? ServiceData)?.payload }?.let(ConstellationManifest::version)
+
+    private fun sendOn(service: Int, type: Int, payload: ByteArray) {
+        val running = session ?: throw BandAway()
+        running.submit(SessionCommand { s -> s.connection?.sendOnService(service, type, payload) })
+    }
+
     /** Takes the band from the Display for [block], then gives it back; NO_ANSWER when its link does not come up in time. */
     private suspend fun errand(what: String, block: suspend () -> BandErrand): BandErrand {
         errands.update { it + 1 }
@@ -322,8 +356,15 @@ class BandLink @Inject constructor(
                             }
                         }
                     }
-                    is ServiceData -> if (event.serviceId == ServiceId.WIRELESS_INPUT.value) onBand(event) else if (event.serviceId == BtPeer.SERVICE) _peer.tryEmit(event)
-                    is DataXError -> if (event.serviceId == BtPeer.SERVICE) _peer.tryEmit(event)
+                    is ServiceData -> when (event.serviceId) {
+                        ServiceId.WIRELESS_INPUT.value -> onBand(event)
+                        BtPeer.SERVICE -> _peer.tryEmit(event)
+                        in MANIFEST_SERVICES -> manifestFrames.tryEmit(event)
+                    }
+                    is DataXError -> when (event.serviceId) {
+                        BtPeer.SERVICE -> _peer.tryEmit(event)
+                        in MANIFEST_SERVICES -> manifestFrames.tryEmit(event)
+                    }
                     is ProtocolError -> log.add("Band: ${event.detail}")
                     else -> Unit
                 }
@@ -432,6 +473,7 @@ class BandLink @Inject constructor(
     }
 
     private companion object {
+        val MANIFEST_SERVICES = listOf(102, ConstellationManifest.SERVICE)
         const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L
         const val POLL_MS = 5 * 60_000L

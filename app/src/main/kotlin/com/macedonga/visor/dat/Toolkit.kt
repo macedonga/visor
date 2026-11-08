@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import com.macedonga.visor.R
+import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.Bands
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
@@ -86,6 +87,7 @@ class Toolkit @Inject constructor(
     private val identities: IdentityStore,
     private val provisioner: Provisioner,
     private val bands: Bands,
+    private val bandLink: BandLink,
     private val settings: GlassesSettings,
     private val login: MetaLogin,
     private val airship: AirshipReceiver,
@@ -177,6 +179,11 @@ class Toolkit @Inject constructor(
         val pair = ToolkitPair(authority.first.encoded, authority.second, version, now.salt, group, devices.map { it.publicKey.toHexString() }.toSet(), granted = false)
         store.save(serial, pair)
         log.add("Toolkit: manifest $version installed on $serial with ${devices.size} devices")
+        // The band checks the Display's manifest against its own authority key, so it gets Visor's key and the manifest.
+        if (bands.all.value.any { it.glasses == serial }) {
+            val held = runCatching { bandLink.installManifest(authority.second, manifest) }.getOrNull()
+            if (held != version) throw KitException(ErrorCode.FAILED, "The band did not take Visor's manifest (it holds version $held).")
+        }
 
         step(ToolkitStep.PERMISSIONS)
         val grants = GRANTS.map { permissionObject(context.packageName, "android.permission.$it", "ALWAYS") }

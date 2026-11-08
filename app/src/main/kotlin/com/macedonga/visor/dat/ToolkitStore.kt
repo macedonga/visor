@@ -30,8 +30,8 @@ data class ToolkitPair(
     val format: Int = MANIFEST_FORMAT,
 )
 
-/** 3: wraps made with the authority key, and the app list sealed with the content key. */
-const val MANIFEST_FORMAT = 3
+/** 4: the band gets Visor's authority key and the manifest too. 3: wraps made with the authority key. */
+const val MANIFEST_FORMAT = 4
 
 /**
  * Visor's toolkit state, sealed with a key in the phone's keystore: one app key for every pair (the key Visor's app
