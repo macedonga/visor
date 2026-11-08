@@ -63,6 +63,7 @@ import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
 import com.macedonga.visor.kit.protocol.MotionRequest
 import com.macedonga.visor.kit.protocol.RawMessage
+import com.macedonga.visor.kit.protocol.SpeakRequest
 import com.macedonga.visor.kit.protocol.ThermalLevel
 import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.kit.protocol.VideoKind
@@ -222,6 +223,14 @@ class KitRoutes @Inject constructor(
         stream(Topics.DISPLAY_LAYOUT_STATE) { caller, _ -> toolkit.state(caller.packageName) }
         stream(Topics.DISPLAY_VIDEO) { caller, _ -> toolkit.video(caller.packageName) }
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
+        answer(Methods.VOICE_SPEAK) { _, request ->
+            val text = request.text.trim()
+            if (text.isEmpty() || text.length > SpeakRequest.MAX_LENGTH) {
+                throw KitException(ErrorCode.INVALID_PARAMS, "The text must hold 1 to ${SpeakRequest.MAX_LENGTH} characters.")
+            }
+            ready()
+            motion.say(text)
+        }
         stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }
         answer(Methods.ASSISTANT_HISTORY) { _, query -> conversations.history(query) }
