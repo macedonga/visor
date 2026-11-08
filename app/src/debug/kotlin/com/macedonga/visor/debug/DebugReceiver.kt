@@ -61,13 +61,21 @@ import com.macedonga.visor.core.media.SessionApp
 import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.media.StreamReceiver
 import com.macedonga.visor.core.media.requestAsset
+import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.settings.GlassesContact
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.settings.PERMISSIONS_NAMESPACE
 import com.macedonga.visor.core.settings.contactObject
 import com.macedonga.visor.core.settings.contactsNamespace
+import com.macedonga.visor.core.settings.permissionObject
+import com.macedonga.visor.dat.DatLayout
 import com.macedonga.visor.display.CaptionPacks
 import com.macedonga.visor.gallery.PhoneLibrary
 import com.macedonga.visor.home.PairSeen
+import com.macedonga.visor.kit.protocol.Layout
+import com.macedonga.visor.kit.protocol.LayoutAlign
+import com.macedonga.visor.kit.protocol.LayoutIconName
+import com.macedonga.visor.kit.protocol.LayoutStyle
 import com.macedonga.visor.language.LanguageInstaller
 import com.macedonga.visor.language.restartGlassesAssistant
 import com.macedonga.visor.log.EventLog
@@ -164,6 +172,44 @@ class DebugReceiver : BroadcastReceiver() {
             "PROVISION" -> resultData = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
                 ?.let { provisioner.start(it); "started on $it; follow LOG" } ?: "no pair over Bluetooth"
             "PROVISION_STATUS" -> resultData = provisioner.status.value.toString()
+            // Visor's own app link to the Display (AppLinkProbe): --es pem <base64 PEM of the app key> --ei version N
+            // --es salt <hex>; then APP_MOTION [--ei rate], APP_LAYOUT, APP_STOP. Steps go to LOG as "AppLink:".
+            "APP_LINK" -> resultData = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address?.let { address ->
+                AppLinkProbe.start(
+                    context, address, Base64.decode(intent.getStringExtra("pem").orEmpty(), Base64.DEFAULT),
+                    intent.getIntExtra("version", 0).toLong(), intent.getStringExtra("salt").orEmpty().hexToByteArray(),
+                    intent.getIntExtra("tag", 0), intent.getIntExtra("sign", 0), log,
+                )
+            } ?: "no pair over Bluetooth"
+            "APP_MOTION" -> resultData = AppLinkProbe.capability(Dat.IMU, Dat.motionStart(intent.getIntExtra("rate", 10)))
+            "APP_LAYOUT" -> resultData = AppLinkProbe.capability(
+                Dat.DISPLAY,
+                Dat.displayContent(
+                    DatLayout.payload(
+                        Layout {
+                            padding = 24
+                            gap = 16
+                            row {
+                                gap = 12
+                                crossAlign = LayoutAlign.CENTER
+                                icon(LayoutIconName.SMART_GLASSES)
+                                text("Visor") { style = LayoutStyle.HEADING }
+                            }
+                            text("This layout came from Visor, through Meta's toolkit app.")
+                            buttons { button("ok", "OK") { icon = LayoutIconName.CHECKMARK; primary = true } }
+                        },
+                    ),
+                ),
+            )
+            "APP_STOP" -> resultData = AppLinkProbe.stop()
+            // Grants a phone app the glasses' permissions over RLDrive, as the Meta app does: --es pkg (Visor by default)
+            // --es perms DEV_MODE,IMU (short names); then lists what the namespace holds.
+            "GRANT" -> answerLater {
+                val app = intent.getStringExtra("pkg") ?: context.packageName
+                val grants = intent.getStringExtra("perms").orEmpty().split(',').filter { it.isNotBlank() }
+                    .map { permissionObject(app, "android.permission.${it.trim()}", "ALWAYS") }
+                settings.readNamespace(PERMISSIONS_NAMESPACE, grants)?.joinToString("\n") { "${it.uri} ${it.type} ${it.data}" } ?: "the glasses did not answer"
+            }
             // Each pair's receipt key, the key its constellation manifest names it by: public, so it may be printed.
             "DEVICE_KEYS" -> resultData = identities.all().joinToString("\n") { "${it.serial} ${it.devicePublicKey?.toHexString() ?: "none"}" }
             "CONNECT" -> resultData = runCatching { GlassesService.start(context); "connecting" }.getOrElse { "could not start the service: $it" }
