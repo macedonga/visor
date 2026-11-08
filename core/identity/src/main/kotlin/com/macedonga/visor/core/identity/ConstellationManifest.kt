@@ -14,8 +14,13 @@ import javax.crypto.spec.SecretKeySpec
  * The glasses' constellation manifest: the peers they trust, signed by an authority key the phone installs. Built as
  * Meta's own ManifestBuilder writes it (its output from the DAT SDK 1.0.1 checked against this layout, 2026-11-08):
  * ConstellationSignedContent {1 signature, 2 0, 3 body}; body {1 version, 2 a 4-byte key salt, 3 the content key
- * wrapped for each device and then each app, 4 the ephemeral public key, 5 the device list, 6 the app list}. A peer
- * without a wrap is not found: its svc79 EnableTrust is refused.
+ * wrapped for each device and then each app, 4 a public key, 5 the device list, sealed with a key derived from the
+ * content key, 6 the app list, sealed with the content key itself}.
+ *
+ * The glasses open their wrap with ECDH of their own key and the authority key that SetManifestAuthorityKey installed
+ * (research notes/20), so every wrap is made with the authority key, never a fresh one. Field 4 carries the authority's
+ * public key too. A wrap the glasses cannot open fails their loadDevices, and svc79 then refuses every app with
+ * status 1.
  */
 object ConstellationManifest {
     /** svc10, the link manager, carries the install. */
@@ -45,24 +50,23 @@ object ConstellationManifest {
     fun keyTag(publicKey: ByteArray, salt: ByteArray): ByteArray = sha(sha(publicKey), salt)
 
     /** The signed manifest for [devices] and [apps], at [version], with a fresh salt and content key. */
-    fun build(authority: PrivateKey, devices: List<Device>, apps: List<App>, version: Long, groupId: ByteArray): ByteArray {
+    fun build(authority: PrivateKey, authorityPublic: ByteArray, devices: List<Device>, apps: List<App>, version: Long, groupId: ByteArray): ByteArray {
         require(devices.isNotEmpty()) { "a manifest needs the glasses among its devices" }
         val random = SecureRandom()
         val salt = ByteArray(4).also(random::nextBytes)
         val contentKey = ByteArray(32).also(random::nextBytes)
-        val ephemeral = Ecdh.generateEphemeral()
         val listKey = hkdf(contentKey, sha(contentKey, sha(contentKey)))
 
         fun wrap(publicKey: ByteArray): ByteArray {
-            val key = hkdf(Ecdh.computeSharedSecret(ephemeral.privateKey, publicKey), sha(salt))
+            val key = hkdf(Ecdh.computeSharedSecret(authority, publicKey), sha(salt))
             val iv = ByteArray(16).also(random::nextBytes)
             return Wire.fieldBytes(1, iv) + Wire.fieldBytes(2, aes(key, iv, contentKey)) +
                 Wire.fieldBytes(3, keyTag(publicKey, salt).copyOf(10))
         }
 
-        fun sealed(list: ByteArray): ByteArray {
+        fun sealed(key: ByteArray, list: ByteArray): ByteArray {
             val iv = ByteArray(16).also(random::nextBytes)
-            return Wire.fieldBytes(1, iv) + Wire.fieldBytes(2, aes(listKey, iv, pad(list)))
+            return Wire.fieldBytes(1, iv) + Wire.fieldBytes(2, aes(key, iv, pad(list)))
         }
 
         val deviceList = devices.joinBytes { d ->
@@ -77,8 +81,8 @@ object ConstellationManifest {
 
         val body = Wire.fieldVarint(1, version) + Wire.fieldBytes(2, salt) +
             (devices.map { it.publicKey } + apps.map { it.publicKey }).joinBytes { Wire.fieldBytes(3, wrap(it)) } +
-            Wire.fieldBytes(4, publicKeyMessage(ephemeral.publicKey64)) + Wire.fieldBytes(5, sealed(deviceList)) +
-            (if (apps.isNotEmpty()) Wire.fieldBytes(6, sealed(appList)) else ByteArray(0))
+            Wire.fieldBytes(4, publicKeyMessage(authorityPublic)) + Wire.fieldBytes(5, sealed(listKey, deviceList)) +
+            (if (apps.isNotEmpty()) Wire.fieldBytes(6, sealed(contentKey, appList)) else ByteArray(0))
         return Wire.fieldBytes(1, signDigest(authority, sha(body))) + Wire.fieldVarint(2, 0) + Wire.fieldBytes(3, body)
     }
 
