@@ -142,6 +142,25 @@ object Dat {
         )
     }
 
+    /** DisplayRequestPayload {3 display_content {4 payload}}: a gzipped Bloks layout for the toolkit app to draw. */
+    fun displayContent(bloks: ByteArray): ByteArray = Wire.fieldBytes(3, Wire.fieldBytes(4, bloks))
+
+    /** DisplayRequestPayload {8 display_clear}. */
+    fun displayClear(): ByteArray = Wire.fieldBytes(8, ByteArray(0))
+
+    /** The id of a click in a DisplayEventPayload {1 display_event {1 click {1 identifier}}}, or null for anything else. */
+    fun displayClick(eventPayload: ByteArray): String? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return null
+        val click = Wire.parse(event).takeIf { it.has(1) }?.bytes(1) ?: return null
+        return Wire.parse(click).bytes(1).decodeToString()
+    }
+
+    /** True for a DisplayEventPayload {1 display_event {2 back}}: the wearer went back, and the layout is gone. */
+    fun displayBack(eventPayload: ByteArray): Boolean {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return false
+        return Wire.parse(event).has(2)
+    }
+
     /** The IMU's rates, in Hz, in the order of their enum: 5 Hz is 1. */
     val MOTION_RATES = listOf(5, 10, 15, 24, 30, 60)
 
