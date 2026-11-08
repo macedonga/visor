@@ -10,6 +10,7 @@ import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.MotionSample
 import com.macedonga.visor.kit.protocol.MotionSource
+import com.macedonga.visor.kit.protocol.Quaternion
 import com.macedonga.visor.kit.protocol.Vector3
 import com.macedonga.visor.log.EventLog
 import java.nio.ByteBuffer
@@ -88,12 +89,11 @@ class GlassesMotion @Inject constructor(
     }
 
     private suspend fun open(rateHz: Int): Boolean {
-        val started = withTimeoutOrNull(ANSWER_MS * 2) {
-            connection.serviceData
-                .onSubscription { connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_SNINTENT, SnApp.intent(START_DAEMON)) } }
-                .first { it.serviceId == SVC_STATUS && it.messageType == SnApp.MT_SNINTENT + 1 }
-        }
-        if (started == null) error("the glasses did not start their data collection")
+        // The daemon starts when its property changes to 1: one that exited with the property still 1 starts again
+        // only after a stop, so the property always goes to 0 first.
+        intent(STOP_DAEMON)
+        delay(RESTART_MS)
+        if (!intent(START_DAEMON)) error("the glasses did not start their data collection")
         // The daemon registers svc1027 about half a second after it starts. A daemon still recording from before the
         // link dropped refuses a new configure, so its recording stops first; with none running, that is a no-op.
         delay(DAEMON_MS)
@@ -113,6 +113,13 @@ class GlassesMotion @Inject constructor(
         if (answer.varint(2) != 1L || "accelerometer" !in channels) error("the glasses streamed ${channels.ifEmpty { listOf("nothing") }}: ${answer.bytes(3).decodeToString()}")
         return true
     }
+
+    // A svc28 SNIntent, true once the glasses answer it.
+    private suspend fun intent(action: String): Boolean = withTimeoutOrNull(ANSWER_MS * 2) {
+        connection.serviceData
+            .onSubscription { connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_SNINTENT, SnApp.intent(action)) } }
+            .first { it.serviceId == SVC_STATUS && it.messageType == SnApp.MT_SNINTENT + 1 }
+    } != null
 
     // Sends [type] and waits for [reply] on svc1027.
     private suspend fun ask(type: Int, payload: ByteArray, reply: Int, waitMs: Long): ByteArray? = withTimeoutOrNull(waitMs) {
@@ -143,15 +150,128 @@ class GlassesMotion @Inject constructor(
         val accel = channels["accelerometer"] ?: return
         val gyro = channels["gyroscope"]
         for (i in accel.times.indices) {
+            val a = accel.vector(i)
+            val g = gyro?.takeIf { i < it.times.size }?.vector(i)
             samples.tryEmit(
                 MotionSample(
                     time = accel.times[i] * 1_000_000,
-                    accelerometer = accel.vector(i),
-                    gyroscope = gyro?.takeIf { i < it.times.size }?.vector(i),
+                    accelerometer = a,
+                    gyroscope = g,
                     magnetometer = magnetometer,
+                    orientation = if (a != null && g != null) fusion.update(accel.times[i], a, g, magnetometer) else null,
                     source = MotionSource.GLASSES,
                 ),
             )
+        }
+    }
+
+    // The glasses send no orientation on this path: the phone fuses the three sensors into one, as DAT's samples carry.
+    private val fusion = Madgwick()
+
+    /**
+     * Madgwick's orientation filter (Madgwick, "An efficient orientation filter for inertial and inertial/magnetic
+     * sensor arrays", 2010): gyroscope integration corrected toward gravity and, with a magnetometer, toward north.
+     */
+    private class Madgwick {
+        private var w = 1.0
+        private var x = 0.0
+        private var y = 0.0
+        private var z = 0.0
+        private var lastMs = 0L
+        private var steps = 0
+
+        @Synchronized
+        fun update(timeMs: Long, a: Vector3, g: Vector3, m: Vector3?): Quaternion {
+            val gap = lastMs == 0L || timeMs <= lastMs || timeMs - lastMs > MAX_STEP_MS
+            val dt = if (gap) 0.0 else (timeMs - lastMs) / 1000.0
+            lastMs = timeMs
+            if (gap) steps = 0
+            // A strong pull at first, so a new stream turns to gravity and north in a moment, then the usual one.
+            val beta = if (steps++ < WARMUP_STEPS) WARMUP_BETA else BETA
+            val gx = g.x.toDouble()
+            val gy = g.y.toDouble()
+            val gz = g.z.toDouble()
+            // The rate of change from the gyroscope alone.
+            var dw = 0.5 * (-x * gx - y * gy - z * gz)
+            var dx = 0.5 * (w * gx + y * gz - z * gy)
+            var dy = 0.5 * (w * gy - x * gz + z * gx)
+            var dz = 0.5 * (w * gz + x * gy - y * gx)
+            val an = norm(a.x.toDouble(), a.y.toDouble(), a.z.toDouble())
+            if (an > 0) {
+                val ax = a.x / an
+                val ay = a.y / an
+                val az = a.z / an
+                val step = if (m != null && norm(m.x.toDouble(), m.y.toDouble(), m.z.toDouble()) > 0) marg(ax, ay, az, m) else imu(ax, ay, az)
+                dw -= beta * step[0]
+                dx -= beta * step[1]
+                dy -= beta * step[2]
+                dz -= beta * step[3]
+            }
+            w += dw * dt
+            x += dx * dt
+            y += dy * dt
+            z += dz * dt
+            val n = Math.sqrt(w * w + x * x + y * y + z * z)
+            w /= n
+            x /= n
+            y /= n
+            z /= n
+            return Quaternion(x.toFloat(), y.toFloat(), z.toFloat(), w.toFloat())
+        }
+
+        // The gradient step toward gravity alone.
+        private fun imu(ax: Double, ay: Double, az: Double): DoubleArray {
+            val f1 = 2 * (x * z - w * y) - ax
+            val f2 = 2 * (w * x + y * z) - ay
+            val f3 = 1 - 2 * (x * x + y * y) - az
+            val s = doubleArrayOf(
+                -2 * y * f1 + 2 * x * f2,
+                2 * z * f1 + 2 * w * f2 - 4 * x * f3,
+                -2 * w * f1 + 2 * z * f2 - 4 * y * f3,
+                2 * x * f1 + 2 * y * f2,
+            )
+            return normalized(s)
+        }
+
+        // The gradient step toward gravity and north.
+        private fun marg(ax: Double, ay: Double, az: Double, m: Vector3): DoubleArray {
+            val mn = norm(m.x.toDouble(), m.y.toDouble(), m.z.toDouble())
+            val mx = m.x / mn
+            val my = m.y / mn
+            val mz = m.z / mn
+            // The magnetic field in the earth frame, kept horizontal toward north and vertical.
+            val hx = 2 * mx * (0.5 - y * y - z * z) + 2 * my * (x * y - w * z) + 2 * mz * (x * z + w * y)
+            val hy = 2 * mx * (x * y + w * z) + 2 * my * (0.5 - x * x - z * z) + 2 * mz * (y * z - w * x)
+            val bx = Math.sqrt(hx * hx + hy * hy)
+            val bz = 2 * mx * (x * z - w * y) + 2 * my * (y * z + w * x) + 2 * mz * (0.5 - x * x - y * y)
+            val f1 = 2 * (x * z - w * y) - ax
+            val f2 = 2 * (w * x + y * z) - ay
+            val f3 = 2 * (0.5 - x * x - y * y) - az
+            val f4 = 2 * bx * (0.5 - y * y - z * z) + 2 * bz * (x * z - w * y) - mx
+            val f5 = 2 * bx * (x * y - w * z) + 2 * bz * (w * x + y * z) - my
+            val f6 = 2 * bx * (w * y + x * z) + 2 * bz * (0.5 - x * x - y * y) - mz
+            val s = doubleArrayOf(
+                -2 * y * f1 + 2 * x * f2 - 2 * bz * y * f4 + (-2 * bx * z + 2 * bz * x) * f5 + 2 * bx * y * f6,
+                2 * z * f1 + 2 * w * f2 - 4 * x * f3 + 2 * bz * z * f4 + (2 * bx * y + 2 * bz * w) * f5 + (2 * bx * z - 4 * bz * x) * f6,
+                -2 * w * f1 + 2 * z * f2 - 4 * y * f3 + (-4 * bx * y - 2 * bz * w) * f4 + (2 * bx * x + 2 * bz * z) * f5 + (2 * bx * w - 4 * bz * y) * f6,
+                2 * x * f1 + 2 * y * f2 + (-4 * bx * z + 2 * bz * x) * f4 + (-2 * bx * w + 2 * bz * y) * f5 + 2 * bx * x * f6,
+            )
+            return normalized(s)
+        }
+
+        private fun normalized(s: DoubleArray): DoubleArray {
+            val n = Math.sqrt(s.sumOf { it * it })
+            return if (n == 0.0) s else DoubleArray(4) { s[it] / n }
+        }
+
+        private fun norm(a: Double, b: Double, c: Double) = Math.sqrt(a * a + b * b + c * c)
+
+        private companion object {
+            const val BETA = 0.1
+            const val WARMUP_BETA = 2.5
+            const val WARMUP_STEPS = 60
+            // A gap longer than this (a pause, a new stream) is not integrated.
+            const val MAX_STEP_MS = 500L
         }
     }
 
@@ -192,6 +312,7 @@ class GlassesMotion @Inject constructor(
         const val CONFIGURE_TRIES = 6
         const val STOP_MS = 1_000L
         const val DAEMON_MS = 1_000L
+        const val RESTART_MS = 700L
 
         // The daemon's ConfigParser: session_info at the root (its session id lets START_RECORDING run), the sensors
         // under config. Motion only, through Android's sensor API, which reads whether or not the glasses are worn.
