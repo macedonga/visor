@@ -192,6 +192,8 @@ class ToolkitSession @Inject constructor(
             layoutSession = null
         }
         scope.launch { opening.withLock { if (live === session) live = null } }
+        // An ended session's link goes too: left up, it reconnects with no session, and the glasses close it each time.
+        session.close()
     }
 
     /** One open session: the link, the toolkit app's channel, and the requests waiting for their answers. */
@@ -310,6 +312,10 @@ class ToolkitSession @Inject constructor(
         fun stop() {
             ended.complete("closed")
             send7009(Dat.SESSION_STOP_REQUEST, Dat.sessionStop(sessionId))
+            close()
+        }
+
+        fun close() {
             scope.launch {
                 delay(STOP_GRACE_MS)
                 link.stop()
