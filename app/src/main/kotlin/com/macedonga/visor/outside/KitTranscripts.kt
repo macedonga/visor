@@ -61,7 +61,10 @@ class KitTranscripts @Inject constructor(
             val heard = join(caller, locale.toLanguageTag())
             try {
                 // A failure is the last thing a session sends, and ends the stream here.
-                heard.collect { emit(it.getOrThrow()) }
+                heard.collect { result ->
+                    val transcript = result.getOrThrow()
+                    if (request.partials || !transcript.partial) emit(transcript)
+                }
             } finally {
                 leave(caller)
             }
@@ -106,14 +109,22 @@ class KitTranscripts @Inject constructor(
             return@channelFlow
         }
         var problem: String? = null
+        // Set just before the utterance it scores, on the same thread.
+        var confidence: Double? = null
         val ears = GlassesEars(
             context, locale,
-            onUtterance = { text, _, _ -> trySend(Result.success(Transcript(text, tag, System.currentTimeMillis()))) },
+            onUtterance = { text, _, _ ->
+                trySend(Result.success(Transcript(text, tag, System.currentTimeMillis(), confidence = confidence)))
+                confidence = null
+            },
             onProblem = {
                 problem = it
                 log.add("Kit: transcripts: $it")
             },
             onDone = { fail(KitException(ErrorCode.FAILED, "Speech recognition stopped: $problem", reason = "recognizer_failed")) },
+            // One session serves every app: it always hears partials, and only the apps that asked get them.
+            onPartial = { text -> trySend(Result.success(Transcript(text, tag, System.currentTimeMillis(), partial = true))) },
+            onConfidence = { confidence = it.toDouble() },
         )
         ears.start()
         val mic = launch {

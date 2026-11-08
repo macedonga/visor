@@ -34,6 +34,10 @@ class GlassesEars(
     private val onUtterance: (text: String, startMs: Long, endMs: Long) -> Unit,
     private val onProblem: (String) -> Unit,
     private val onDone: () -> Unit = {},
+    /** The text so far of the utterance being spoken; asked of the recogniser only when given. */
+    private val onPartial: ((String) -> Unit)? = null,
+    /** The recogniser's confidence in the utterance [onUtterance] gets next, from 0 to 1, when it says. */
+    private val onConfidence: (Float) -> Unit = {},
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -164,6 +168,7 @@ class GlassesEars(
             putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, RATE)
             // One session for as long as the pipe is open; each utterance comes back as a segment.
             putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_AUDIO_SOURCE)
+            if (onPartial != null) putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         }
         r.startListening(intent)
         val out = FileOutputStream(write.fileDescriptor)
@@ -249,7 +254,10 @@ class GlassesEars(
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() = Unit
-        override fun onPartialResults(partialResults: Bundle?) = Unit
+        override fun onPartialResults(partialResults: Bundle?) {
+            val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()
+            if (!text.isNullOrEmpty()) onPartial?.invoke(text)
+        }
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onError(error: Int) {
@@ -293,7 +301,11 @@ class GlassesEars(
 
     private fun heard(bundle: Bundle?) {
         val text = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()
-        if (!text.isNullOrEmpty()) onUtterance(text, speechFrom.takeIf { it > 0 } ?: clockMs, clockMs)
+        if (!text.isNullOrEmpty()) {
+            // Recognisers that do not score send no array, or 0 for every result.
+            bundle.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)?.firstOrNull()?.takeIf { it > 0f }?.let(onConfidence)
+            onUtterance(text, speechFrom.takeIf { it > 0 } ?: clockMs, clockMs)
+        }
         speechFrom = 0
     }
 
