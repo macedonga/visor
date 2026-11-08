@@ -448,6 +448,7 @@
     <string name="settings_kit_client_webhook">Webhook URL (optional)</string>
     <string name="settings_kit_client_posts">posts to %1$s</string>
     <string name="kit_consent_title">Let %1$s use your glasses?</string>
+    <string name="kit_consent_once">Only this time</string>
     <string name="kit_consent_allow">Allow</string>
     <string name="kit_consent_deny">Don\'t allow</string>
     <string name="kit_scope_state">See whether the glasses are connected, worn and charged</string>

@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
@@ -19,11 +20,13 @@ import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SheetAnswers
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.VisorSheet
+import com.macedonga.visor.settings.WidePill
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * The VDK's consent screen, over the app that asked: the scopes it wants and does not hold yet, Allow or Don't allow.
+ * The VDK's consent screen, over the app that asked: the scopes it wants and does not hold yet, Allow, Only this time
+ * (until the app's last connection to Visor closes, as DAT's Allow once) or Don't allow.
  * The result is every scope the app holds afterwards, also when the person just goes back.
  */
 @AndroidEntryPoint
@@ -58,6 +61,16 @@ class KitConsentActivity : ComponentActivity() {
                             modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 12.dp),
                         )
                     }
+                    WidePill(
+                        stringResource(R.string.kit_consent_once),
+                        {
+                            grants.allowOnce(app, missing)
+                            answer(app)
+                            finish()
+                        },
+                        Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 8.dp),
+                        quiet = true,
+                    )
                     SheetAnswers(
                         stringResource(R.string.kit_consent_allow),
                         {

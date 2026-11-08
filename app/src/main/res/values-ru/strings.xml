@@ -466,6 +466,7 @@
     <string name="settings_kit_client_webhook">URL вебхука (необязательно)</string>
     <string name="settings_kit_client_posts">отправляет на %1$s</string>
     <string name="kit_consent_title">Разрешить %1$s использовать ваши очки?</string>
+    <string name="kit_consent_once">Только сейчас</string>
     <string name="kit_consent_allow">Разрешить</string>
     <string name="kit_consent_deny">Запретить</string>
     <string name="kit_scope_state">Видеть, подключены ли очки, надеты ли они и сколько у них заряда</string>

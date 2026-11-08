@@ -59,6 +59,10 @@ class KitHost @Inject constructor(
         override fun greeted(caller: Caller, hello: Hello) {
             log.add("VDK: ${caller.packageName} connected with VDK ${hello.kit}, protocol ${hello.protocol}")
         }
+
+        override fun left(caller: Caller) {
+            if (!caller.network) grants.forgetOnce(caller.packageName)
+        }
     }
 
     private val dispatcher = Dispatcher(BuildConfig.VERSION_NAME, gate, routes.routes(), log::add)

@@ -7,6 +7,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,10 +27,24 @@ class KitGrants @Inject constructor(@ApplicationContext private val context: Con
     private val _all = MutableStateFlow(read())
     val all: StateFlow<Map<String, KitGrant>> = _all.asStateFlow()
 
+    // Scopes allowed only this time, by package: they end with the app's last connection, or with Visor.
+    private val once = ConcurrentHashMap<String, Set<Scope>>()
+
     /** The scopes [app] holds now; none when its certificate changed since the grant. */
     fun scopesOf(app: String): Set<Scope> {
-        val grant = _all.value[app] ?: return emptySet()
-        return if (certificateOf(app) == grant.certificate) grant.scopes else emptySet()
+        val grant = _all.value[app]
+        val kept = if (grant != null && certificateOf(app) == grant.certificate) grant.scopes else emptySet()
+        return kept + once[app].orEmpty()
+    }
+
+    /** Lets [app] use [scopes] until it closes its last connection to Visor. */
+    fun allowOnce(app: String, scopes: Set<Scope>) {
+        once.merge(app, scopes) { a, b -> a + b }
+    }
+
+    /** Ends what [app] was allowed only this time. */
+    fun forgetOnce(app: String) {
+        once.remove(app)
     }
 
     /** Sets the scopes of [app]. False when it gets scopes but Visor cannot see it; taking all of them always works. */

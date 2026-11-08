@@ -446,6 +446,7 @@
     <string name="settings_kit_client_webhook">URL del webhook (facoltativo)</string>
     <string name="settings_kit_client_posts">invia a %1$s</string>
     <string name="kit_consent_title">Consentire a %1$s di usare i tuoi occhiali?</string>
+    <string name="kit_consent_once">Solo questa volta</string>
     <string name="kit_consent_allow">Consenti</string>
     <string name="kit_consent_deny">Non consentire</string>
     <string name="kit_scope_state">Sapere se gli occhiali sono connessi, indossati e carichi</string>
