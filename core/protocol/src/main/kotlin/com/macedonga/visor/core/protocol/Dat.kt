@@ -253,6 +253,47 @@ object Dat {
         }
     }
 
+    /** SpeechRequestPayload {1 speech_start {}}: the toolkit app hears in the Display's own language. */
+    fun speechStart(): ByteArray = Wire.fieldBytes(1, ByteArray(0))
+
+    /** SpeechRequestPayload {2 speech_stop {}}. */
+    fun speechStop(): ByteArray = Wire.fieldBytes(2, ByteArray(0))
+
+    /** The language speech_start answered, from SpeechResponsePayload {1 speech_start {1 started, 2 locale}}. */
+    fun speechLocale(responsePayload: ByteArray?): String? {
+        val start = responsePayload?.let(Wire::parse)?.takeIf { it.has(1) }?.bytes(1)?.let(Wire::parse) ?: return null
+        return start.bytes(2).decodeToString().takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * One event of the speech capability, SpeechEventPayload {1 speech_event {1 transcription {1 text, 2 is_final,
+     * 3 confidence}, 2 error {1 code, 2 message}, 3 completion {}}}: [text] for a transcription, [error] for an error,
+     * [done] when recognition ended.
+     */
+    class Speech(val text: String?, val final: Boolean, val confidence: Float, val error: String?, val done: Boolean)
+
+    private const val LEGACY_COMPLETION = -2
+
+    fun speech(eventPayload: ByteArray): Speech? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1)?.let(Wire::parse) ?: return null
+        return when {
+            event.has(1) -> Wire.parse(event.bytes(1)).let {
+                Speech(it.bytes(1).decodeToString(), it.varint(2) != 0L, it.float(3), error = null, done = false)
+            }
+            // Older firmware ends an utterance with error -2, as DAT reads it.
+            event.has(2) -> Wire.parse(event.bytes(2)).let {
+                val code = it.varint(1).toInt()
+                if (code == LEGACY_COMPLETION) {
+                    Speech(null, final = false, confidence = 0f, error = null, done = true)
+                } else {
+                    Speech(null, final = false, confidence = 0f, error = "$code: ${it.bytes(2).decodeToString()}", done = false)
+                }
+            }
+            event.has(3) -> Speech(null, final = false, confidence = 0f, error = null, done = true)
+            else -> null
+        }
+    }
+
     /** The IMU's rates, in Hz, in the order of their enum: 5 Hz is 1. */
     val MOTION_RATES = listOf(5, 10, 15, 24, 30, 60)
 

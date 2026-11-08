@@ -11,6 +11,9 @@ import com.macedonga.visor.core.assistant.GlassesEars
 import com.macedonga.visor.core.assistant.headsetListen
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
+import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.connection.productId
+import com.macedonga.visor.dat.ToolkitSession
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
@@ -37,12 +40,15 @@ import kotlinx.coroutines.launch
 
 /**
  * What the glasses hear, as text, for VDK apps: the glasses' microphone as a Bluetooth headset, into the phone's
- * speech recogniser. One recording serves every app that listens, all in one language.
+ * speech recogniser. One recording serves every app that listens, all in one language. The Display is no headset to
+ * the phone: there the toolkit app recognises the wearer's speech on the glasses, as DAT's speech does.
  */
 @Singleton
 class KitTranscripts @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: GlassesConnection,
+    private val toolkit: ToolkitSession,
+    private val grants: KitGrants,
     private val log: EventLog,
 ) {
     private val scope = CoroutineScope(
@@ -53,6 +59,7 @@ class KitTranscripts @Inject constructor(
     private var shared: SharedFlow<Result<Transcript>>? = null
 
     fun transcripts(caller: Caller, request: TranscriptRequest): Flow<Transcript> {
+        if (isDisplayProduct(productId(connection.state.value.info?.build))) return displayTranscripts(caller, request)
         val locale = request.language?.let { tag ->
             Locale.forLanguageTag(tag).takeIf { it.language.isNotEmpty() }
                 ?: throw KitException(ErrorCode.INVALID_PARAMS, "$tag is not a BCP 47 language tag.")
@@ -67,6 +74,28 @@ class KitTranscripts @Inject constructor(
                 }
             } finally {
                 leave(caller)
+            }
+        }
+    }
+
+    /**
+     * The Display's own recognition, in the Display's language: [TranscriptRequest.language] cannot change it, and
+     * each transcript says the one heard. An error of the recogniser ends the stream with `failed`, reason
+     * `recognizer_failed`.
+     */
+    private fun displayTranscripts(caller: Caller, request: TranscriptRequest): Flow<Transcript> = flow {
+        var language = request.language ?: Locale.getDefault().toLanguageTag()
+        toolkit.speech(caller.packageName, grants.labelOf(caller.packageName)).collect { heard ->
+            when (heard) {
+                is ToolkitSession.SpeechHeard.Language -> heard.tag?.let { language = it.replace('_', '-') }
+                is ToolkitSession.SpeechHeard.Event -> {
+                    val speech = heard.speech
+                    speech.error?.let { throw KitException(ErrorCode.FAILED, "The Display's speech recognition failed: $it", reason = "recognizer_failed") }
+                    val text = speech.text?.takeIf { it.isNotBlank() } ?: return@collect
+                    if (!speech.final && !request.partials) return@collect
+                    val confidence = speech.confidence.toDouble().takeIf { speech.final && it > 0 }
+                    emit(Transcript(text, language, System.currentTimeMillis(), partial = !speech.final, confidence = confidence))
+                }
             }
         }
     }

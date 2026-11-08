@@ -17,10 +17,13 @@ import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Layout
+import com.macedonga.visor.kit.protocol.LayoutAlign
 import com.macedonga.visor.kit.protocol.LayoutClick
 import com.macedonga.visor.kit.protocol.LayoutEnd
+import com.macedonga.visor.kit.protocol.LayoutIconName
 import com.macedonga.visor.kit.protocol.LayoutNode
 import com.macedonga.visor.kit.protocol.LayoutState
+import com.macedonga.visor.kit.protocol.LayoutStyle
 import com.macedonga.visor.kit.protocol.LayoutType
 import com.macedonga.visor.kit.protocol.LayoutVideoEvent
 import com.macedonga.visor.kit.protocol.LayoutVideoState
@@ -42,6 +45,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -89,6 +93,9 @@ class ToolkitSession @Inject constructor(
 
     // The toolkit app's navigation (nav, select, back, drags), heard while a layout shows; who keeps back for itself.
     private val navigations = MutableSharedFlow<Dat.Navigation>(extraBufferCapacity = 64)
+
+    // The toolkit app's speech recognition, with the session that heard it.
+    private val speeches = MutableSharedFlow<Pair<Live, Dat.Speech>>(extraBufferCapacity = 64)
     private var navigationUsers = 0
     private var backKeepers = 0
 
@@ -129,6 +136,58 @@ class ToolkitSession @Inject constructor(
             session.request(Dat.INPUT, Dat.inputStart(listOf(Dat.NAV_TOUCHPAD, Dat.NAV_BAND, Dat.NAV_BAND_DRAG), keep))
             session.navigation = keep
         }.onFailure { log.add("Toolkit: no navigation from the toolkit app: ${it.message}") }
+    }
+
+    /**
+     * What the wearer says, recognised on the Display by the toolkit app, while collected: DAT's speech, in the
+     * Display's own language, which comes first. The toolkit app must be on the screen: unless [app] shows a layout,
+     * a Listening screen naming [label] does, so the wearer knows who listens. Going back on the glasses ends it, and
+     * the flow with `closed`.
+     */
+    fun speech(app: String, label: String): Flow<SpeechHeard> = channelFlow {
+        val session = acquire(app)
+        var listening = false
+        try {
+            if (Dat.SPEECH !in session.capabilities) session.add(Dat.SPEECH)
+            if (owner.value == null) {
+                if (Dat.DISPLAY !in session.capabilities) session.add(Dat.DISPLAY)
+                session.request(Dat.DISPLAY, Dat.displayContent(DatLayout.payload(listeningScreen(label))))
+                listening = true
+            }
+            launch { speeches.filter { it.first === session }.collect { send(SpeechHeard.Event(it.second)) } }
+            // One recognition serves every app that listens: the first starts it, the last stops it.
+            val first = opening.withLock { session.listeners++ == 0 }
+            if (first) session.locale = Dat.speechLocale(session.request(Dat.SPEECH, Dat.speechStart()).payload)
+            send(SpeechHeard.Language(session.locale))
+            log.add("Toolkit: $label hears the Display's speech${session.locale?.let { " in $it" }.orEmpty()}")
+            val why = session.ended.await()
+            throw KitException(ErrorCode.CLOSED, "The toolkit session ended: $why.", reason = "back")
+        } finally {
+            withContext(NonCancellable) {
+                val last = opening.withLock { session.listeners > 0 && --session.listeners == 0 }
+                if (!session.ended.isCompleted) {
+                    if (last) runCatching { session.request(Dat.SPEECH, Dat.speechStop()) }
+                    if (listening && last && owner.value == null) runCatching { session.request(Dat.DISPLAY, Dat.displayClear()) }
+                }
+                release(session)
+            }
+        }
+    }
+
+    /** What [speech] brings: the language the toolkit app hears in, then its events. */
+    sealed interface SpeechHeard {
+        class Language(val tag: String?) : SpeechHeard
+        class Event(val speech: Dat.Speech) : SpeechHeard
+    }
+
+    // A screen of its own while an app listens with no layout of its own on the Display.
+    private fun listeningScreen(label: String) = Layout {
+        padding = 48
+        gap = 16
+        align = LayoutAlign.CENTER
+        icon(LayoutIconName.THREE_DOT_SPEECH_BUBBLE) { size = 64; alignSelf = LayoutAlign.CENTER }
+        text("Listening") { style = LayoutStyle.HEADING; align = LayoutAlign.CENTER }
+        text(label) { style = LayoutStyle.META; align = LayoutAlign.CENTER; maxLines = 1 }
     }
 
     /** The wearer's gestures, from the band and the touchpad, while collected; [app] names the request to set up. */
@@ -277,6 +336,12 @@ class ToolkitSession @Inject constructor(
         // Null until the input capability runs; then whether it keeps back for the app.
         @Volatile
         var navigation: Boolean? = null
+
+        // The apps that hear the Display's speech, under [opening], and the language it hears in.
+        var listeners = 0
+
+        @Volatile
+        var locale: String? = null
         val ended = CompletableDeferred<String>()
         private val started = CompletableDeferred<Dat.SessionStarted>()
         private val answers = ConcurrentHashMap<String, CompletableDeferred<Dat.Response>>()
@@ -313,9 +378,9 @@ class ToolkitSession @Inject constructor(
             throw KitException(ErrorCode.FAILED, "The toolkit app did not take the capability: ${last?.message}", reason = "toolkit_app")
         }
 
-        suspend fun request(capability: Int, payload: ByteArray) = request(capability, payload, null)
+        suspend fun request(capability: Int, payload: ByteArray): Dat.Response = request(capability, payload, null)
 
-        private suspend fun request(capability: Int, payload: ByteArray?, body: ByteArray?) {
+        private suspend fun request(capability: Int, payload: ByteArray?, body: ByteArray?): Dat.Response {
             if (ended.isCompleted) throw KitException(ErrorCode.CLOSED, "The toolkit session ended.", reason = "back")
             val id = "v${ids.incrementAndGet()}"
             val answer = CompletableDeferred<Dat.Response>().also { answers[id] = it }
@@ -328,6 +393,7 @@ class ToolkitSession @Inject constructor(
                     ErrorCode.FAILED, "The toolkit app refused: ${response.error ?: response.denied ?: response.status}", reason = "toolkit_app",
                 )
             }
+            return response
         }
 
         // Only a channel's first frame names its service: a frame that names it again opens it anew.
@@ -370,6 +436,16 @@ class ToolkitSession @Inject constructor(
             val payload = e.payload ?: return
             when (e.capability) {
                 Dat.INPUT -> Dat.navigation(payload).forEach { navigations.tryEmit(it) }
+                Dat.SPEECH -> Dat.speech(payload)?.let { heard ->
+                    // The toolkit app hears one utterance a start, as DAT's: while apps listen, Visor starts the next.
+                    if (heard.done && listeners > 0) {
+                        scope.launch {
+                            delay(SPEECH_RESTART_MS)
+                            if (listeners > 0 && !ended.isCompleted) runCatching { request(Dat.SPEECH, Dat.speechStart()) }
+                        }
+                    }
+                    speeches.tryEmit(this to heard)
+                }
                 Dat.DISPLAY -> {
                     val app = owner.value ?: return
                     Dat.displayClick(payload)?.let { clicks.tryEmit(app to LayoutClick(it, now())) }
@@ -435,6 +511,7 @@ class ToolkitSession @Inject constructor(
         const val STOP_GRACE_MS = 500L
         const val REOPEN_MS = 3_000L
         const val REPEAT_MS = 30L
+        const val SPEECH_RESTART_MS = 300L
 
         // VideoPlaybackEvent errors: 1 URL_INVALID, 2 ALREADY_PLAYING, 3 PLAYBACK_FAILED, 4 INVALID_DIMENSIONS.
         val VIDEO_ERRORS = mapOf(1 to "invalid_url", 2 to "playback_failed", 3 to "playback_failed", 4 to "invalid_dimensions")
