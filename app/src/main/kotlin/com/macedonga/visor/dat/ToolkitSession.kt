@@ -3,7 +3,6 @@
 package com.macedonga.visor.dat
 
 import android.content.Context
-import com.macedonga.visor.R
 import com.macedonga.visor.core.identity.ConstellationTrustExchange
 import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.session.DataXError
@@ -18,13 +17,10 @@ import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Layout
-import com.macedonga.visor.kit.protocol.LayoutAlign
 import com.macedonga.visor.kit.protocol.LayoutClick
 import com.macedonga.visor.kit.protocol.LayoutEnd
-import com.macedonga.visor.kit.protocol.LayoutIconName
 import com.macedonga.visor.kit.protocol.LayoutNode
 import com.macedonga.visor.kit.protocol.LayoutState
-import com.macedonga.visor.kit.protocol.LayoutStyle
 import com.macedonga.visor.kit.protocol.LayoutType
 import com.macedonga.visor.kit.protocol.MotionSample
 import com.macedonga.visor.kit.protocol.MotionSource
@@ -62,7 +58,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The toolkit session apps share: an app link of Visor's own to the active pair (its app key proved on svc79), a
  * svc7009 session, and Meta's toolkit app on svc6500, which serves motion and draws layouts. It opens on the first
  * app that needs it and closes a little after the last one leaves; the wearer ends it by going back on the glasses.
- * While only motion runs, the toolkit app shows a card that says which app uses it, so its screen is never blank.
+ * While no layout shows, the toolkit app's screen stays black, which the Display does not light: motion shows nothing,
+ * as with DAT.
  */
 @Singleton
 class ToolkitSession @Inject constructor(
@@ -93,7 +90,6 @@ class ToolkitSession @Inject constructor(
                 session.add(Dat.IMU)
                 session.request(Dat.IMU, Dat.motionStart(rateHz))
             }
-            if (owner.value == null) showCard(session)
             emitAll(session.motion.takeWhile { it != null }.map { sample(it!!) })
             throw KitException(ErrorCode.CLOSED, "The wearer left the toolkit app on the glasses.", reason = "back")
         } finally {
@@ -129,7 +125,7 @@ class ToolkitSession @Inject constructor(
         }
     }
 
-    /** Empties [app]'s layout; the motion card comes back while motion runs. */
+    /** Empties [app]'s layout, back to the toolkit app's black screen. */
     suspend fun close(app: String) {
         if (owner.value != app) return
         owner.value = null
@@ -137,7 +133,7 @@ class ToolkitSession @Inject constructor(
         val session = layoutSession ?: return
         layoutSession = null
         if (!session.ended.isCompleted) {
-            if (motionUsers.isNotEmpty()) showCard(session) else runCatching { session.request(Dat.DISPLAY, Dat.displayClear()) }
+            runCatching { session.request(Dat.DISPLAY, Dat.displayClear()) }
         }
         release(session)
     }
@@ -146,30 +142,6 @@ class ToolkitSession @Inject constructor(
 
     fun state(app: String): Flow<LayoutState> =
         states.filter { it.first == app }.map { it.second }.onStart { emit(LayoutState(showing = owner.value == app, time = now())) }
-
-    private suspend fun showCard(session: Live) {
-        val app = motionUsers.keys.firstOrNull()?.let(grants::labelOf) ?: return
-        val card = Layout(
-            LayoutNode(
-                LayoutType.COLUMN, padding = 32, gap = 16, align = LayoutAlign.CENTER,
-                children = listOf(
-                    LayoutNode(
-                        LayoutType.ROW, gap = 12, crossAlign = LayoutAlign.CENTER,
-                        children = listOf(
-                            LayoutNode(LayoutType.ICON, icon = LayoutIconName.SMART_GLASSES),
-                            LayoutNode(LayoutType.TEXT, text = context.getString(R.string.toolkit_card_title), style = LayoutStyle.HEADING),
-                        ),
-                    ),
-                    LayoutNode(LayoutType.TEXT, text = context.getString(R.string.toolkit_card_text, app)),
-                    LayoutNode(LayoutType.TEXT, text = context.getString(R.string.toolkit_card_back), style = LayoutStyle.META),
-                ),
-            ),
-        )
-        runCatching {
-            if (Dat.DISPLAY !in session.capabilities) session.add(Dat.DISPLAY)
-            session.request(Dat.DISPLAY, Dat.displayContent(DatLayout.payload(card)))
-        }.onFailure { log.add("Toolkit: the motion card did not show: ${it.message}") }
-    }
 
     private suspend fun acquire(app: String): Live = opening.withLock {
         closing?.cancel()

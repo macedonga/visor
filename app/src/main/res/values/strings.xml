@@ -1152,9 +1152,6 @@
     <string name="toolkit_step_app">Installing Meta\'s toolkit app</string>
     <string name="toolkit_step_manifest">Adding Visor to your glasses</string>
     <string name="toolkit_step_permissions">Allowing the toolkit</string>
-    <string name="toolkit_card_title">Motion on</string>
-    <string name="toolkit_card_text">%1$s is using your glasses\' movement.</string>
-    <string name="toolkit_card_back">Go back to stop.</string>
     <string name="kit_scope_name_motion">Motion</string>
     <string name="kit_scope_motion">Read how your glasses move and turn, many times a second, from their motion sensors.</string>
     <string name="toolkit_point_app">Installs Meta\'s toolkit app on your glasses</string>
