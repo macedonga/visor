@@ -7,6 +7,8 @@ import com.macedonga.visor.core.connection.SVC_STATUS
 import com.macedonga.visor.core.connection.SnApp
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.kit.KitException
+import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.MotionSample
 import com.macedonga.visor.kit.protocol.MotionSource
@@ -43,6 +45,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * through Android's sensor API; START_RECORDING runs them; SUBSCRIBE_STREAM sends a SensorDataBatch every 100 ms.
  * Every app shares one stream at the first app's rate. It starts again when the glasses' link comes back, and the last
  * app leaving stops it and deletes what the daemon kept on the glasses. Measured on the Display, 2026-11-08.
+ * The same daemon speaks text in the glasses' voice, unasked: [say].
  */
 @Singleton
 class GlassesMotion @Inject constructor(
@@ -54,6 +57,62 @@ class GlassesMotion @Inject constructor(
     private val samples = MutableSharedFlow<MotionSample>(extraBufferCapacity = 1024)
     private var users = 0
     private var job: Job? = null
+
+    // One daemon serves motion and speech: its start, configure and stop do not interleave.
+    private val daemon = Mutex()
+
+    // True while the running daemon was configured with its speech on; a restart or a stop clears it.
+    @Volatile
+    private var speaking = false
+    private var idle: Job? = null
+
+    init {
+        scope.launch { connection.state.collect { if (it.link != LinkState.READY) speaking = false } }
+    }
+
+    /**
+     * The glasses say [text] in their own voice, unasked. With no motion running, the daemon starts for it with speech
+     * alone and stops after [SPEECH_IDLE_MS] without another line.
+     */
+    suspend fun say(text: String) = daemon.withLock {
+        if (connection.state.value.link != LinkState.READY) throw KitException(ErrorCode.NOT_CONNECTED, "The glasses are not connected.")
+        idle?.cancel()
+        if (!speaking) {
+            restartDaemon()
+            val answer = configure(SPEECH_CONFIG) ?: throw KitException(ErrorCode.TIMEOUT, "The glasses' data collection did not answer.")
+            if (Wire.parse(answer).varint(2) != 1L) {
+                throw KitException(ErrorCode.FAILED, "The glasses refused the speech setup: ${Wire.parse(answer).bytes(3).decodeToString()}")
+            }
+            speaking = true
+        }
+        val reply = ask(PLAY_TTS, Wire.fieldString(1, "visor-say") + Wire.fieldString(2, text.trim()), PLAYED, ANSWER_MS * 4)
+            ?: throw KitException(ErrorCode.TIMEOUT, "The glasses did not answer the speech.")
+        val played = Wire.parse(reply)
+        if (played.varint(2) != 1L) throw KitException(ErrorCode.FAILED, "The glasses did not speak: ${played.bytes(3).decodeToString()}")
+        idle = scope.launch {
+            delay(SPEECH_IDLE_MS)
+            daemon.withLock {
+                if (users == 0 && speaking) {
+                    speaking = false
+                    connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_SNINTENT, SnApp.intent(STOP_DAEMON)) }
+                }
+            }
+        }
+    }
+
+    // The daemon starts when its property changes to 1: one that exited with the property still 1 starts again only
+    // after a stop, so the property always goes to 0 first. It registers svc1027 about half a second after it starts.
+    private suspend fun restartDaemon() {
+        intent(STOP_DAEMON)
+        delay(RESTART_MS)
+        if (!intent(START_DAEMON)) throw KitException(ErrorCode.TIMEOUT, "The glasses did not start their data collection.")
+        delay(DAEMON_MS)
+    }
+
+    // CONFIGURE, sent again while svc1027 is not registered yet; the answer, or null.
+    private suspend fun configure(json: String): ByteArray? = (1..CONFIGURE_TRIES).firstNotNullOfOrNull {
+        ask(CONFIGURE, Wire.fieldString(1, "visor-configure") + Wire.fieldString(2, json), CONFIGURED, ANSWER_MS)
+    }
 
     /** The glasses' motion at [rateHz] while collected. */
     fun samples(rateHz: Int): Flow<MotionSample> = flow {
@@ -88,21 +147,16 @@ class GlassesMotion @Inject constructor(
         }
     }
 
-    private suspend fun open(rateHz: Int): Boolean {
-        // The daemon starts when its property changes to 1: one that exited with the property still 1 starts again
-        // only after a stop, so the property always goes to 0 first.
-        intent(STOP_DAEMON)
-        delay(RESTART_MS)
-        if (!intent(START_DAEMON)) error("the glasses did not start their data collection")
-        // The daemon registers svc1027 about half a second after it starts. A daemon still recording from before the
-        // link dropped refuses a new configure, so its recording stops first; with none running, that is a no-op.
-        delay(DAEMON_MS)
+    private suspend fun open(rateHz: Int): Boolean = daemon.withLock {
+        speaking = false
+        restartDaemon()
+        // A daemon still recording from before the link dropped refuses a new configure, so its recording stops first;
+        // with none running, that is a no-op.
         connection.submit { it.sendOnService(SERVICE, STOP_RECORDING, Wire.fieldString(1, "visor-reset")) }
         val periodUs = 1_000_000 / rateHz
-        val configured = (1..CONFIGURE_TRIES).firstNotNullOfOrNull {
-            ask(CONFIGURE, Wire.fieldString(1, "visor-configure") + Wire.fieldString(2, config(periodUs, rateHz)), CONFIGURED, ANSWER_MS)
-        } ?: error("the glasses' data collection did not answer")
+        val configured = configure(config(periodUs, rateHz)) ?: error("the glasses' data collection did not answer")
         if (Wire.parse(configured).varint(2) != 1L) error("the glasses refused the motion setup: ${Wire.parse(configured).bytes(3).decodeToString()}")
+        speaking = true
         val recording = ask(START_RECORDING, Wire.fieldString(1, "visor-record"), RECORDING, ANSWER_MS)
         if (recording == null || Wire.parse(recording).varint(2) != 1L) error("the glasses did not start their sensors")
         val request = Wire.fieldString(1, "visor-subscribe") +
@@ -111,7 +165,7 @@ class GlassesMotion @Inject constructor(
         val answer = ask(SUBSCRIBE, request, SUBSCRIBED, ANSWER_MS)?.let(Wire::parse) ?: error("the glasses did not answer the subscribe")
         val channels = answer.repeatedBytes(4).map { it.decodeToString() }
         if (answer.varint(2) != 1L || "accelerometer" !in channels) error("the glasses streamed ${channels.ifEmpty { listOf("nothing") }}: ${answer.bytes(3).decodeToString()}")
-        return true
+        true
     }
 
     // A svc28 SNIntent, true once the glasses answer it.
@@ -129,7 +183,8 @@ class GlassesMotion @Inject constructor(
             .payload
     }
 
-    private suspend fun stop() {
+    private suspend fun stop() = daemon.withLock {
+        speaking = false
         connection.submit { it.sendOnService(SERVICE, UNSUBSCRIBE, Wire.fieldString(1, "visor-unsubscribe") + CHANNELS.fold(ByteArray(0)) { out, id -> out + Wire.fieldString(2, id) }) }
         connection.submit { it.sendOnService(SERVICE, STOP_RECORDING, Wire.fieldString(1, "visor-stop")) }
         // The stop finishes the recording file; the cleanup then deletes it, so nothing stays on the glasses.
@@ -304,6 +359,9 @@ class GlassesMotion @Inject constructor(
         const val SUBSCRIBED = 31
         const val BATCH = 32
         const val UNSUBSCRIBE = 33
+        const val PLAY_TTS = 40
+        const val PLAYED = 41
+        const val SPEECH_IDLE_MS = 60_000L
         const val START_DAEMON = "action.miranda_data_collection_start"
         const val STOP_DAEMON = "action.miranda_data_collection_stop"
         val CHANNELS = listOf("accelerometer", "gyroscope", "magnetometer")
@@ -320,6 +378,9 @@ class GlassesMotion @Inject constructor(
             "{\"session_info\":{\"session_id\":\"visor-motion\"},\"config\":{\"sensors\":{" +
                 "\"accelerometer\":{\"enabled\":true,\"period_us\":$periodUs,\"use_sensor_manager\":true}," +
                 "\"gyroscope\":{\"enabled\":true,\"period_us\":$periodUs,\"use_sensor_manager\":true}," +
-                "\"magnetometer\":{\"enabled\":true,\"sampling_rate_hz\":$rateHz}}}}"
+                "\"magnetometer\":{\"enabled\":true,\"sampling_rate_hz\":$rateHz},\"tts\":{\"enabled\":true}}}}"
+
+        // Speech alone: the daemon's TtsSensorProvider plays text through the glasses' earcon service.
+        const val SPEECH_CONFIG = "{\"session_info\":{\"session_id\":\"visor-speech\"},\"config\":{\"sensors\":{\"tts\":{\"enabled\":true}}}}"
     }
 }

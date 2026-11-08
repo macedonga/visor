@@ -85,6 +85,7 @@ import com.macedonga.visor.login.MetaLogin
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.PhoneContacts
 import com.macedonga.visor.outside.DeveloperMode
+import com.macedonga.visor.outside.GlassesMotion
 import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.pairs.KnownPair
 import com.macedonga.visor.pairs.Looks
@@ -154,6 +155,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var library: PhoneLibrary
     @Inject lateinit var toolkit: ToolkitStore
     @Inject lateinit var networkClients: NetworkClients
+    @Inject lateinit var glassesMotion: GlassesMotion
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -221,6 +223,8 @@ class DebugReceiver : BroadcastReceiver() {
                 intent.getStringExtra("channels")?.split(',')?.filter { it.isNotBlank() } ?: MirandaProbe.CANDIDATES, log,
             )
             "MIRANDA_STOP" -> resultData = MirandaProbe.stop(connection, log)
+            // The glasses say --es text in their own voice, through the data collection daemon's speech.
+            "SAY" -> answerLater { runCatching { glassesMotion.say(intent.getStringExtra("text") ?: "Hello from Visor."); "said" }.getOrElse { "failed: ${it.message}" } }
             // Grants a phone app the glasses' permissions over RLDrive, as the Meta app does: --es pkg (Visor by default)
             // --es perms DEV_MODE,IMU (short names); then lists what the namespace holds.
             "GRANT" -> answerLater {
