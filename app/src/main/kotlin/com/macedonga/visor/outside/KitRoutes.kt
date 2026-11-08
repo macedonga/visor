@@ -506,7 +506,10 @@ class KitRoutes @Inject constructor(
     /** The band's gestures while collected: the band is borrowed from the Display for as long as that lasts. */
     // The band stays on the Display: its gestures come forwarded through a toolkit session, which needs no toolkit app.
     private fun gestures(app: String): Flow<Gesture> = flow {
-        requireBand()
+        // Any band the Display holds will do: the session needs none of the band's keys.
+        if (!paired() && connection.state.value.device?.bandBattery == null) {
+            throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+        }
         emitAll(toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.map(::kitGesture))
     }
 
@@ -529,6 +532,8 @@ class KitRoutes @Inject constructor(
             else -> Finger("unknown")
         },
         action = SESSION_GESTURES[input.gesture] ?: GestureAction.UNKNOWN,
+        // The glasses forward the gesture as the band made it out: an app reading [Gesture.derived] gets it too.
+        derived = SESSION_GESTURES[input.gesture] ?: GestureAction.UNKNOWN,
         time = System.currentTimeMillis(),
     )
 
