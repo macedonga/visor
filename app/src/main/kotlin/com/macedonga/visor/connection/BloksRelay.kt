@@ -1,12 +1,16 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
+import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.dat.BriefingCards
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPOutputStream
 import javax.inject.Inject
@@ -24,7 +28,9 @@ import org.json.JSONObject
  */
 @Singleton
 class BloksRelay @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val login: Provider<MetaLogin>,
+    private val cards: BriefingCards,
     private val requests: RequestLog,
     log: EventLog,
 ) : Responder {
@@ -45,8 +51,19 @@ class BloksRelay @Inject constructor(
             requests.finish(id, "empty, as the Meta app answers", failed = false)
             return
         }
+        val app = card(r)
+        if (app != null) {
+            val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(detail(r, app).toByteArray()) } }.toByteArray()
+            mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
+            requests.finish(id, "from ${app.app}", failed = false, bytes = gz.size.toLong())
+            return
+        }
         try {
             val bundle = fetch(r, q)
+            // Debug builds keep the Briefing's detail screens, the model for apps' own.
+            if (BuildConfig.DEBUG && r.appId.contains("Glanceables")) {
+                runCatching { context.filesDir.resolve("bloks-${r.appId.substringAfterLast('.')}.json").writeText(JSONObject().put("params", JSONObject(r.params as Map<*, *>)).put("type", q.answer).put("bundle", bundle).toString()) }
+            }
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bundle.toByteArray()) } }.toByteArray()
             mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
             requests.finish(id, "from Meta", failed = false, bytes = gz.size.toLong())
@@ -54,6 +71,24 @@ class BloksRelay @Inject constructor(
             requests.finish(id, "failed: ${error.message}", failed = true)
             runCatching { mux.sendStatus(reply, INTERNAL_ERROR) }
         }
+    }
+
+    // An app's Briefing card whose detail the Briefing asks for, by the data type its click preloaded.
+    private fun card(r: Request): BriefingCards.Card? {
+        if (!r.appId.endsWith(DETAIL_QUERY)) return null
+        val type = r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() } ?: return null
+        return cards.byKey(type)?.takeIf { it.detail != null }
+    }
+
+    // The detail as Meta's server answers it: one component, its tree the app's.
+    private fun detail(r: Request, card: BriefingCards.Card): String {
+        val tree = JSONObject().put("data", JSONArray()).put("tree", JSONObject(card.detail!!))
+        val component = JSONObject().put("id", "component").put("payload", JSONObject().put("layout", JSONObject().put("bloks_payload", tree)))
+        val consumed = JSONObject()
+        r.params["params"]?.let { runCatching { JSONObject(it) }.getOrNull() }?.keys()?.forEach { consumed.put(it, it) }
+        val answer = JSONObject().put("payload", JSONObject().put("components", JSONArray().put(component)).toString())
+            .put("consumed_params", consumed).put("app_id", r.appId)
+        return JSONObject().put("component_query_responses", JSONArray().put(answer)).toString()
     }
 
     private fun fetch(r: Request, q: Query): String {
@@ -105,5 +140,6 @@ class BloksRelay @Inject constructor(
             11 to Query("CompanionBloksAsyncActionQuery", "35737516989272377596036696859", 12),
         )
         private const val INTERNAL_ERROR = 0xC004
+        private const val DETAIL_QUERY = "GlanceablesDetailQuery"
     }
 }

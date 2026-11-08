@@ -37,11 +37,13 @@ import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.dat.BriefingCards
 import com.macedonga.visor.dat.ToolkitSession
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.BandStatus
+import com.macedonga.visor.kit.protocol.BriefingCard
 import com.macedonga.visor.kit.protocol.Capture
 import com.macedonga.visor.kit.protocol.CaptureFailure
 import com.macedonga.visor.kit.protocol.CaptureProgress
@@ -120,6 +122,7 @@ class KitRoutes @Inject constructor(
     private val conversations: KitConversations,
     private val toolkit: ToolkitSession,
     private val motion: GlassesMotion,
+    private val briefing: BriefingCards,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -219,6 +222,14 @@ class KitRoutes @Inject constructor(
         }
         answer(Methods.DISPLAY_LAYOUT_SHOW) { caller, layout -> requireDisplay(); toolkit.show(caller.packageName, layout) }
         answer(Methods.DISPLAY_LAYOUT_CLOSE) { caller, _ -> toolkit.close(caller.packageName) }
+        answer(Methods.DISPLAY_CARDS_SET) { caller, card ->
+            requireDisplay()
+            if (card.id.isBlank() || card.name.isBlank() || card.name.length > BriefingCard.MAX_NAME) {
+                throw KitException(ErrorCode.INVALID_PARAMS, "A card needs an id and a name of 1 to ${BriefingCard.MAX_NAME} characters.")
+            }
+            briefing.set(caller.packageName, card.id, card.name, card.icon.id, card.layout, null)
+        }
+        answer(Methods.DISPLAY_CARDS_REMOVE) { caller, removal -> briefing.remove(caller.packageName, removal.id) }
         stream(Topics.DISPLAY_LAYOUT_CLICKS) { caller, _ -> toolkit.clicks(caller.packageName) }
         stream(Topics.DISPLAY_LAYOUT_STATE) { caller, _ -> toolkit.state(caller.packageName) }
         stream(Topics.DISPLAY_VIDEO) { caller, _ -> toolkit.video(caller.packageName) }

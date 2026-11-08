@@ -38,6 +38,31 @@ object DatLayout {
     /** The tree alone, for logs. */
     fun tree(layout: Layout): String = root(layout.root).toString()
 
+    /**
+     * A card for the Display home's Briefing panel, framed as Meta's own cards: the layout in a container of the
+     * panel's material, padded 24 dp unless the layout pads itself. It shows there and takes no clicks. Bloks JSON.
+     */
+    /** The Bloks tree of a card's detail view, which the Briefing opens when the wearer clicks the card. */
+    fun detail(layout: Layout): String = padded(layout).toString()
+
+    // The layout's column, padded 24 dp unless it pads itself, across the whole width.
+    private fun padded(layout: Layout): JsonObject {
+        val n = layout.root
+        val own = n.padding != null || n.paddingTop != null || n.paddingBottom != null || n.paddingStart != null || n.paddingEnd != null
+        var content = flexbox(n, Build())
+        if (!own) content = with(content, listOf(PADDING_TOP, PADDING_BOTTOM, PADDING_START, PADDING_END).associateWith { dp(CARD_PADDING) })
+        return withStyle(content, mapOf(WIDTH to JsonPrimitive("100%")))
+    }
+
+    fun briefing(layout: Layout): String {
+        val content = padded(layout)
+        val kinetic = component(MATERIAL, mapOf(MATERIAL_KIND to JsonPrimitive("meta-ai-kinetic"), MATERIAL_CORNERS to JsonPrimitive(CORNERS_MEDIUM)))
+        val card = component(CONTAINER, mapOf(CHILDREN to JsonArray(listOf(content)), CONTAINER_MATERIAL to kinetic))
+        return buildJsonObject {
+            put("layout", buildJsonObject { put("bloks_payload", buildJsonObject { put("data", JsonArray(emptyList())); put("tree", card) }) })
+        }.toString()
+    }
+
     /** The video of a layout that is a video alone, as DAT allows it. */
     fun video(layout: Layout): LayoutNode? = layout.root.children.singleOrNull()?.takeIf { it.type == LayoutType.VIDEO }
 
@@ -304,6 +329,7 @@ object DatLayout {
     private const val JUSTIFY_CONTENT = 44
     private const val ALIGN_ITEMS = 36
     private const val FLEXBOX_ON_CLICK = 45
+    private const val CARD_PADDING = 24
     private const val PADDING_TOP = 59
     private const val PADDING_BOTTOM = 54
     private const val PADDING_START = 58

@@ -68,6 +68,7 @@ import com.macedonga.visor.core.settings.PERMISSIONS_NAMESPACE
 import com.macedonga.visor.core.settings.contactObject
 import com.macedonga.visor.core.settings.contactsNamespace
 import com.macedonga.visor.core.settings.permissionObject
+import com.macedonga.visor.dat.BriefingCards
 import com.macedonga.visor.dat.DatLayout
 import com.macedonga.visor.dat.ToolkitStore
 import com.macedonga.visor.display.CaptionPacks
@@ -156,6 +157,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var toolkit: ToolkitStore
     @Inject lateinit var networkClients: NetworkClients
     @Inject lateinit var glassesMotion: GlassesMotion
+    @Inject lateinit var briefing: BriefingCards
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -749,6 +751,32 @@ class DebugReceiver : BroadcastReceiver() {
                 intent.getStringExtra("webhook"),
                 intent.getStringExtra("topics").orEmpty().split(',').filter { it.isNotBlank() },
             )
+            // An app card on the Briefing: --es id, --es name, --es title, --es text, --es detail; CARD_REMOVE --es id.
+            "CARD" -> {
+                val title = intent.getStringExtra("title") ?: "Visor"
+                val text = intent.getStringExtra("text") ?: "A card of Visor's own."
+                val layout = Layout {
+                    gap = 8
+                    row {
+                        gap = 12
+                        crossAlign = LayoutAlign.CENTER
+                        icon(LayoutIconName.BELL)
+                        text(title) { style = LayoutStyle.HEADING }
+                    }
+                    text(text)
+                }
+                val detail = intent.getStringExtra("detail")?.let { more ->
+                    Layout {
+                        gap = 12
+                        text(title) { style = LayoutStyle.HEADING }
+                        text(text)
+                        more.split('|').forEach { text(it) { style = LayoutStyle.META } }
+                    }
+                }
+                briefing.set("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test", intent.getStringExtra("name") ?: "Visor test", "bell", layout, detail)
+                resultData = "set; the Briefing shows it when it asks again"
+            }
+            "CARD_REMOVE" -> resultData = briefing.remove("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test").toString()
             "NET_CLIENT_REMOVE" -> {
                 networkClients.remove(intent.getStringExtra("name") ?: "debug")
                 resultData = "removed"

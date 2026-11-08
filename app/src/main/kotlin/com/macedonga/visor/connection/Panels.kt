@@ -4,10 +4,12 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.LocationManager
+import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.dat.BriefingCards
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
@@ -24,15 +26,19 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** svc9002, the Display home's Briefing panel: Meta's XFBGlanceablesQuery cards, gzipped as Bloks. */
+/** svc9002, the Display home's Briefing panel: Meta's XFBGlanceablesQuery cards, then apps' own, gzipped as Bloks. */
 @Singleton
 class Panels @Inject constructor(
     @ApplicationContext private val context: Context,
     private val login: Provider<MetaLogin>,
+    private val apps: BriefingCards,
     private val requests: RequestLog,
     private val log: EventLog,
 ) : Responder {
     private val scope = responderScope(log, "Panels")
+
+    // The last click scripts Meta's cards carried, for when Meta's fetch fails.
+    @Volatile private var template: Template? = null
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val reply = DataXConnection.mirror(message.info.channelId)
@@ -55,7 +61,9 @@ class Panels @Inject constructor(
         val id = requests.start("bloks://glanceables", RequestSource.META)
         val started = System.nanoTime()
         try {
-            val g = fetch(host)
+            val ours = apps.all.value
+            // Meta's cards failing leaves the apps' ones.
+            val g = runCatching { fetch(host) }.getOrElse { if (ours.isEmpty()) throw it else JSONObject() }
             val hashes = mutableMapOf<String, String>()
             val payloads = g.optJSONArray("l1_payload_list") ?: JSONArray()
             var bloks = ByteArray(0)
@@ -65,6 +73,12 @@ class Panels @Inject constructor(
                 val hash = p.optString("content_hash")
                 hashes[cardId] = hash
                 bloks += Wire.fieldBytes(1, Wire.fieldString(1, cardId) + Wire.fieldString(2, p.optString("payload")) + Wire.fieldString(3, hash))
+            }
+            Template.of(payloads)?.let { template = it }
+            val template = template
+            for (card in ours) {
+                val payload = if (card.detail != null && template != null) template.onto(card) else card.payload
+                bloks += Wire.fieldBytes(1, Wire.fieldString(1, card.key) + Wire.fieldString(2, payload) + Wire.fieldString(3, card.hash))
             }
             bloks += Wire.fieldString(2, g.optString("preview"))
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bloks) } }.toByteArray()
@@ -81,12 +95,21 @@ class Panels @Inject constructor(
                         Wire.fieldString(6, hashes[c.optString("id")].orEmpty()) + Wire.fieldString(7, c.optString("icon_uri")),
                 )
             }
-            data += Wire.fieldVarint(3, g.optLong("fresh_ttl")) + Wire.fieldVarint(4, g.optLong("ttl"))
+            for (card in ours) {
+                data += Wire.fieldBytes(
+                    2,
+                    Wire.fieldString(1, card.key) + Wire.fieldString(2, card.name) + Wire.fieldString(3, "Shows ${card.name}") +
+                        Wire.fieldVarint(4, 1) + Wire.fieldString(6, card.hash) + Wire.fieldString(7, "drawable://${card.icon}_filled_32"),
+                )
+            }
+            // With apps' cards on it, the Display asks again within a minute, so an app's change shows soon.
+            val fresh = g.optLong("fresh_ttl", FRESH_S).let { if (ours.isEmpty()) it else minOf(it, APPS_FRESH_S) }
+            data += Wire.fieldVarint(3, fresh) + Wire.fieldVarint(4, g.optLong("ttl", TTL_S))
             val ms = (System.nanoTime() - started) / 1_000_000f
             val stats = Wire.fieldVarint(1, OS_ANDROID) + Wire.fieldFloat(3, ms)
             val command = Wire.fieldVarint(1, COMMAND_CREATE) + Wire.fieldVarint(2, WIDGET_DATAPAYLOAD) + Wire.fieldBytes(3, stats) + Wire.fieldBytes(10, data)
             mux.send(reply, command, messageType = MT_OPEN)
-            requests.finish(id, "from Meta, ${payloads.length()} cards", failed = false, bytes = gz.size.toLong())
+            requests.finish(id, "from Meta, ${payloads.length()} cards, and ${ours.size} of apps", failed = false, bytes = gz.size.toLong())
         } catch (error: Exception) {
             requests.finish(id, "failed: ${error.message}", failed = true)
             val details = Wire.fieldString(1, error.message ?: "failed")
@@ -111,6 +134,8 @@ class Panels @Inject constructor(
         val json = JSONObject(answer)
         json.optJSONArray("errors")?.let { error(it.optJSONObject(0)?.optString("message") ?: "Meta refused it") }
         val data = json.optJSONObject("data") ?: error(json.optJSONObject("error")?.optString("message") ?: answer.take(300))
+        // Debug builds keep the last answer, the model for cards of Visor's own.
+        if (BuildConfig.DEBUG) runCatching { context.filesDir.resolve("glanceables.json").writeText(answer) }
         return data.getJSONObject("xfb_glanceables")
     }
 
@@ -123,6 +148,37 @@ class Panels @Inject constructor(
         val best = lm.getProviders(true).mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }.maxByOrNull { it.time } ?: return null
         // Two decimals, as the Display itself sends them: a kilometre is plenty for the weather.
         return Math.round(best.latitude * 100) / 100.0 to Math.round(best.longitude * 100) / 100.0
+    }
+
+    /**
+     * The click of one of Meta's cards: scripts on its root that open the Briefing's detail screen, preloaded with the
+     * card's name and the hash of its detail. Written for the Display's Bloks version, so they come from Meta's cards
+     * of the day. Stocks' carry no location or spoken label.
+     */
+    private class Template(val name: String, val hash: String, val extensions: JSONArray) {
+        /** [card]'s payload with these scripts on its root, naming it and its detail instead. */
+        fun onto(card: BriefingCards.Card): String {
+            val payload = JSONObject(card.payload)
+            val tree = payload.getJSONObject("layout").getJSONObject("bloks_payload").getJSONObject("tree")
+            val root = tree.getJSONObject(tree.keys().next())
+            val scripts = JSONArray(extensions.toString().replace("\\\"$name\\\"", "\\\"${card.key}\\\"").replace(hash, card.detailHash))
+            root.put(EXTENSIONS, scripts)
+            return payload.toString()
+        }
+
+        companion object {
+            private val EXTENSIONS = String(Character.toChars(133))
+            private val HASH = Regex("[0-9a-f]{32}")
+
+            fun of(payloads: JSONArray): Template? = (0 until payloads.length()).mapNotNull { i ->
+                runCatching {
+                    val p = payloads.getJSONObject(i)
+                    val tree = JSONObject(p.getString("payload")).getJSONObject("layout").getJSONObject("bloks_payload").getJSONObject("tree")
+                    val scripts = tree.getJSONObject(tree.keys().next()).getJSONArray(EXTENSIONS)
+                    Template(p.getString("id"), HASH.find(scripts.toString())!!.value, scripts)
+                }.getOrNull()
+            }.sortedBy { it.name != "Stocks" }.firstOrNull()
+        }
     }
 
     private class Card(val id: String, val name: String, val enabled: Boolean, val hash: String)
@@ -149,6 +205,8 @@ class Panels @Inject constructor(
         private const val MT_PREWARMED = 4
         private const val BRIEFING = 30
         private const val TTL_S = 3600L
+        private const val FRESH_S = 300L
+        private const val APPS_FRESH_S = 60L
         private const val RENDERER_BLOKS = 2L
         private const val PROVIDER_DATAX = 1L
         private const val CACHE_ENABLED = 1L
