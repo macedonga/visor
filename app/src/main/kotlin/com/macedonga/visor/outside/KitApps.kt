@@ -2,6 +2,12 @@
 
 package com.macedonga.visor.outside
 
+import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Resources
 import com.macedonga.visor.core.assistant.AppAnswer
 import com.macedonga.visor.core.assistant.AppClaim
 import com.macedonga.visor.core.assistant.AppTool
@@ -12,10 +18,12 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.kit.KitException
+import com.macedonga.visor.kit.VoiceLaunch
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.KitJson
 import com.macedonga.visor.kit.protocol.Notice
+import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.kit.protocol.ToolAnswer
 import com.macedonga.visor.kit.protocol.ToolCall
 import com.macedonga.visor.kit.protocol.ToolSpec
@@ -23,6 +31,7 @@ import com.macedonga.visor.kit.protocol.VoiceReply
 import com.macedonga.visor.kit.protocol.VoiceRequest
 import com.macedonga.visor.kit.server.Phrases
 import com.macedonga.visor.notify.GlassesNotification
+import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -39,10 +48,21 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
-/** The questions VDK apps answer: each app's phrases while it listens, and the answers it gives. */
+/**
+ * The questions VDK apps answer: each app's phrases while it listens, and the answers it gives. An app that is not
+ * running is started for a phrase its activity declares ([VoiceLaunch]), as DAT's voice invocations start one.
+ */
 @Singleton
-class KitVoices @Inject constructor(private val grants: KitGrants) : AppVoices {
+class KitVoices @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val grants: KitGrants,
+) : AppVoices {
     private class Offer(val app: String, val label: String, val phrases: List<String>, val requests: SendChannel<VoiceRequest>) {
+        val words = phrases.map(Phrases::words)
+    }
+
+    /** An activity that declares phrases, in an app granted the voice scope. */
+    private class Declared(val app: String, val label: String, val activity: ComponentName, val phrases: List<String>) {
         val words = phrases.map(Phrases::words)
     }
 
@@ -51,8 +71,18 @@ class KitVoices @Inject constructor(private val grants: KitGrants) : AppVoices {
     /** The [AppClaim.key]: the offer that matched, and its phrase that did. */
     private class Claimed(val offer: Offer, val phrase: String)
 
+    /** The [AppClaim.key] of a question that starts an app. */
+    private class Launch(val declared: Declared, val phrase: String)
+
     private val offers = CopyOnWriteArrayList<Offer>()
     private val waiting = ConcurrentHashMap<String, Waiting>()
+
+    // Read again at most every 30 seconds: claim runs for every question and must stay quick.
+    @Volatile
+    private var declared: List<Declared> = emptyList()
+
+    @Volatile
+    private var declaredAt = 0L
 
     /** [app]'s questions for as long as it collects them. */
     fun offer(app: String, phrases: List<String>): Flow<VoiceRequest> = channelFlow {
@@ -69,22 +99,72 @@ class KitVoices @Inject constructor(private val grants: KitGrants) : AppVoices {
 
     override fun claim(question: String): AppClaim? {
         val words = Phrases.words(question)
-        val (offer, phrase) = offers.mapNotNull { o -> Phrases.best(words, o.words)?.let { o to it } }
-            .maxByOrNull { (o, i) -> o.words[i].size } ?: return null
-        return AppClaim(offer.label, Claimed(offer, offer.phrases[phrase]))
+        val running = offers.mapNotNull { o -> Phrases.best(words, o.words)?.let { o to it } }.maxByOrNull { (o, i) -> o.words[i].size }
+        if (running != null) {
+            val (offer, phrase) = running
+            return AppClaim(offer.label, Claimed(offer, offer.phrases[phrase]))
+        }
+        // An app that listens now answers its own phrases; the declared ones start an app that does not.
+        val listening = offers.map { it.app }.toSet()
+        val (launch, phrase) = declared().filter { it.app !in listening }
+            .mapNotNull { d -> Phrases.best(words, d.words)?.let { d to it } }
+            .maxByOrNull { (d, i) -> d.words[i].size } ?: return null
+        return AppClaim(launch.label, Launch(launch, launch.phrases[phrase]))
     }
 
     override suspend fun answer(claim: AppClaim, id: String, question: String, intent: String, budgetMs: Long): AppAnswer? {
-        val claimed = claim.key as Claimed
-        val offer = claimed.offer
+        val key = claim.key
+        val app = if (key is Launch) key.declared.app else (key as Claimed).offer.app
         val reply = CompletableDeferred<AppAnswer>()
-        waiting[id] = Waiting(offer.app, reply)
+        waiting[id] = Waiting(app, reply)
         try {
-            if (offer.requests.trySend(VoiceRequest(id, question, claimed.phrase, intent.ifEmpty { null })).isFailure) return null
+            val sent = when (key) {
+                is Launch -> start(key.declared.activity, VoiceRequest(id, question, key.phrase, intent.ifEmpty { null }))
+                is Claimed -> key.offer.requests.trySend(VoiceRequest(id, question, key.phrase, intent.ifEmpty { null })).isSuccess
+                else -> false
+            }
+            if (!sent) return null
             return withTimeoutOrNull(budgetMs) { reply.await() }
         } finally {
             waiting.remove(id)
         }
+    }
+
+    // Visor's companion device association lets it start an activity from the background.
+    private fun start(activity: ComponentName, request: VoiceRequest): Boolean = try {
+        context.startActivity(
+            Intent(VoiceLaunch.ACTION).setComponent(activity).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(VoiceLaunch.EXTRA_REQUEST, KitJson.encodeToString(VoiceRequest.serializer(), request)),
+        )
+        true
+    } catch (e: ActivityNotFoundException) {
+        false
+    } catch (e: SecurityException) {
+        false
+    }
+
+    private fun declared(): List<Declared> {
+        val now = System.currentTimeMillis()
+        if (now - declaredAt < DECLARED_TTL_MS) return declared
+        val pm = context.packageManager
+        declared = pm.queryIntentActivities(Intent(VoiceLaunch.ACTION), PackageManager.GET_META_DATA).mapNotNull { info ->
+            val activity = info.activityInfo
+            if (Scope.VOICE !in grants.scopesOf(activity.packageName)) return@mapNotNull null
+            val array = activity.metaData?.getInt(VoiceLaunch.PHRASES)?.takeIf { it != 0 } ?: return@mapNotNull null
+            val phrases = try {
+                pm.getResourcesForApplication(activity.applicationInfo).getStringArray(array).toList()
+            } catch (e: Resources.NotFoundException) {
+                // The meta-data names something that is not a string array.
+                return@mapNotNull null
+            }
+            Declared(activity.packageName, grants.labelOf(activity.packageName), ComponentName(activity.packageName, activity.name), phrases)
+        }
+        declaredAt = now
+        return declared
+    }
+
+    private companion object {
+        const val DECLARED_TTL_MS = 30_000L
     }
 }
 

@@ -50,6 +50,10 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- VDK apps that a voice phrase starts. -->
+        <intent>
+            <action android:name="com.macedonga.visor.kit.action.VOICE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
