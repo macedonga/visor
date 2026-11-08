@@ -13,24 +13,31 @@ import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.connection.CAMERA_VIDEO_STARTED
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesInput as GlassesTouch
 import com.macedonga.visor.core.connection.GlassesState
 import com.macedonga.visor.core.connection.HINGE_CLOSED
 import com.macedonga.visor.core.connection.PrompterLook
 import com.macedonga.visor.core.connection.PrompterPhase
+import com.macedonga.visor.core.connection.SVC_STATUS
 import com.macedonga.visor.core.connection.Shutter
 import com.macedonga.visor.core.connection.Teleprompter
-import com.macedonga.visor.core.connection.SVC_STATUS
+import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
 import com.macedonga.visor.core.connection.decodeInputs
 import com.macedonga.visor.core.connection.isDeviceStateType
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
+import com.macedonga.visor.core.identity.look.GlassesLook as MetaLook
+import com.macedonga.visor.core.media.Capture as GlassesCapture
+import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.protocol.Band as BandWire
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
+import com.macedonga.visor.dat.ToolkitSession
 import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.kit.KitException
@@ -45,15 +52,16 @@ import com.macedonga.visor.kit.protocol.Feeds
 import com.macedonga.visor.kit.protocol.Finger
 import com.macedonga.visor.kit.protocol.Gesture
 import com.macedonga.visor.kit.protocol.GestureAction
+import com.macedonga.visor.kit.protocol.GlassesInput
 import com.macedonga.visor.kit.protocol.GlassesLook
 import com.macedonga.visor.kit.protocol.GlassesPair
-import com.macedonga.visor.kit.protocol.GlassesInput
 import com.macedonga.visor.kit.protocol.GlassesStatus
 import com.macedonga.visor.kit.protocol.InputAction
 import com.macedonga.visor.kit.protocol.InputSource
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
+import com.macedonga.visor.kit.protocol.MotionRequest
 import com.macedonga.visor.kit.protocol.RawMessage
 import com.macedonga.visor.kit.protocol.ThermalLevel
 import com.macedonga.visor.kit.protocol.Topics
@@ -73,6 +81,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -84,12 +93,6 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
-import com.macedonga.visor.core.connection.GlassesInput as GlassesTouch
-import com.macedonga.visor.core.connection.VideoKind as GlassesVideoKind
-import com.macedonga.visor.core.identity.look.GlassesLook as MetaLook
-import com.macedonga.visor.core.media.Capture as GlassesCapture
-import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
-import com.macedonga.visor.core.protocol.Band as BandWire
 
 /** What the VDK's methods and topics do in Visor: each one is a thing Visor already does for its own screens. */
 @Singleton
@@ -113,6 +116,7 @@ class KitRoutes @Inject constructor(
     private val transcripts: KitTranscripts,
     private val settings: KitSettings,
     private val conversations: KitConversations,
+    private val toolkit: ToolkitSession,
 ) {
     fun routes(): Routes = Routes().apply {
         answer(Methods.GLASSES_STATUS) { _, _ -> glassesStatus(known()) }
@@ -195,6 +199,18 @@ class KitRoutes @Inject constructor(
 
         stream(Topics.VOICE_REQUESTS) { caller, offer -> voices.offer(caller.packageName, offer.phrases) }
         stream(Topics.VOICE_TRANSCRIPTS) { caller, request -> transcripts.transcripts(caller, request) }
+        // Motion and layouts come from Meta's toolkit app on the glasses, through a toolkit session of Visor's own.
+        stream(Topics.GLASSES_MOTION) { caller, request ->
+            if (request.rateHz !in MotionRequest.RATES) {
+                throw KitException(ErrorCode.INVALID_PARAMS, "The glasses sample at ${MotionRequest.RATES.joinToString()} Hz.")
+            }
+            toolkit.motion(caller.packageName, request.rateHz)
+        }
+        answer(Methods.DISPLAY_LAYOUT_SHOW) { caller, layout -> requireDisplay(); toolkit.show(caller.packageName, layout) }
+        answer(Methods.DISPLAY_LAYOUT_CLOSE) { caller, _ -> toolkit.close(caller.packageName) }
+        stream(Topics.DISPLAY_LAYOUT_CLICKS) { caller, _ -> toolkit.clicks(caller.packageName) }
+        stream(Topics.DISPLAY_LAYOUT_STATE) { caller, _ -> toolkit.state(caller.packageName) }
+        stream(Topics.DISPLAY_VIDEO) { _, _ -> emptyFlow() }
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }
         stream(Topics.ASSISTANT_TOOLS) { caller, offer -> tools.offer(caller.packageName, offer.tools) }
         answer(Methods.ASSISTANT_TOOLS_ANSWER) { caller, answer -> tools.answer(caller.packageName, answer) }

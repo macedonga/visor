@@ -168,6 +168,12 @@
 
         <!-- The VDK's consent screen, over the app that asks. -->
         <activity
+            android:name=".dat.ToolkitActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
             android:name=".outside.KitConsentActivity"
             android:excludeFromRecents="true"
             android:exported="true"

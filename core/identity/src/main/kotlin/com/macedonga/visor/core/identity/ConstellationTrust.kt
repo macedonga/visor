@@ -6,6 +6,7 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.TrustExchange
 import com.macedonga.visor.core.session.TrustResult
+import java.security.PrivateKey
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -16,15 +17,17 @@ import kotlinx.coroutines.withTimeoutOrNull
  * list, 5 an older manifest than theirs.
  */
 class ConstellationTrustExchange(
-    private val credentials: BundleCredentials,
+    private val key: PrivateKey,
+    /** [key]'s public half, 64 raw bytes. */
+    private val publicKey: ByteArray,
     private val manifestVersion: Long,
     private val keySalt: ByteArray,
 ) : TrustExchange {
     override suspend fun run(connection: DataXConnection, binding: HandshakeBinding): TrustResult {
         require(connection.hasReader) { "the trust exchange bounds its wait, which needs the session's reader" }
         val ours = connection.openChannel(SERVICE)
-        val message = Wire.fieldBytes(1, hintHash(credentials.appPublicKey, keySalt)) +
-            Wire.fieldBytes(2, signChallenge(credentials, binding.txChallenge())) +
+        val message = Wire.fieldBytes(1, hintHash(publicKey, keySalt)) +
+            Wire.fieldBytes(2, signDigest(key, binding.txChallenge())) +
             Wire.fieldVarint(3, manifestVersion) +
             Wire.fieldString(5, CLIENT_VERSION)
         connection.send(ours, message, messageType = ENABLE_TRUST, serviceId = SERVICE)

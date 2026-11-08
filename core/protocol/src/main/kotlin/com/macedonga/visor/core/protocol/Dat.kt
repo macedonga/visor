@@ -34,10 +34,10 @@ object Dat {
      * SessionStartRequest {1 app_id, 2 session_id, 3 session_name, 4 is_dev_mode, 5 uses_dam, 7 platform, 8
      * sdk_version}. Developer mode names no toolkit app (6): the glasses run the developer one.
      */
-    fun sessionStart(appId: String, sessionId: String, name: String, sdkVersion: String): ByteArray =
+    fun sessionStart(appId: String, sessionId: String, name: String, sdkVersion: String, usesDam: Boolean = true): ByteArray =
         Wire.fieldString(1, appId) + Wire.fieldString(2, sessionId) + Wire.fieldString(3, name) +
-            Wire.fieldVarint(4, 1) + Wire.fieldVarint(5, 1) + Wire.fieldVarint(7, PLATFORM_ANDROID.toLong()) +
-            Wire.fieldString(8, sdkVersion)
+            Wire.fieldVarint(4, 1) + (if (usesDam) Wire.fieldVarint(5, 1) else ByteArray(0)) +
+            Wire.fieldVarint(7, PLATFORM_ANDROID.toLong()) + Wire.fieldString(8, sdkVersion)
 
     /** SessionStartResponse {1 status, 2 session_id, 3 dwa_version_name, 4 dwa_version_code, 5 dwa_launch, 6 compatibility}. */
     class SessionStarted(val status: Int, val sessionId: String, val dwaVersion: String, val dwaLaunch: Int, val compatibility: Int)

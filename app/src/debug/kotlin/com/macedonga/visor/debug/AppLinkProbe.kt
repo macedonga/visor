@@ -38,7 +38,7 @@ internal object AppLinkProbe {
     private val ids = AtomicInteger()
     private val samples = AtomicInteger()
 
-    fun start(context: Context, address: String, pem: ByteArray, version: Long, salt: ByteArray, tag: Int, sign: Int, log: EventLog): String {
+    fun start(context: Context, address: String, pem: ByteArray, version: Long, salt: ByteArray, tag: Int, sign: Int, dam: Boolean, log: EventLog): String {
         stop()
         val credentials = BundleCredentials(IdentityBundle(pem, address, "visor-app", nowIso(), "app", BundleState.VERIFIED))
         val trust = ProbeConstellationTrust(credentials.appEcKey, credentials.appPublicKey, version, salt, tag, sign) { log.add("AppLink: $it") }
@@ -51,7 +51,7 @@ internal object AppLinkProbe {
                         log.add("AppLink: link ${event.state} ${event.reason}".trim())
                         if (event.state == LinkState.READY) {
                             log.add("AppLink: trust ${opened.trustResult}")
-                            send(Dat.SESSION_SERVICE, Dat.SESSION_START_REQUEST, Dat.sessionStart("com.macedonga.visor", UUID.randomUUID().toString(), "Visor", "1.0.1"))
+                            send(Dat.SESSION_SERVICE, Dat.SESSION_START_REQUEST, Dat.sessionStart("com.macedonga.visor", UUID.randomUUID().toString(), "Visor", "1.0.1", dam))
                         }
                     }
                     is ProtocolError -> log.add("AppLink: ${event.detail}")

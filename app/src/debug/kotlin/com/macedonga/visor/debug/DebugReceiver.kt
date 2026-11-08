@@ -178,7 +178,7 @@ class DebugReceiver : BroadcastReceiver() {
                 AppLinkProbe.start(
                     context, address, Base64.decode(intent.getStringExtra("pem").orEmpty(), Base64.DEFAULT),
                     intent.getIntExtra("version", 0).toLong(), intent.getStringExtra("salt").orEmpty().hexToByteArray(),
-                    intent.getIntExtra("tag", 0), intent.getIntExtra("sign", 0), log,
+                    intent.getIntExtra("tag", 0), intent.getIntExtra("sign", 0), intent.getBooleanExtra("dam", true), log,
                 )
             } ?: "no pair over Bluetooth"
             "APP_MOTION" -> resultData = AppLinkProbe.capability(Dat.IMU, Dat.motionStart(intent.getIntExtra("rate", 10)))
