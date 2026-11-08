@@ -47,6 +47,7 @@ import com.macedonga.visor.kit.protocol.Capture
 import com.macedonga.visor.kit.protocol.CaptureFailure
 import com.macedonga.visor.kit.protocol.CaptureProgress
 import com.macedonga.visor.kit.protocol.CaptureType
+import com.macedonga.visor.kit.protocol.CardClick
 import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.Failure
 import com.macedonga.visor.kit.protocol.Feeds
@@ -229,6 +230,9 @@ class KitRoutes @Inject constructor(
         }
         answer(Methods.DISPLAY_CARDS_REMOVE) { caller, removal -> briefing.remove(caller.packageName, removal.id) }
         stream(Topics.DISPLAY_LAYOUT_CLICKS) { caller, _ -> toolkit.clicks(caller.packageName) }
+        stream(Topics.DISPLAY_CARDS_CLICKS) { caller, _ ->
+            briefing.clicks.filter { it.card.app == caller.packageName }.map { CardClick(it.card.id, it.id, it.time) }
+        }
         stream(Topics.DISPLAY_LAYOUT_STATE) { caller, _ -> toolkit.state(caller.packageName) }
         stream(Topics.DISPLAY_VIDEO) { caller, _ -> toolkit.video(caller.packageName) }
         answer(Methods.VOICE_REPLY) { caller, reply -> voices.reply(caller.packageName, reply) }

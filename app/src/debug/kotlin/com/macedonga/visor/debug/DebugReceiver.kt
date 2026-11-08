@@ -959,6 +959,7 @@ class DebugReceiver : BroadcastReceiver() {
                 field("Market cap", "$1.6T")
                 field("52W high", "$31,400.80")
                 progress(0.72)
+                buttons { button("refresh", "Refresh") { icon = LayoutIconName.TWO_ARROWS_CLOCKWISE; toast = "Refreshed" } }
             }
         }
     }

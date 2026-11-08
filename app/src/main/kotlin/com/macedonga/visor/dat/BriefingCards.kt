@@ -10,8 +10,11 @@ import java.io.File
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import org.json.JSONArray
@@ -30,13 +33,27 @@ class BriefingCards @Inject constructor(@ApplicationContext context: Context) {
      */
     class Card(val app: String, val id: String, val name: String, val icon: String, val payload: String, val detail: String?) {
         /** The id the Display knows the card by: plain letters, as it goes inside the Briefing's own scripts. */
-        val key: String get() = "app_" + md5("$app/$id").take(16)
+        val key: String get() = keyOf(app, id)
 
         val detailHash: String get() = md5(detail.orEmpty())
     }
 
     /** The card the Display knows as [key]. */
     fun byKey(key: String): Card? = _all.value.firstOrNull { it.key == key }
+
+    /** A click in a card's detail: the card, the element's id, and when. */
+    class Click(val card: Card, val id: String, val time: Long)
+
+    private val _clicks = MutableSharedFlow<Click>(extraBufferCapacity = 16)
+
+    /** The clicks in the cards' details, as the Briefing sends them. */
+    val clicks: SharedFlow<Click> = _clicks.asSharedFlow()
+
+    /** Passes on a click on [id] in the detail of the card the Display knows as [key]; false for no such card. */
+    fun click(key: String, id: String): Boolean {
+        val card = byKey(key) ?: return false
+        return _clicks.tryEmit(Click(card, id, System.currentTimeMillis()))
+    }
 
     private val file = File(context.filesDir, "briefing_cards.json")
     private val _all = MutableStateFlow(read())
@@ -46,7 +63,7 @@ class BriefingCards @Inject constructor(@ApplicationContext context: Context) {
     /** Puts [app]'s card [id] on the Briefing, or replaces it. */
     @Synchronized
     fun set(app: String, id: String, name: String, icon: String, layout: Layout, detail: Layout?) {
-        val card = Card(app, id, name, icon, DatLayout.briefing(layout), detail?.let(DatLayout::detail))
+        val card = Card(app, id, name, icon, DatLayout.briefing(layout), detail?.let { DatLayout.detail(it, keyOf(app, id)) })
         _all.update { cards -> cards.filterNot { it.app == app && it.id == id } + card }
         write()
     }
@@ -72,5 +89,7 @@ class BriefingCards @Inject constructor(@ApplicationContext context: Context) {
         file.writeText(array.toString())
     }
 }
+
+private fun keyOf(app: String, id: String) = "app_" + md5("$app/$id").take(16)
 
 private fun md5(text: String) = MessageDigest.getInstance("MD5").digest(text.encodeToByteArray()).joinToString("") { "%02x".format(it) }

@@ -7,6 +7,7 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.dat.BriefingCards
+import com.macedonga.visor.dat.DatLayout
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
@@ -51,6 +52,13 @@ class BloksRelay @Inject constructor(
             requests.finish(id, "empty, as the Meta app answers", failed = false)
             return
         }
+        if (r.appId == DatLayout.CARD_CLICK) {
+            val clicked = cardClick(r)
+            val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(DONE.toByteArray()) } }.toByteArray()
+            mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
+            requests.finish(id, clicked?.let { "a click on ${it.second} for ${it.first.app}" } ?: "a click on a card no app has", failed = clicked == null)
+            return
+        }
         val app = card(r)
         if (app != null) {
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(detail(r, app).toByteArray()) } }.toByteArray()
@@ -81,6 +89,16 @@ class BloksRelay @Inject constructor(
     private fun card(r: Request): BriefingCards.Card? {
         if (!r.appId.endsWith(DETAIL_QUERY)) return null
         return type(r)?.let(cards::byKey)?.takeIf { it.detail != null }
+    }
+
+    // A click in the detail of an app's card: {params: {server_params: {card, id}}}, passed on to the app.
+    private fun cardClick(r: Request): Pair<BriefingCards.Card, String>? {
+        val params = r.params["params"]?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+        val server = params.optJSONObject("server_params") ?: return null
+        val key = server.optString("card")
+        val element = server.optString("id").ifEmpty { return null }
+        if (!cards.click(key, element)) return null
+        return cards.byKey(key)?.let { it to element }
     }
 
     // The detail as Meta's server answers it: one component, its tree the app's.
@@ -144,5 +162,14 @@ class BloksRelay @Inject constructor(
         )
         private const val INTERNAL_ERROR = 0xC004
         private const val DETAIL_QUERY = "GlanceablesDetailQuery"
+
+        private const val TAKE_LAST = 18231
+
+        // The answer to a card click: an action that does nothing more, so the Briefing runs the click's own callback.
+        // Not seen on the glasses yet: if the Display cannot read it, the click still reached the app.
+        private val DONE = JSONObject().put(
+            "layout",
+            JSONObject().put("bloks_payload", JSONObject().put("data", JSONArray()).put("ft", JSONObject()).put("action", "\t(${TAKE_LAST.toString(36)} 1)")),
+        ).toString()
     }
 }

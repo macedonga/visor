@@ -50,18 +50,23 @@ object DatLayout {
     fun tree(layout: Layout): String = root(layout.root).toString()
 
     /**
-     * The Bloks tree of a card's detail view, which the Briefing opens when the wearer clicks the card: padded as a
-     * card, unless it is pages alone, whose cards pad themselves.
+     * The Bloks tree of the detail view of [card], which the Briefing opens when the wearer clicks the card: padded as
+     * a card, unless it is pages alone, whose cards pad themselves. Its clicks go to the phone as Bloks async actions
+     * ([CARD_CLICK]), which [com.macedonga.visor.connection.BloksRelay] hands to the card's app.
      */
-    fun detail(layout: Layout): String {
+    fun detail(layout: Layout, card: String): String {
+        val build = Build(card)
         val pages = layout.root.children.singleOrNull()?.type == LayoutType.PAGER
         val tree = if (pages) {
-            withStyle(flexbox(layout.root, Build(), width = SCREEN), mapOf(WIDTH to JsonPrimitive("100%"), HEIGHT to JsonPrimitive("100%")))
+            withStyle(flexbox(layout.root, build, width = SCREEN), mapOf(WIDTH to JsonPrimitive("100%"), HEIGHT to JsonPrimitive("100%")))
         } else {
-            inset(layout.root, Build(), SCREEN)
+            inset(layout.root, build, SCREEN)
         }
         return tree.toString()
     }
+
+    /** The app id of a click in a card's detail, which Visor answers itself. */
+    const val CARD_CLICK = "com.bloks.www.visor.card_click"
 
     /**
      * A card for the Display home's Briefing panel, framed as Meta's own cards: the layout in a container of the
@@ -79,8 +84,9 @@ object DatLayout {
     /** The video of a layout that is a video alone, as DAT allows it. */
     fun video(layout: Layout): LayoutNode? = layout.root.children.singleOrNull()?.takeIf { it.type == LayoutType.VIDEO }
 
-    // DAT focuses the first primary button of a layout, and only that one.
-    private class Build {
+    // DAT focuses the first primary button of a layout, and only that one. [card]: the Briefing card whose detail
+    // this is, null for a layout of the toolkit app.
+    private class Build(val card: String? = null) {
         var focused = false
         var pagers = 0
     }
@@ -90,7 +96,7 @@ object DatLayout {
         val flexbox = flexbox(n, build, width = SCREEN)
         // As DAT's ContentScope: a card root stays a static container, and takes the box's click itself.
         val node = if (n.card == true) card(flexbox) else flexbox
-        return n.id?.let { with(node, mapOf(ID to JsonPrimitive(it), FLEXBOX_ON_CLICK to click(it))) } ?: node
+        return n.id?.let { with(node, mapOf(ID to JsonPrimitive(it), FLEXBOX_ON_CLICK to click(n, build))) } ?: node
     }
 
     // [width]: the pixels its box has across, at most, for what is drawn on the phone to fit.
@@ -116,11 +122,11 @@ object DatLayout {
                 mapOf(
                     CONTAINER_MATERIAL to material(CORNERS_MEDIUM), FOCUSABLE to JsonPrimitive(true),
                     CHILDREN to JsonArray(listOf(flexbox)), ID to JsonPrimitive(id),
-                    EXTENSIONS to JsonArray(listOf(component(ON_CLICK_EXTENSION, mapOf(EXTENSION_SCRIPT to click(id))))),
+                    EXTENSIONS to JsonArray(listOf(component(ON_CLICK_EXTENSION, mapOf(EXTENSION_SCRIPT to click(n, build))))),
                 ),
             )
             n.card == true -> card(flexbox)
-            id != null -> with(flexbox, mapOf(ID to JsonPrimitive(id), FLEXBOX_ON_CLICK to click(id)))
+            id != null -> with(flexbox, mapOf(ID to JsonPrimitive(id), FLEXBOX_ON_CLICK to click(n, build)))
             else -> flexbox
         }
     }
@@ -432,7 +438,7 @@ object DatLayout {
             n.icon?.let { put(BUTTON_ICON, JsonPrimitive(glyph(it.id, n.style))) }
             if (id != null) {
                 put(ID, JsonPrimitive(id))
-                put(BUTTON_ON_CLICK, click(id))
+                put(BUTTON_ON_CLICK, click(n, build))
             }
         }
         val button = withStyle(component(BUTTON, attrs), mapOf(HEIGHT to JsonPrimitive("88dp")))
@@ -481,7 +487,25 @@ object DatLayout {
         component(MATERIAL, mapOf(MATERIAL_KIND to JsonPrimitive("default"), MATERIAL_CORNERS to JsonPrimitive(corners)))
 
     /** The click script the toolkit app runs: the DAT click component, named by its style id in base 36. */
-    private fun click(id: String) = JsonPrimitive("(${DAT_CLICK.toString(36)} ${JsonPrimitive(id)})")
+    private fun click(n: LayoutNode, build: Build): JsonPrimitive {
+        val id = n.id.orEmpty()
+        val card = build.card ?: return JsonPrimitive("(${DAT_CLICK.toString(36)} ${JsonPrimitive(id)})")
+        // As the buttons of Meta's Stocks detail call the phone: bk.action.bloks.AsyncActionWithDataManifestV2 with an
+        // app id, {params: JSON of server_params and client_input_params}, and callbacks (36 done, 35 failed, 40 the
+        // client params, 38 the screen). Done shows the element's toast with bk.action.wearables.ShowToast.
+        val params = buildJsonObject {
+            put("server_params", buildJsonObject { put("card", JsonPrimitive(card)); put("id", JsonPrimitive(id)) })
+            put("client_input_params", JsonObject(emptyMap()))
+        }.toString()
+        val done = n.toast?.takeIf { it.isNotBlank() }?.let { "(${f(SHOW_TOAST)} ${JsonPrimitive(it)} null \"AFFIRMATIVE\")" } ?: "1"
+        val callbacks = "(${f(TREE_MAKE)} $ACTION_CALLBACKS 36 (${f(FUNC)} $done) 35 (${f(FUNC)} 1) " +
+            "40 (${f(FUNC)} (${f(CALL_RUNTIME)} 6)) 38 \"current-screen\")"
+        return JsonPrimitive(
+            "\t(${f(ASYNC_ACTION)} ${JsonPrimitive(CARD_CLICK)} (${f(CALL_RUNTIME)} 6 \"params\" ${JsonPrimitive(params)}) $callbacks (${f(ARRAY_MAKE)}))",
+        )
+    }
+
+    private fun f(id: Int) = id.toString(36)
 
     private fun dp(value: Int) = JsonPrimitive("${value}dp")
 
@@ -588,6 +612,12 @@ object DatLayout {
     private const val BIND_EXTENSION = 13914
     private const val BIND_SCRIPT = 42
     private const val CALL = 18212
+    private const val ASYNC_ACTION = 17659
+    private const val CALL_RUNTIME = 19678
+    private const val TREE_MAKE = 20326
+    private const val ARRAY_MAKE = 17580
+    private const val SHOW_TOAST = 23898
+    private const val ACTION_CALLBACKS = 16131
     private const val FUNC = 18220
     private const val DELAY = 18219
 
