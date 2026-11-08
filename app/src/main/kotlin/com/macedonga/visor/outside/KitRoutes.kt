@@ -43,7 +43,6 @@ import com.macedonga.visor.home.LastSeen
 import com.macedonga.visor.home.PairSeen
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.kit.protocol.BandStatus
-import com.macedonga.visor.kit.protocol.BriefingCard
 import com.macedonga.visor.kit.protocol.Capture
 import com.macedonga.visor.kit.protocol.CaptureFailure
 import com.macedonga.visor.kit.protocol.CaptureProgress
@@ -69,6 +68,7 @@ import com.macedonga.visor.kit.protocol.SpeakRequest
 import com.macedonga.visor.kit.protocol.ThermalLevel
 import com.macedonga.visor.kit.protocol.Topics
 import com.macedonga.visor.kit.protocol.VideoKind
+import com.macedonga.visor.kit.protocol.problem
 import com.macedonga.visor.kit.server.Caller
 import com.macedonga.visor.kit.server.Routes
 import com.macedonga.visor.pairs.KnownPair
@@ -224,9 +224,7 @@ class KitRoutes @Inject constructor(
         answer(Methods.DISPLAY_LAYOUT_CLOSE) { caller, _ -> toolkit.close(caller.packageName) }
         answer(Methods.DISPLAY_CARDS_SET) { caller, card ->
             requireDisplay()
-            if (card.id.isBlank() || card.name.isBlank() || card.name.length > BriefingCard.MAX_NAME) {
-                throw KitException(ErrorCode.INVALID_PARAMS, "A card needs an id and a name of 1 to ${BriefingCard.MAX_NAME} characters.")
-            }
+            card.problem()?.let { throw KitException(ErrorCode.INVALID_PARAMS, it) }
             briefing.set(caller.packageName, card.id, card.name, card.icon.id, card.layout, card.detail)
         }
         answer(Methods.DISPLAY_CARDS_REMOVE) { caller, removal -> briefing.remove(caller.packageName, removal.id) }

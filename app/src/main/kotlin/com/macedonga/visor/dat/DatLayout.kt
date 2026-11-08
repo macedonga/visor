@@ -3,6 +3,7 @@
 package com.macedonga.visor.dat
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
@@ -348,7 +349,38 @@ object DatLayout {
     }
 
     private fun image(n: LayoutNode): JsonObject =
-        image(n.url.orEmpty(), n.size ?: LayoutImageSize.FILL, n.height, n.corners ?: if (n.card == true) LayoutCorners.MEDIUM else LayoutCorners.NONE)
+        image(fitted(n.url.orEmpty()), n.size ?: LayoutImageSize.FILL, n.height, n.corners ?: if (n.card == true) LayoutCorners.MEDIUM else LayoutCorners.NONE)
+
+    /**
+     * A `data:` image larger than the Display draws, at most 600 pixels a side, scaled down on the phone, so an app
+     * may send a photo as it is. Anything else as given: the glasses fetch `https://` images through the phone, which
+     * fits them already.
+     */
+    private fun fitted(url: String): String {
+        if (!url.startsWith("data:image/")) return url
+        val comma = url.indexOf(',')
+        if (comma < 0 || !url.substring(0, comma).endsWith(";base64")) return url
+        val bytes = runCatching { Base64.decode(url.substring(comma + 1), Base64.DEFAULT) }.getOrNull() ?: return url
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val side = maxOf(bounds.outWidth, bounds.outHeight)
+        if (side <= IMAGE_SIDE) return url
+        var sample = 1
+        while (side / (sample * 2) >= IMAGE_SIDE) sample *= 2
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return url
+        val scale = IMAGE_SIDE.toFloat() / maxOf(decoded.width, decoded.height)
+        val image = if (scale < 1f) {
+            Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt().coerceAtLeast(1), (decoded.height * scale).toInt().coerceAtLeast(1), true)
+        } else {
+            decoded
+        }
+        val png = image.hasAlpha()
+        val out = ByteArrayOutputStream()
+        image.compress(if (png) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG, if (png) 100 else JPEG_QUALITY, out)
+        if (image !== decoded) image.recycle()
+        decoded.recycle()
+        return "data:image/${if (png) "png" else "jpeg"};base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
 
     private fun image(url: String, size: LayoutImageSize, height: Int?, corners: LayoutCorners): JsonObject {
         val icon = size == LayoutImageSize.ICON
@@ -487,6 +519,8 @@ object DatLayout {
     private const val ICON_SIZE = 32
     private const val BLUE = "#4DA3FF"
     private const val SCREEN = 600
+    private const val IMAGE_SIDE = 600
+    private const val JPEG_QUALITY = 85
 
     // About a Briefing card's width: the screen less 24 px each side. Not measured.
     private const val BRIEFING_CARD = 552
