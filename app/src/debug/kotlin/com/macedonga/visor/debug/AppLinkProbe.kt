@@ -38,6 +38,7 @@ internal object AppLinkProbe {
     private var job: Job? = null
     private val ids = AtomicInteger()
     private val samples = AtomicInteger()
+    private val bandSamples = AtomicInteger()
 
     fun start(context: Context, address: String, pem: ByteArray, version: Long, salt: ByteArray, tag: Int, sign: Int, dam: Boolean, log: EventLog): String {
         val credentials = BundleCredentials(IdentityBundle(pem, address, "visor-app", nowIso(), "app", BundleState.VERIFIED))
@@ -130,10 +131,11 @@ internal object AppLinkProbe {
                 Dat.EVENT -> Dat.event(event.payload).let { e ->
                     val motion = if (e.capability == Dat.IMU) e.payload?.let(Dat::motionSamples).orEmpty() else emptyList()
                     val n = samples.addAndGet(motion.size)
+                    bandSamples.addAndGet(motion.count { it.band })
                     when {
                         motion.isNotEmpty() -> if (n % 50 < motion.size) {
                             val a = motion.last().accelerometer
-                            log.add("AppLink: $n motion samples, last accelerometer ${a?.x} ${a?.y} ${a?.z}")
+                            log.add("AppLink: $n motion samples (${bandSamples.get()} from the band), last accelerometer ${a?.x} ${a?.y} ${a?.z}, orientation ${motion.last().orientation != null}")
                         }
                         e.heartbeat -> Unit
                         else -> log.add("AppLink: event capability ${e.capability} shutdown ${e.shutdown} ${e.payload?.toHexString()}")

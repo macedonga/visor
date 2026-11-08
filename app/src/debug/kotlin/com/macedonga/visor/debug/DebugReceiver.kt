@@ -77,6 +77,7 @@ import com.macedonga.visor.kit.protocol.Layout
 import com.macedonga.visor.kit.protocol.LayoutAlign
 import com.macedonga.visor.kit.protocol.LayoutIconName
 import com.macedonga.visor.kit.protocol.LayoutStyle
+import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.language.LanguageInstaller
 import com.macedonga.visor.language.restartGlassesAssistant
 import com.macedonga.visor.log.EventLog
@@ -84,6 +85,7 @@ import com.macedonga.visor.login.MetaLogin
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.PhoneContacts
 import com.macedonga.visor.outside.DeveloperMode
+import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.pairs.KnownPair
 import com.macedonga.visor.pairs.Looks
 import com.macedonga.visor.pairs.Pairs
@@ -151,6 +153,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var albums: Albums
     @Inject lateinit var library: PhoneLibrary
     @Inject lateinit var toolkit: ToolkitStore
+    @Inject lateinit var networkClients: NetworkClients
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -733,6 +736,18 @@ class DebugReceiver : BroadcastReceiver() {
                 "released"
             }
             // --es id
+            // A network client with a webhook, as Advanced > Network access adds one: --es name, --es scopes a,b,
+            // --es webhook URL, --es topics a,b. Answers its token. NET_CLIENT_REMOVE --es name takes it away.
+            "NET_CLIENT" -> resultData = networkClients.add(
+                intent.getStringExtra("name") ?: "debug",
+                intent.getStringExtra("scopes").orEmpty().split(',').filter { it.isNotBlank() }.map(::Scope).toSet(),
+                intent.getStringExtra("webhook"),
+                intent.getStringExtra("topics").orEmpty().split(',').filter { it.isNotBlank() },
+            )
+            "NET_CLIENT_REMOVE" -> {
+                networkClients.remove(intent.getStringExtra("name") ?: "debug")
+                resultData = "removed"
+            }
             "MCP_REMOVE" -> {
                 mcp.store.remove(intent.getStringExtra("id").orEmpty())
                 resultData = "removed"
