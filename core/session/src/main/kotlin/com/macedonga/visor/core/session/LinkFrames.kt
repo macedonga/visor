@@ -15,7 +15,11 @@ fun interface FrameSource {
  * One link's frames, still sealed, read on a coroutine of their own: the session's mux reads this link or another,
  * and opens each frame itself, so the session's one cipher sees them in order. A link nobody reads gets drained.
  */
-class LinkFrames(private val link: SecureLink) : FrameSource {
+class LinkFrames(
+    private val link: SecureLink,
+    // Told when the link fails, even while nobody reads it.
+    private val failed: (Throwable) -> Unit = {},
+) : FrameSource {
 
     private val frames = Channel<ByteArray>(Channel.UNLIMITED)
 
@@ -39,6 +43,7 @@ class LinkFrames(private val link: SecureLink) : FrameSource {
             throw cancellation
         } catch (error: Throwable) {
             frames.close(error)
+            failed(error)
         }
     }
 

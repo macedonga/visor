@@ -124,6 +124,9 @@ object LinkSwitch {
     const val SWITCH_LINK = 4117
     const val SWITCH_TRANSPORT_LINK = 4128
 
+    /** GET_MANIFEST_VERSION, which the glasses always answer: a cheap sign of life. */
+    const val GET_MANIFEST_VERSION = 4144
+
     fun encode(target: ByteArray): ByteArray = Wire.fieldBytes(1, target)
 
     fun target(payload: ByteArray): ByteArray? = runCatching { Wire.parse(payload).bytes(1) }.getOrNull()

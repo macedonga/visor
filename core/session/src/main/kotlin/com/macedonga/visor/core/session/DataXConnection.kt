@@ -33,6 +33,11 @@ class DataXConnection(
     // Keeps a send from slipping between a switch message and the move of the link's sends.
     private val writeLock = Mutex()
 
+    /** When the reader last got a frame, by [System.nanoTime]. */
+    @Volatile
+    var heardAt: Long = System.nanoTime()
+        private set
+
     private class RxMove(val next: FrameSource, val trigger: (DataXMessage) -> Boolean, val done: CompletableDeferred<FrameSource>)
 
     @Volatile
@@ -69,6 +74,7 @@ class DataXConnection(
             try {
                 while (true) {
                     val plaintext = link.open(rx.receive()) ?: continue
+                    heardAt = System.nanoTime()
                     for (message in decode(plaintext)) {
                         fromReader.send(message)
                         val move = rxMove

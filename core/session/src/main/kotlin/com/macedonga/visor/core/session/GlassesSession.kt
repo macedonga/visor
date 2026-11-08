@@ -185,7 +185,10 @@ class GlassesSession(
             }
 
             registry = ChannelRegistry()
-            val frames = LinkFrames(link)
+            // When the session runs on Wi-Fi, Wi-Fi is the glasses' main link: if it goes, they close the Bluetooth link
+            // too and start over. The Bluetooth link failing is then the one sign, as a TCP socket to glasses that left
+            // the network never hears it: the session ends at once and opens again.
+            val frames = LinkFrames(link) { if (onExtraLink) extra?.transport?.close() }
             val mux = DataXConnection(link, registry, frames)
             connection = mux
             mainFrames = frames
@@ -317,6 +320,7 @@ class GlassesSession(
             }
             onExtraLink = true
             mainFrames?.drain()
+            scope.launch { watch(mux) }
             return LinkMove(true, "$ready; switched, the glasses named $named")
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -345,6 +349,25 @@ class GlassesSession(
         }
         dropExtra()
         return LinkMove(true, "back on the first link; ${frames?.dropped ?: 0} frames came on it meanwhile")
+    }
+
+    /**
+     * While the traffic runs on the added link, asks the glasses something every [WATCH_MILLIS] and ends the attempt
+     * when nothing comes for [SILENT_MILLIS]. The added link is then their main one: when it goes, they close Bluetooth
+     * too and start over, and a TCP socket to glasses that left the network hears nothing of it.
+     */
+    private suspend fun watch(mux: DataXConnection) {
+        while (onExtraLink && connection === mux) {
+            delay(WATCH_MILLIS)
+            if (!onExtraLink || connection !== mux) return
+            if (System.nanoTime() - mux.heardAt > SILENT_MILLIS * 1_000_000) {
+                publish(ProtocolError("the Wi-Fi link went quiet; starting over on Bluetooth"))
+                extra?.transport?.close()
+                transport.close()
+                return
+            }
+            runCatching { mux.sendOnService(LinkSwitch.SERVICE, LinkSwitch.GET_MANIFEST_VERSION, ByteArray(0)) }
+        }
     }
 
     private fun dropExtra() {
@@ -499,6 +522,10 @@ class GlassesSession(
 
         /** How long the glasses get to answer a SwitchTransportLink with their own. */
         const val SWITCH_TIMEOUT_MILLIS = 5_000L
+
+        // While on the added link: a question this often, and how long a silence ends the attempt.
+        const val WATCH_MILLIS = 4_000L
+        const val SILENT_MILLIS = 10_000L
 
         private val BACKOFF_MILLIS = longArrayOf(1_000, 2_000, 4_000, 8_000)
 
