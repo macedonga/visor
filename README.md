@@ -8,12 +8,14 @@
 </p>
 
 <p align="center">
+  <a href="https://visor.macedonga.com"><img src="https://img.shields.io/badge/Website-visor.macedonga.com-FFD2A1?style=for-the-badge&labelColor=161617" alt="Website: visor.macedonga.com"></a>
   <a href="https://github.com/macedonga/visor/releases/latest"><img src="https://img.shields.io/github/v/release/macedonga/visor?style=for-the-badge&label=Download&color=FFD2A1&labelColor=161617&v=1" alt="Download the latest release"></a>
   <a href="https://github.com/macedonga/visor/discussions"><img src="https://img.shields.io/badge/Discussions-ask%20and%20share-FFD2A1?style=for-the-badge&labelColor=161617" alt="Discussions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-FFD2A1?style=for-the-badge&labelColor=161617" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center">
+  <a href="https://visor.macedonga.com">Website</a> |
   <a href="#what-it-does">Features</a> |
   <a href="#install">Install</a> |
   <a href="#what-it-sends-and-where">Privacy</a> |
@@ -155,7 +157,8 @@ A tag like `v1.2.3` builds the signed release APK in CI and publishes it as a Gi
 | `core/design` | Colours and type. |
 | `app` | The service, the screens, setup, the widget and the tile. |
 
-[CLAUDE.md](CLAUDE.md) lists the protocol traps that cost the most time to find.
+[CLAUDE.md](CLAUDE.md) lists the protocol traps that cost the most time to find. The protocol itself, down to the bytes, is documented at
+[visor.macedonga.com/protocol](https://visor.macedonga.com/protocol/).
 
 </details>
 
