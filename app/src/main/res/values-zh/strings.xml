@@ -1059,6 +1059,8 @@
     <string name="band_left">左</string>
     <string name="band_right">右</string>
     <string name="band_vibrate">震动</string>
+    <string name="band_share">与手机共享</string>
+    <string name="band_share_sub">腕带保持连接到手机，Display 通过手机连接它。应用可以收到它的手势，并立即让它震动。</string>
     <string name="band_not_changed">未更改</string>
     <string name="band_refused">已拒绝</string>
     <string name="band_glasses">眼镜</string>
@@ -1103,7 +1105,7 @@
     <string name="toolkit_step_manifest">正在把 Visor 加入眼镜</string>
     <string name="toolkit_step_permissions">正在授予工具包权限</string>
     <string name="kit_scope_name_motion">动作</string>
-    <string name="kit_scope_motion">通过眼镜的动作传感器，每秒多次读取眼镜如何移动和转动。</string>
+    <string name="kit_scope_motion">通过眼镜和 Neural Band 的动作传感器，每秒多次读取它们如何移动和转动。</string>
     <string name="toolkit_point_app">在眼镜上安装 Meta 的工具包应用</string>
     <string name="toolkit_point_trust">把 Visor 加入眼镜信任的设备</string>
     <string name="toolkit_point_once">每副眼镜只需一次</string>

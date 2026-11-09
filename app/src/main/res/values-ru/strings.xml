@@ -1145,6 +1145,8 @@
     <string name="band_left">Левое</string>
     <string name="band_right">Правое</string>
     <string name="band_vibrate">Вибрация</string>
+    <string name="band_share">Делить с телефоном</string>
+    <string name="band_share_sub">Браслет остаётся подключённым к телефону, а Display связывается с ним через телефон. Приложения получают его жесты и сразу включают вибрацию.</string>
     <string name="band_not_changed">Не изменено</string>
     <string name="band_refused">Отклонено</string>
     <string name="band_glasses">Очки</string>
@@ -1189,7 +1191,7 @@
     <string name="toolkit_step_manifest">Добавление Visor в очки</string>
     <string name="toolkit_step_permissions">Разрешения для инструментов</string>
     <string name="kit_scope_name_motion">Движение</string>
-    <string name="kit_scope_motion">Узнавать, как очки двигаются и поворачиваются, много раз в секунду, по их датчикам движения.</string>
+    <string name="kit_scope_motion">Узнавать, как очки и браслет Neural Band двигаются и поворачиваются, много раз в секунду, по их датчикам движения.</string>
     <string name="toolkit_point_app">Установит на очки приложение инструментов Meta</string>
     <string name="toolkit_point_trust">Добавит Visor в список доверенных устройств очков</string>
     <string name="toolkit_point_once">Один раз для каждой пары очков</string>

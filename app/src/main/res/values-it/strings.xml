@@ -1101,6 +1101,8 @@
     <string name="band_left">Sinistro</string>
     <string name="band_right">Destro</string>
     <string name="band_vibrate">Fai vibrare</string>
+    <string name="band_share">Condividi con il telefono</string>
+    <string name="band_share_sub">Il band resta collegato al telefono, e il Display lo raggiunge attraverso il telefono. Le app ricevono i suoi gesti e lo fanno vibrare subito.</string>
     <string name="band_not_changed">Non cambiato</string>
     <string name="band_refused">Rifiutato</string>
     <string name="band_glasses">Occhiali</string>
@@ -1145,7 +1147,7 @@
     <string name="toolkit_step_manifest">Aggiunta di Visor agli occhiali</string>
     <string name="toolkit_step_permissions">Autorizzazioni del toolkit</string>
     <string name="kit_scope_name_motion">Movimento</string>
-    <string name="kit_scope_motion">Leggere come si muovono e girano gli occhiali, più volte al secondo, dai loro sensori di movimento.</string>
+    <string name="kit_scope_motion">Leggere come si muovono e girano gli occhiali e il Neural Band, più volte al secondo, dai loro sensori di movimento.</string>
     <string name="toolkit_point_app">Installa sugli occhiali l\'app del toolkit di Meta</string>
     <string name="toolkit_point_trust">Aggiunge Visor ai dispositivi di cui gli occhiali si fidano</string>
     <string name="toolkit_point_once">Una volta per ogni paio di occhiali</string>

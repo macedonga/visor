@@ -1155,7 +1155,7 @@
     <string name="toolkit_step_manifest">Adding Visor to your glasses</string>
     <string name="toolkit_step_permissions">Allowing the toolkit</string>
     <string name="kit_scope_name_motion">Motion</string>
-    <string name="kit_scope_motion">Read how your glasses move and turn, many times a second, from their motion sensors.</string>
+    <string name="kit_scope_motion">Read how your glasses and your Neural Band move and turn, many times a second, from their motion sensors.</string>
     <string name="toolkit_point_app">Installs Meta\'s toolkit app on your glasses</string>
     <string name="toolkit_point_trust">Adds Visor to the devices your glasses trust</string>
     <string name="toolkit_point_once">Once for each pair of glasses</string>

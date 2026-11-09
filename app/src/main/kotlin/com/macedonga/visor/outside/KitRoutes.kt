@@ -65,10 +65,14 @@ import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.kit.protocol.Link
 import com.macedonga.visor.kit.protocol.Methods
 import com.macedonga.visor.kit.protocol.MotionRequest
+import com.macedonga.visor.kit.protocol.MotionSample
+import com.macedonga.visor.kit.protocol.MotionSource
+import com.macedonga.visor.kit.protocol.Quaternion
 import com.macedonga.visor.kit.protocol.RawMessage
 import com.macedonga.visor.kit.protocol.SpeakRequest
 import com.macedonga.visor.kit.protocol.ThermalLevel
 import com.macedonga.visor.kit.protocol.Topics
+import com.macedonga.visor.kit.protocol.Vector3
 import com.macedonga.visor.kit.protocol.VideoKind
 import com.macedonga.visor.kit.protocol.problem
 import com.macedonga.visor.kit.server.Caller
@@ -192,6 +196,19 @@ class KitRoutes @Inject constructor(
             combine(connection.pair, bands.all, band.state, connection.state, band.shared) { _, _, state, _, _ -> bandStatus(state) }.distinctUntilChanged()
         }
         stream(Topics.BAND_GESTURES) { caller, _ -> gestures(caller.packageName) }
+        stream(Topics.BAND_MOTION) { _, request ->
+            requireBand()
+            if (!band.shared.value) {
+                throw KitException(
+                    ErrorCode.UNSUPPORTED, "Reading the band's motion needs the band shared with the phone, in Visor's band settings.",
+                    reason = "not_shared",
+                )
+            }
+            if (request.rateHz !in MotionRequest.RATES) {
+                throw KitException(ErrorCode.INVALID_PARAMS, "The band is read at ${MotionRequest.RATES.joinToString()} Hz.")
+            }
+            bandMotion(request.rateHz)
+        }
         answer(Methods.BAND_BUZZ) { _, request ->
             requireBand()
             when (band.vibrate(request.durationMs.toLong(), request.strength)) {
@@ -556,6 +573,38 @@ class KitRoutes @Inject constructor(
                 }
                 emitAll(toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.map(::kitGesture))
             }
+        }
+    }
+
+    /**
+     * The band's IMU while collected, at [rateHz]: the band sends each sensor on its own, so each sample carries the
+     * newest reading of each, and one goes out per 1/[rateHz] s at most. The time is when the phone got it: the band's
+     * own timestamps are in a unit not pinned down yet.
+     */
+    private fun bandMotion(rateHz: Int): Flow<MotionSample> = flow {
+        band.startMotion()
+        try {
+            var accel: Vector3? = null
+            var gyro: Vector3? = null
+            var mag: Vector3? = null
+            var quat: Quaternion? = null
+            var sentAt = Long.MIN_VALUE
+            val gapNs = 1_000_000_000L / rateHz
+            band.motion.collect { m ->
+                val v = m.values
+                when (m.type) {
+                    Band.IMU_ACCEL -> accel = Vector3(v[0], v[1], v[2])
+                    Band.IMU_GYRO -> gyro = Vector3(v[0], v[1], v[2])
+                    Band.IMU_MAG -> mag = Vector3(v[0], v[1], v[2])
+                    Band.IMU_QUAT -> quat = Quaternion(v[0], v[1], v[2], v[3])
+                }
+                val now = System.nanoTime()
+                if (now - sentAt < gapNs) return@collect
+                sentAt = now
+                emit(MotionSample(now, accel, gyro, mag, quat, MotionSource.BAND))
+            }
+        } finally {
+            band.endMotion()
         }
     }
 

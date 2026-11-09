@@ -114,6 +114,13 @@ class BandLink @Inject constructor(
     /** What the band says on svc41109, its messages and its error frames. */
     val peer: SharedFlow<SessionEvent> = _peer
     private val _gestures = MutableSharedFlow<Band.Gesture>(extraBufferCapacity = 32)
+    private val _motion = MutableSharedFlow<Band.Motion>(extraBufferCapacity = 256)
+
+    /** The band's IMU readings, while an app holds them with [startMotion]. */
+    val motion: SharedFlow<Band.Motion> = _motion
+    // Apps that read the wrist's motion, counted; the IMU streams run while there is one and the band is up.
+    private val motionUsers = MutableStateFlow(0)
+    @Volatile private var motionOn = false
     // What the band says on its manifest services.
     private val manifestFrames = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 16)
     val gestures: SharedFlow<Band.Gesture> = _gestures
@@ -226,6 +233,20 @@ class BandLink @Inject constructor(
         if (lessons.value == 1 && _state.value.link == LinkState.READY) streams(false)
         lessons.value -= 1
         if (lessons.value == 0) log.add("Band: the lesson gives the band back")
+    }
+
+    /** Turns the band's IMU on for one more reader; the band must be shared, so it stays on the phone. */
+    @Synchronized
+    fun startMotion() {
+        motionUsers.value += 1
+        if (motionUsers.value == 1 && _state.value.link == LinkState.READY) streams(_state.value.gestures)
+    }
+
+    @Synchronized
+    fun endMotion() {
+        if (motionUsers.value == 0) return
+        motionUsers.value -= 1
+        if (motionUsers.value == 0 && _state.value.link == LinkState.READY) streams(_state.value.gestures)
     }
 
     /** A buzz the wearer cannot miss: done once sent, unless the band answers with an error. */
@@ -350,11 +371,17 @@ class BandLink @Inject constructor(
 
     internal class BandAway : Exception("the band is not up")
 
+    // Gestures as asked, and the IMU while an app reads it: named only while it is on or going off, as the Meta app
+    // asks for gestures alone.
     private fun streams(on: Boolean) {
-        val sent = send { listOf(Band.gestureStreams(seq.getAndIncrement(), on, _state.value.protocol)) }
+        val motion = motionUsers.value > 0
+        val wanted = if (motion || motionOn) motion else null
+        val sent = send { listOf(Band.streams(seq.getAndIncrement(), on, wanted, _state.value.protocol)) }
         if (sent) {
+            if (_state.value.gestures != on) log.add("Band: gestures ${if (on) "on" else "off"} (protocol ${_state.value.protocol ?: "not read"})")
+            if (motionOn != motion) log.add("Band: motion ${if (motion) "on" else "off"}")
             _state.update { it.copy(gestures = on) }
-            log.add("Band: gestures ${if (on) "on" else "off"} (protocol ${_state.value.protocol ?: "not read"})")
+            motionOn = motion
         }
     }
 
@@ -407,9 +434,10 @@ class BandLink @Inject constructor(
                             ask(opened, info = true)
                             band.glasses?.let { glasses -> launch { syncManifest(glasses) } }
                             // The gestures wait for the device info, which picks how to ask for them; not for long.
-                            if (lessons.value > 0) launch {
+                            motionOn = false
+                            if (lessons.value > 0 || motionUsers.value > 0) launch {
                                 delay(INFO_WAIT_MS)
-                                if (lessons.value > 0 && !_state.value.gestures) streams(true)
+                                if (lessons.value > 0 && !_state.value.gestures || motionUsers.value > 0 && !motionOn) streams(lessons.value > 0)
                             }
                         }
                     }
@@ -499,6 +527,10 @@ class BandLink @Inject constructor(
     private fun onBand(event: ServiceData) {
         val type = event.messageType and 0xFF
         if (Band.isGesture(type)) return onGesture(type, event.payload)
+        if (Band.isMotion(type)) {
+            runCatching { Band.motion(type, event.payload) }.getOrNull()?.let { _motion.tryEmit(it) }
+            return
+        }
         if (type == Band.RESPONSE) {
             runCatching { Band.seqOf(event.payload) }.getOrNull()?.let { replies.remove(it)?.complete(event.payload) }
             runCatching { Band.otaInfo(event.payload) }.getOrNull()?.let { info -> _state.update { it.copy(firmware = info.firmware) } }
@@ -509,7 +541,7 @@ class BandLink @Inject constructor(
                     if (r.leftHanded != null) _state.update { it.copy(leftHanded = r.leftHanded) }
                     if (r.protocol != null) {
                         _state.update { it.copy(protocol = r.protocol) }
-                        if (lessons.value > 0 && !_state.value.gestures) streams(true)
+                        if (lessons.value > 0 && !_state.value.gestures || motionUsers.value > 0 && !motionOn) streams(lessons.value > 0)
                     }
                 }.battery
                 Band.STREAM_UPDATE -> Band.streamBattery(event.payload)
