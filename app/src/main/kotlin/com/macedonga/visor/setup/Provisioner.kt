@@ -136,6 +136,7 @@ fun ProvisionStep.words(): String = when (this) {
     ProvisionStep.SKIP_CHALLENGE -> "asking the glasses to skip the button press"
     ProvisionStep.PAIR_REQUEST -> "asking Meta to start the pairing"
     ProvisionStep.START_CHANGE_OWNER -> "handing the glasses the pending pairing"
+    ProvisionStep.PRESS_BUTTON -> "waiting for a press of the glasses' button"
     ProvisionStep.PAIR -> "asking Meta to finish the pairing"
     ProvisionStep.FINISH_CHANGE_OWNER -> "the glasses saving this phone's key"
 }

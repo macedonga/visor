@@ -817,6 +817,7 @@
     <string name="onboard_step_meta">正在请求 Meta</string>
     <string name="onboard_step_connect">正在连接眼镜</string>
     <string name="onboard_step_finish">正在将本手机保存到眼镜</string>
+    <string name="onboard_step_press">按一下眼镜上的按钮</string>
     <string name="widget_name">眼镜</string>
     <string name="widget_description">眼镜和充电盒的电量、状态及最新照片。</string>
     <string name="widget_case">充电盒 %1$d%%</string>

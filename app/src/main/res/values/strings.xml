@@ -855,6 +855,7 @@
     <string name="onboard_step_meta">Asking Meta</string>
     <string name="onboard_step_connect">Reaching the glasses</string>
     <string name="onboard_step_finish">Saving this phone on the glasses</string>
+    <string name="onboard_step_press">Press the button on the glasses</string>
 
     <!-- The home screen widget and the Quick Settings tile. -->
     <string name="widget_name">Glasses</string>

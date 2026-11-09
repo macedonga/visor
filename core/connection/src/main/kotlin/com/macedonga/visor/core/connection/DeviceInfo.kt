@@ -56,6 +56,12 @@ fun productName(product: Int?): String? = when {
     else -> null
 }
 
+// Audio-only glasses: orca refuses the captures service and Wi-Fi (#80).
+private val NO_CAMERA_PRODUCTS = setOf(268)
+
+/** False for glasses with no camera; true when the product is not known. */
+fun hasCamera(product: Int?): Boolean = product !in NO_CAMERA_PRODUCTS
+
 /** Whether a build fingerprint is a Meta Ray-Ban Display's. */
 fun isDisplayBuild(build: String?): Boolean = isDisplayProduct(productId(build))
 

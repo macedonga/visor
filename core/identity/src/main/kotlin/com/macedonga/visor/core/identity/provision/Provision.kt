@@ -33,6 +33,8 @@ import kotlinx.serialization.json.put
 private const val GRAPH_BASE = "https://graph.facebook-hardware.com"
 private const val PAIR_PROTOCOL_VERSION = "4"
 private const val STEP_TIMEOUT_MILLIS = 20_000L
+private const val SLOW_MILLIS = 3_000L
+private const val PRESS_TIMEOUT_MILLIS = 90_000L
 
 open class ProvisioningError(message: String) : Exception(message)
 
@@ -170,6 +172,8 @@ enum class ProvisionStep {
     SKIP_CHALLENGE,
     PAIR_REQUEST,
     START_CHANGE_OWNER,
+    /** The glasses still wait for a press of their button. */
+    PRESS_BUTTON,
     PAIR,
     FINISH_CHANGE_OWNER,
 }
@@ -199,14 +203,22 @@ internal class ProvisioningFlow(
         first = false
     }
 
-    /** Wait for one message type, bounded. */
-    private suspend fun await(messageType: IdentityMsgType): ByteArray {
-        val deadline = System.nanoTime() + STEP_TIMEOUT_MILLIS * 1_000_000
+    /** Wait for one message type for [millis]; [slow] runs once if nothing came within [SLOW_MILLIS]. */
+    private suspend fun await(messageType: IdentityMsgType, millis: Long = STEP_TIMEOUT_MILLIS, slow: (() -> Unit)? = null): ByteArray {
+        val start = System.nanoTime()
+        val deadline = start + millis * 1_000_000
+        var waitingForSlow = slow != null
         val mirror = DataXConnection.mirror(channel)
         while (true) {
-            val remaining = (deadline - System.nanoTime()) / 1_000_000
+            val now = System.nanoTime()
+            val remaining = (deadline - now) / 1_000_000
             if (remaining <= 0) break
-            val message = withTimeoutOrNull(remaining) { connection.receive() } ?: continue
+            val untilSlow = (start + SLOW_MILLIS * 1_000_000 - now) / 1_000_000
+            if (waitingForSlow && untilSlow <= 0) {
+                waitingForSlow = false
+                slow?.invoke()
+            }
+            val message = withTimeoutOrNull(if (waitingForSlow) minOf(remaining, untilSlow) else remaining) { connection.receive() } ?: continue
             if (message.info.messageType == messageType.value) return message.payload
             if (message.info.flags.hasError && message.info.channelId == mirror) {
                 if (message.info.errorId == IdentityStatus.INVALID_USER_ID.value) throw WrongOwnerError()
@@ -237,7 +249,10 @@ internal class ProvisioningFlow(
 
         onStep(ProvisionStep.START_CHANGE_OWNER)
         send(IdentityMsgType.START_CHANGE_OWNER_REQ, pending.encode())
-        val devicePending = Receipt.decode(await(IdentityMsgType.START_CHANGE_OWNER_RESP))
+        // Some glasses ack the skip and still answer only after a press of their button (#80).
+        val devicePending = Receipt.decode(
+            await(IdentityMsgType.START_CHANGE_OWNER_RESP, PRESS_TIMEOUT_MILLIS) { onStep(ProvisionStep.PRESS_BUTTON) },
+        )
 
         onStep(ProvisionStep.PAIR)
         val final = withContext(Dispatchers.IO) { backend.pair(devicePendingReceipt = devicePending) }

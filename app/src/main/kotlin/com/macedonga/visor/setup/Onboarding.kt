@@ -999,6 +999,7 @@ private fun ProvisionStep.label(): Int = when (this) {
     ProvisionStep.TOKEN -> R.string.onboard_step_meta
     ProvisionStep.CONNECT, ProvisionStep.SECURE_LINK, ProvisionStep.IDENTITY, ProvisionStep.SKIP_CHALLENGE -> R.string.onboard_step_connect
     ProvisionStep.PAIR_REQUEST, ProvisionStep.START_CHANGE_OWNER, ProvisionStep.PAIR, ProvisionStep.FINISH_CHANGE_OWNER -> R.string.onboard_step_finish
+    ProvisionStep.PRESS_BUTTON -> R.string.onboard_step_press
 }
 
 /** The capture button's light and hold ring, and the inner LED, drawn over the pair. */
