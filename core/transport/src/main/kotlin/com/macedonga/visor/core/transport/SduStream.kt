@@ -21,14 +21,19 @@ class SduStream(
         }
     }
 
+    /** Set once the handshake is done: from then on bit 7 starts a COMMAND frame. See [Sdu.length]. */
+    @Volatile
+    var encrypted: Boolean = false
+
     /** Exactly one SDU. */
     fun receive(): ByteArray {
         var head = readExactly(Sdu.MIN_HEAD)
-        var total = Sdu.length(head)
+        val mode = encrypted
+        var total = Sdu.length(head, mode)
         if (total == null) {
-            head += readExactly(Sdu.AIRSHIELD_HEADER - head.size)
-            total = checkNotNull(Sdu.length(head)) {
-                "an ${Sdu.AIRSHIELD_HEADER} byte head still could not be measured"
+            head += readExactly(Sdu.headSize(head) - head.size)
+            total = checkNotNull(Sdu.length(head, mode)) {
+                "a ${head.size} byte head still could not be measured"
             }
         }
         val frame = head + readExactly(total - head.size)

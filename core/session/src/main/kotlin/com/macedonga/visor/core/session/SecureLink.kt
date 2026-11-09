@@ -127,6 +127,8 @@ class SecureLink(private val transport: Transport) {
                 "handshake: missing RequestEncryption / EnableEncryption from peer",
             )
         }
+        // Only DATA and COMMAND frames follow, and a COMMAND shares DataX's bit 7: a relay's commands would unframe the link.
+        transport.handshakeDone()
 
         val secret = Ecdh.computeSharedSecret(keyPair.privateKey, enable.publicKey)
 

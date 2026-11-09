@@ -49,6 +49,10 @@ class TcpTransport(
 
     override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
+    override fun handshakeDone() {
+        stream?.encrypted = true
+    }
+
     override fun close() {
         closes.incrementAndGet()
         runCatching { socket?.close() }
