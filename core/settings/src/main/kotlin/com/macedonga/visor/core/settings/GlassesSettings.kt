@@ -130,6 +130,10 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val objects = ConcurrentHashMap<String, MutableList<DriveObject>>()
         val versions = ConcurrentHashMap<String, Versions>()
         val done = CompletableDeferred<Unit>()
+
+        // The glasses answered that they serve no RLDrive.
+        @Volatile
+        var refused = false
     }
 
     init {
@@ -167,6 +171,12 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         }
         scope.launch {
             connection.serviceData.collect { if (it.serviceId == SVC_SETTINGS && it.messageType == MT_ACK) read() }
+        }
+        // Glasses without RLDrive (audio-only ones, #80) refuse it: the read ends then, not at its timeout.
+        scope.launch {
+            connection.errors.collect { e ->
+                if (e.serviceId == SVC_RLDRIVE && e.errorId == NOT_SERVED) sync?.let { it.refused = true; it.done.complete(Unit) }
+            }
         }
     }
 
@@ -233,7 +243,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         val s = Sync(ConcurrentHashMap(mapOf(id to namespace)), push = mapOf(namespace to objects))
         sync = s
         connection.submit { it.sendOnService(SVC_RLDRIVE, MT_SYNC_MESSAGE, buildSync(namespace, id, 0, types = listOf(TYPE_KV, TYPE_CONTACT, "contact_ranks", "sync_metadata"))) }
-        val finished = withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() } != null
+        val finished = withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() } != null && !s.refused
         sync = null
         // Round 1 holds every object; without it what they hold is not known.
         if (!finished && !s.versions.containsKey(namespace)) return null
@@ -257,6 +267,10 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         }
         val finished = withTimeoutOrNull(READ_TIMEOUT_MILLIS) { s.done.await() } != null
         sync = null
+        if (s.refused) {
+            _state.update { it.copy(reading = false) }
+            return say("These glasses keep no settings store Visor can read (service $SVC_RLDRIVE refused)")
+        }
 
         val changed = s.objects.values.sumOf { it.size }
         val now = System.currentTimeMillis()
@@ -406,6 +420,7 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         private const val ASSISTANT_ENABLED = "assistant_enabled"
         private const val TWO_STAGE_EIS = "two_stage_eis"
         private const val PEER_MILLIS = 30_000L
+        private const val NOT_SERVED = 0xC001
 
         // Ray-Ban Meta Optics, Meta glasses, Oakley Meta Vanguard and HSTN, Ray-Ban Meta Gen 2; not Gen 1 or the Display.
         private val TWO_STAGE_EIS_PRODUCTS = setOf(262, 263, 264, 265, 266)
