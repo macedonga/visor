@@ -14,7 +14,13 @@
     <string name="webapps_none">暂无网页应用</string>
     <string name="webapps_bluetooth">附近的蓝牙设备</string>
     <string name="webapps_bluetooth_failed">无法更改：%1$s</string>
-    <string name="webapps_bluetooth_note">在这里开启的应用在眼镜上打开时，可以通过手机查找你周围的蓝牙设备。更改会写入眼镜的配置，第一次需要先读取，可能需要一分钟。</string>
+    <string name="webapps_access">Visor 访问权限</string>
+    <string name="webapps_bluetooth_sub">应用在眼镜上打开时，通过手机查找你周围的蓝牙设备。</string>
+    <string name="webapps_access_note">应用通过 Visor Development Kit 可以对你的眼镜做什么。它通过“附近的蓝牙设备”连接 Visor，二者会一起保持开启。</string>
+    <string name="webapps_saving_read">正在读取眼镜的配置。这只需要一次，可能需要一分钟。</string>
+    <string name="webapps_saving_send">正在保存到眼镜…</string>
+    <string name="webapps_summary_bluetooth">蓝牙</string>
+    <string name="webapps_summary_visor">Visor：%1$s</string>
     <string name="webapps_browse">浏览</string>
     <string name="webapps_on_glasses">已在眼镜上</string>
     <string name="webapps_catalogue_failed">无法加载应用目录</string>

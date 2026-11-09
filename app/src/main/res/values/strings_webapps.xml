@@ -10,7 +10,13 @@
     <string name="webapps_none">No web apps</string>
     <string name="webapps_bluetooth">Nearby Bluetooth devices</string>
     <string name="webapps_bluetooth_failed">Could not change it: %1$s</string>
-    <string name="webapps_bluetooth_note">An app turned on here may look for Bluetooth devices around you through the phone, while it is open on the glasses. Changing it writes the glasses\' configuration, which reads it first the first time: that can take a minute.</string>
+    <string name="webapps_access">Visor access</string>
+    <string name="webapps_bluetooth_sub">Looks for Bluetooth devices around you, through the phone, while the app is open on the glasses.</string>
+    <string name="webapps_access_note">What the app may do with your glasses through the Visor Development Kit. It reaches Visor through Nearby Bluetooth devices, which stays on with it.</string>
+    <string name="webapps_saving_read">Reading the glasses\' configuration. This happens once and can take a minute.</string>
+    <string name="webapps_saving_send">Saving to the glasses…</string>
+    <string name="webapps_summary_bluetooth">Bluetooth</string>
+    <string name="webapps_summary_visor">Visor: %1$s</string>
     <string name="webapps_browse">Browse</string>
     <string name="webapps_on_glasses">On the glasses</string>
     <string name="webapps_catalogue_failed">Could not load the catalogue</string>

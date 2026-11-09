@@ -28,8 +28,12 @@ import com.macedonga.visor.R
 import com.macedonga.visor.connection.AddResult
 import com.macedonga.visor.connection.WebApp
 import com.macedonga.visor.connection.WebAppBluetooth
+import com.macedonga.visor.kit.protocol.Scope
+import com.macedonga.visor.outside.KitConsentActivity
+import com.macedonga.visor.outside.KitWebApps
 import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.media.ConfigBusy
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.identity.appstore.CatalogueApp
 import com.macedonga.visor.core.identity.appstore.fetchAppCatalogue
@@ -38,8 +42,10 @@ import com.macedonga.visor.login.MetaLogin
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -56,28 +62,52 @@ class WebAppsModel @Inject constructor(
     val connection: GlassesConnection,
     private val login: MetaLogin,
     private val bluetooth: WebAppBluetooth,
+    private val kit: KitWebApps,
 ) : ViewModel() {
     val apps: StateFlow<List<WebApp>> = webApps.apps
+
+    /** The VDK scopes each web app's origin holds. */
+    val access: StateFlow<Map<String, Set<Scope>>> = kit.grants
 
     /** The origins allowed to scan for Bluetooth devices. */
     val bluetoothOrigins: StateFlow<Set<String>> = bluetooth.allowed
 
-    // The origin whose Bluetooth choice is on its way to the glasses, and why the last one did not get there.
-    private val _bluetoothBusy = MutableStateFlow<String?>(null)
-    val bluetoothBusy: StateFlow<String?> = _bluetoothBusy.asStateFlow()
-    private val _bluetoothProblem = MutableStateFlow<Pair<String, String>?>(null)
-    val bluetoothProblem: StateFlow<Pair<String, String>?> = _bluetoothProblem.asStateFlow()
+    /** What the glasses' configuration is busy with while a save waits on it. */
+    val configBusy: StateFlow<ConfigBusy?> = bluetooth.configBusy.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    fun setBluetooth(app: WebApp, on: Boolean) {
+    private val _saving = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
+
+    // Why the last save did not reach the glasses.
+    private val _problem = MutableStateFlow<String?>(null)
+    val problem: StateFlow<String?> = _problem.asStateFlow()
+
+    /**
+     * Saves what [app] may do: Visor access reaches Visor through Bluetooth scans, so any scope turns Bluetooth on too.
+     * [onSaved] hears when the glasses have it. It runs on in the model, so a sheet closed meanwhile cuts no write short.
+     */
+    fun save(app: WebApp, scan: Boolean, scopes: Set<Scope>, onSaved: () -> Unit) {
         val origin = WebAppBluetooth.originOf(app.url) ?: return
-        if (_bluetoothBusy.value != null) return
-        _bluetoothBusy.value = origin
-        _bluetoothProblem.value = null
+        if (_saving.value) return
+        _saving.value = true
+        _problem.value = null
         viewModelScope.launch {
-            val why = bluetooth.allow(app.url, on)
-            _bluetoothProblem.value = why?.let { origin to it }
-            _bluetoothBusy.value = null
+            try {
+                val why = bluetooth.allow(app.url, scan || scopes.isNotEmpty())
+                if (why != null) {
+                    _problem.value = why
+                    return@launch
+                }
+                kit.setScopes(origin, scopes)
+                onSaved()
+            } finally {
+                _saving.value = false
+            }
         }
+    }
+
+    fun clearProblem() {
+        _problem.value = null
     }
 
     // The words for what the last action came to, as a string id.
@@ -115,8 +145,17 @@ class WebAppsModel @Inject constructor(
         _note.value = noteOf(webApps.add(app.name, app.url, app.manifest))
     }
 
-    fun remove(key: String) {
-        _note.value = if (webApps.remove(key)) null else R.string.connect_first
+    /** Takes [app] off the glasses, and what it was allowed with it once no other app shares its origin. */
+    fun remove(app: WebApp) {
+        if (!webApps.remove(app.key)) {
+            _note.value = R.string.connect_first
+            return
+        }
+        _note.value = null
+        val origin = WebAppBluetooth.originOf(app.url) ?: return
+        if (apps.value.any { it.key != app.key && WebAppBluetooth.originOf(it.url) == origin }) return
+        kit.setScopes(origin, emptySet())
+        if (origin in bluetooth.allowed.value) viewModelScope.launch { bluetooth.allow(app.url, false) }
     }
 
     private fun noteOf(result: AddResult): Int? = when (result) {
@@ -145,8 +184,24 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
     var adding by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<WebApp?>(null) }
+    var selected by remember { mutableStateOf<WebApp?>(null) }
+    val access by model.access.collectAsStateWithLifecycle()
+    val scanning by model.bluetoothOrigins.collectAsStateWithLifecycle()
 
     SettingsPage(stringResource(R.string.webapps_title), light = 0f, sheet = {
+        selected?.let { app ->
+            AppSheet(
+                app, model, ready,
+                onRemove = {
+                    selected = null
+                    removing = app
+                },
+                onDismiss = {
+                    selected = null
+                    model.clearProblem()
+                },
+            )
+        }
         if (browsing) {
             VisorSheet({ browsing = false }, full = true) {
                 SheetTitle(stringResource(R.string.webapps_browse))
@@ -195,7 +250,7 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
         }
 
         removing?.let { app ->
-            ConfirmSheet(app.name, app.url, stringResource(R.string.webapps_remove), onConfirm = { model.remove(app.key) }, onDismiss = { removing = null })
+            ConfirmSheet(app.name, app.url, stringResource(R.string.webapps_remove), onConfirm = { model.remove(app) }, onDismiss = { removing = null })
         }
     }) {
         item(key = "apps") {
@@ -211,13 +266,16 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                 Rows(
                     *apps.map { app ->
                         @Composable {
-                            RowFrame(app.name, onClick = null, sub = app.url) {
+                            val origin = WebAppBluetooth.originOf(app.url)
+                            val held = origin?.let { access[it] }.orEmpty()
+                            val summary = when {
+                                held.isNotEmpty() -> stringResource(R.string.webapps_summary_visor, scopeList(held))
+                                origin != null && origin in scanning -> stringResource(R.string.webapps_summary_bluetooth)
+                                else -> null
+                            }
+                            RowFrame(app.name, onClick = { selected = app }, sub = listOfNotNull(app.url, summary).joinToString(" · ")) {
                                 ActionPill(
                                     stringResource(R.string.webapps_open), { model.open(app) }, quiet = true,
-                                    modifier = Modifier.padding(start = 12.dp), enabled = ready,
-                                )
-                                ActionPill(
-                                    stringResource(R.string.webapps_remove), { removing = app }, quiet = true,
                                     modifier = Modifier.padding(start = 12.dp), enabled = ready,
                                 )
                             }
@@ -235,28 +293,63 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                 if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
             }
         }
-        if (apps.isNotEmpty()) item(key = "bluetooth") {
-            val allowed by model.bluetoothOrigins.collectAsStateWithLifecycle()
-            val busy by model.bluetoothBusy.collectAsStateWithLifecycle()
-            val problem by model.bluetoothProblem.collectAsStateWithLifecycle()
-            Column {
-                SectionLabel(stringResource(R.string.webapps_bluetooth))
-                Rows(
-                    *apps.map { app ->
-                        @Composable {
-                            val origin = WebAppBluetooth.originOf(app.url)
-                            ToggleRow(
-                                app.name, origin != null && origin in allowed, { on -> model.setBluetooth(app, on) },
-                                sub = origin,
-                                busy = origin != null && busy == origin,
-                                locked = origin == null || !ready,
-                                problem = problem?.takeIf { it.first == origin }?.second?.let { stringResource(R.string.webapps_bluetooth_failed, it) },
-                            )
-                        }
-                    }.toTypedArray(),
-                )
-                Footnote(stringResource(R.string.webapps_bluetooth_note))
-            }
-        }
     }
 }
+
+/**
+ * One web app: what it may do, saved to the glasses in one go, and its removal. A save that has to read the glasses'
+ * configuration first says so, because that takes a minute the first time.
+ */
+@Composable
+private fun AppSheet(app: WebApp, model: WebAppsModel, ready: Boolean, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    val origin = WebAppBluetooth.originOf(app.url)
+    val access by model.access.collectAsStateWithLifecycle()
+    val scanning by model.bluetoothOrigins.collectAsStateWithLifecycle()
+    val saving by model.saving.collectAsStateWithLifecycle()
+    val busy by model.configBusy.collectAsStateWithLifecycle()
+    val problem by model.problem.collectAsStateWithLifecycle()
+    var scan by remember(app.key) { mutableStateOf(origin != null && origin in scanning) }
+    var scopes by remember(app.key) { mutableStateOf(origin?.let { access[it] }.orEmpty()) }
+    VisorSheet(onDismiss) {
+        SheetTitle(app.name, origin ?: app.url)
+        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            ToggleRow(
+                stringResource(R.string.webapps_bluetooth), scan || scopes.isNotEmpty(), { scan = it },
+                sub = stringResource(R.string.webapps_bluetooth_sub),
+                // Visor access travels over the scans, so they stay on with it.
+                locked = scopes.isNotEmpty() || saving,
+            )
+            SectionLabel(stringResource(R.string.webapps_access))
+            // Raw DataX stays with Developer mode's own clients.
+            for (s in KitConsentActivity.KNOWN - Scope.RAW) {
+                ToggleRow(
+                    stringResource(KitConsentActivity.SCOPE_TEXT.getValue(s)), s in scopes,
+                    { scopes = if (it) scopes + s else scopes - s },
+                    locked = saving,
+                )
+            }
+            Footnote(stringResource(R.string.webapps_access_note))
+        }
+        if (saving) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 12.dp)) {
+                Spinner()
+                Text(
+                    stringResource(if (busy == ConfigBusy.READING) R.string.webapps_saving_read else R.string.webapps_saving_send),
+                    style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 12.dp),
+                )
+            }
+        }
+        problem?.let { Footnote(stringResource(R.string.webapps_bluetooth_failed, it), color = Visor.colors.signal) }
+        SheetAnswers(
+            stringResource(R.string.settings_save),
+            { model.save(app, scan, scopes, onDismiss) },
+            stringResource(R.string.webapps_remove),
+            onRemove,
+            enabled = ready && origin != null && !saving,
+        )
+    }
+}
+
+@Composable
+private fun scopeList(scopes: Set<Scope>): String =
+    scopes.map { scope -> KitConsentActivity.SCOPE_NAME[scope]?.let { stringResource(it) } ?: scope.id }.joinToString(", ")

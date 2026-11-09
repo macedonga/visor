@@ -2,14 +2,18 @@ package com.macedonga.visor.connection
 
 import android.content.Context
 import android.net.Uri
+import com.macedonga.visor.core.media.ConfigBusy
 import com.macedonga.visor.core.media.GlassesConfig
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 
 /**
@@ -29,12 +33,16 @@ class WebAppBluetooth @Inject constructor(
     /** The origins allowed to scan, such as `https://example.com`. */
     val allowed: StateFlow<Set<String>> = _allowed.asStateFlow()
 
+    /** What the glasses' configuration is busy with: reading it takes a bug report, the first time. */
+    val configBusy: Flow<ConfigBusy?> = config.state.map { it.busy }.distinctUntilChanged()
+
     /**
      * Allows or stops [url]'s origin, and writes the list to the glasses: their configuration is read first when Visor
      * has none, which takes a bug report. Null once the glasses have it, else why not.
      */
     suspend fun allow(url: String, on: Boolean): String? {
         val origin = originOf(url) ?: return "not a web address"
+        if ((origin in _allowed.value) == on) return null
         val next = if (on) _allowed.value + origin else _allowed.value - origin
         if (!config.readOnce(READ_MS) {}) return "the glasses' configuration could not be read"
         val why = config.send(mapOf(PARAM to JSONArray(next.sorted()).toString()))

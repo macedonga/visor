@@ -39,6 +39,7 @@ class KitHost @Inject constructor(
     private val clients: NetworkClients,
     private val network: KitNetwork,
     private val webhooks: KitWebhooks,
+    private val webApps: KitWebApps,
     private val log: EventLog,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -49,8 +50,11 @@ class KitHost @Inject constructor(
             return Caller(uid, app)
         }
 
-        override fun granted(caller: Caller): Set<Scope> =
-            if (caller.network) clients.scopesOf(caller.packageName) else grants.scopesOf(caller.packageName)
+        override fun granted(caller: Caller): Set<Scope> = when {
+            caller.uid == KitWebApps.WEB_UID -> webApps.scopesOf(caller.packageName)
+            caller.network -> clients.scopesOf(caller.packageName)
+            else -> grants.scopesOf(caller.packageName)
+        }
 
         override fun grants(): Map<String, Set<Scope>> = grants.all.value.keys.associateWith(grants::scopesOf)
 
@@ -73,12 +77,13 @@ class KitHost @Inject constructor(
     /** For the app's start: follows Developer mode and the grants for as long as the process lives. */
     fun start() {
         webhooks.start(dispatcher)
+        webApps.start(dispatcher)
         scope.launch {
             developer.on.collect { on -> if (on) openShell() else shell.stop() }
         }
         scope.launch {
             // Streams of a scope the person took back end now.
-            combine(grants.all, clients.all) { _, _ -> }.collect { dispatcher.recheck() }
+            combine(grants.all, clients.all, webApps.grants) { _, _, _ -> }.collect { dispatcher.recheck() }
         }
         scope.launch(Dispatchers.IO) {
             combine(clients.on, clients.lan) { on, lan -> on to lan }.collect { (on, lan) ->

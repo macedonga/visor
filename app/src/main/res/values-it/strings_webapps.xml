@@ -10,7 +10,13 @@
     <string name="webapps_none">Nessuna app web</string>
     <string name="webapps_bluetooth">Dispositivi Bluetooth vicini</string>
     <string name="webapps_bluetooth_failed">Non è stato possibile cambiarlo: %1$s</string>
-    <string name="webapps_bluetooth_note">Un\'app attivata qui può cercare i dispositivi Bluetooth intorno a te tramite il telefono, mentre è aperta sugli occhiali. Cambiarlo scrive la configurazione degli occhiali, che la prima volta va letta: può richiedere un minuto.</string>
+    <string name="webapps_access">Accesso a Visor</string>
+    <string name="webapps_bluetooth_sub">Cerca i dispositivi Bluetooth intorno a te, tramite il telefono, mentre l\'app è aperta sugli occhiali.</string>
+    <string name="webapps_access_note">Cosa può fare l\'app con i tuoi occhiali tramite il Visor Development Kit. Raggiunge Visor tramite Dispositivi Bluetooth vicini, che resta attivo insieme.</string>
+    <string name="webapps_saving_read">Lettura della configurazione degli occhiali. Succede una volta sola e può richiedere un minuto.</string>
+    <string name="webapps_saving_send">Salvataggio sugli occhiali…</string>
+    <string name="webapps_summary_bluetooth">Bluetooth</string>
+    <string name="webapps_summary_visor">Visor: %1$s</string>
     <string name="webapps_browse">Sfoglia</string>
     <string name="webapps_on_glasses">Sugli occhiali</string>
     <string name="webapps_catalogue_failed">Impossibile caricare il catalogo</string>

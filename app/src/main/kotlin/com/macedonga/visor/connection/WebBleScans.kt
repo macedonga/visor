@@ -13,11 +13,13 @@ import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.log.responderScope
+import com.macedonga.visor.outside.KitWebApps
 import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -34,6 +36,7 @@ import kotlinx.coroutines.launch
 @Singleton
 class WebBleScans @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val kit: Provider<KitWebApps>,
     private val log: EventLog,
 ) {
     private val scope = responderScope(log, "Web app scans")
@@ -53,6 +56,12 @@ class WebBleScans @Inject constructor(
         val id = f.bytes(1).decodeToString()
         val reply = DataXConnection.mirror(channel)
         scans.remove(channel)?.stop()
+        // A web app speaking to Visor through visor-kit, not a scan.
+        kit.get().frameOf(f.repeatedBytes(4))?.let { frame ->
+            scope.launch { runCatching { connection.send(reply, Wire.fieldString(1, id), messageType = MT_START_RESPONSE) } }
+            kit.get().onScan(connection, channel, id, frame)
+            return
+        }
         val scan = Scan(connection, reply, id, f.varint(2) != 0L, f.varint(3) != 0L, f.repeatedBytes(4).mapNotNull(::filter))
         scans[channel] = scan
         scope.launch { runCatching { connection.send(reply, Wire.fieldString(1, id), messageType = MT_START_RESPONSE) } }
@@ -61,6 +70,7 @@ class WebBleScans @Inject constructor(
 
     fun stop(channel: Int) {
         scans.remove(channel)?.stop()
+        kit.get().onScanEnd(channel)
     }
 
     private fun filter(bytes: ByteArray): Filter? = runCatching {

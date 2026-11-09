@@ -10,7 +10,13 @@
     <string name="webapps_none">Нет веб-приложений</string>
     <string name="webapps_bluetooth">Bluetooth-устройства рядом</string>
     <string name="webapps_bluetooth_failed">Не удалось изменить: %1$s</string>
-    <string name="webapps_bluetooth_note">Включённое здесь приложение может искать Bluetooth-устройства вокруг вас через телефон, пока оно открыто на очках. Изменение записывает конфигурацию очков, которую в первый раз нужно прочитать: это может занять минуту.</string>
+    <string name="webapps_access">Доступ к Visor</string>
+    <string name="webapps_bluetooth_sub">Ищет Bluetooth-устройства вокруг вас через телефон, пока приложение открыто на очках.</string>
+    <string name="webapps_access_note">Что приложение может делать с вашими очками через Visor Development Kit. Оно связывается с Visor через «Bluetooth-устройства рядом», которые остаются включёнными вместе с ним.</string>
+    <string name="webapps_saving_read">Чтение конфигурации очков. Это происходит один раз и может занять минуту.</string>
+    <string name="webapps_saving_send">Сохранение на очках…</string>
+    <string name="webapps_summary_bluetooth">Bluetooth</string>
+    <string name="webapps_summary_visor">Visor: %1$s</string>
     <string name="webapps_browse">Каталог</string>
     <string name="webapps_on_glasses">На очках</string>
     <string name="webapps_catalogue_failed">Не удалось загрузить каталог</string>
