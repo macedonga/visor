@@ -573,11 +573,19 @@ private fun Fact(label: String, value: String, dim: Boolean, modifier: Modifier)
 }
 
 @Composable
-fun Places(onMedia: () -> Unit, onLive: () -> Unit, onMetaAi: () -> Unit, onSettings: () -> Unit, modifier: Modifier, forThisPair: Boolean = true) {
+fun Places(
+    onMedia: () -> Unit,
+    onLive: () -> Unit,
+    onMetaAi: () -> Unit,
+    onSettings: () -> Unit,
+    modifier: Modifier,
+    forThisPair: Boolean = true,
+    camera: Boolean = true,
+) {
     Column(modifier) {
         NavRow(VisorIcons.Gallery, stringResource(R.string.home_place_media), null, onMedia)
         // The Live, Meta AI and settings are the connected pair's: not while the home shows another.
-        NavRow(VisorIcons.Live, stringResource(R.string.home_place_live), null, onLive, enabled = forThisPair)
+        if (camera) NavRow(VisorIcons.Live, stringResource(R.string.home_place_live), null, onLive, enabled = forThisPair)
         NavRow(VisorIcons.Voice, stringResource(R.string.home_place_meta_ai), null, onMetaAi, enabled = forThisPair)
         NavRow(VisorIcons.Settings, stringResource(R.string.home_place_settings), null, onSettings, enabled = forThisPair)
     }

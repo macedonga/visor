@@ -126,6 +126,10 @@ class AirshipReceiver(private val spool: File) : Responder {
     var queueEmptyAt = 0L
         private set
 
+    // Some glasses repeat that the queue is empty every few seconds: the log hears it once until an offer.
+    @Volatile
+    private var saidEmpty = false
+
     /** When airship last said anything, in [System.nanoTime] milliseconds. */
     @Volatile
     var lastActivity = 0L
@@ -270,6 +274,7 @@ class AirshipReceiver(private val spool: File) : Responder {
     private fun handle(channel: Int, type: Int, payload: ByteArray): Reply? {
         when (type) {
             MT_OFFER, MT_OFFER_MULTISCOPE -> {
+                saidEmpty = false
                 val f = parsed(payload)
                 val offer = Offer(f.bytes(1), f.varint(2), f.bytes(3).decodeToString())
                 incoming.remove(channel)?.discard()
@@ -348,7 +353,8 @@ class AirshipReceiver(private val spool: File) : Responder {
 
             MT_QUEUE_COMPLETE -> {
                 queueEmptyAt = System.nanoTime() / 1_000_000
-                _notes.trySend("The glasses have nothing more queued")
+                if (!saidEmpty) _notes.trySend("The glasses have nothing more queued")
+                saidEmpty = true
             }
         }
         return null

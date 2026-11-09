@@ -76,8 +76,10 @@ import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesState
+import com.macedonga.visor.core.connection.hasCamera
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.Capture
@@ -512,7 +514,10 @@ fun HomeScreen(
             if (!elsewhere && (isDisplayBuild(state.info?.build) || isDisplayProduct(selectedProduct))) {
                 item(key = "display") { DisplayShelf(onDisplayTool, Modifier.padding(top = 4.dp, bottom = 8.dp).appear(entrance, 4)) }
             }
-            item(key = "places") { Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5), forThisPair = !elsewhere) }
+            item(key = "places") {
+                val camera = elsewhere || hasCamera(productId(state.info?.build) ?: selectedProduct)
+                Places(onMedia, onLive, onMetaAi, onSettings, Modifier.appear(entrance, 5), forThisPair = !elsewhere, camera = camera)
+            }
         }
 
 

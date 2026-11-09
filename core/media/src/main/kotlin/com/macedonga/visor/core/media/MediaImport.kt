@@ -9,6 +9,8 @@ import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.GlassesTarget
 import com.macedonga.visor.core.connection.SessionHostFactory
+import com.macedonga.visor.core.connection.hasCamera
+import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.protocol.Wire
@@ -281,6 +283,8 @@ class MediaImport(
 
     /** Ask for the list again. Captures are updated in place, so nothing flickers. */
     fun refresh() {
+        // Glasses with no camera keep no captures.
+        if (!hasCamera(productId(connection.state.value.info?.build))) return
         connection.submit { enumerateCaptures(it) }
     }
 
