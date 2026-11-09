@@ -27,7 +27,7 @@ okhttp = "5.5.0"
 
 # :app only: the VDK other apps use to reach the glasses through Visor (github.com/macedonga/visor-kit). While
 # ../visor-kit sits next to this repo, settings.gradle.kts builds it from source instead.
-visorKit = "0.1.0"
+visorKit = "0.1.1"
 
 # :app only: the kit's network door, a WebSocket and HTTP server on the phone.
 ktor = "3.6.0"
