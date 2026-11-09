@@ -45,6 +45,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** A client of the kit's network door: the name the person gave it, its scopes, and the hash of its token. */
@@ -178,6 +179,11 @@ class KitNetwork @Inject constructor(
                         // Messages wait in order here, so a slow reader never makes the kit think the client went away.
                         val out = Channel<String>(Channel.UNLIMITED)
                         val writer = launch { for (message in out) outgoing.send(Frame.Text(message)) }
+                        // Scopes go by the client's name: a token replaced or removed ends its sockets.
+                        val revoked = launch {
+                            clients.all.first { list -> list.none { it.tokenHash == client.tokenHash } }
+                            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "The token was replaced or removed."))
+                        }
                         val session = JsonRpcSession(
                             dispatcher, Caller(NETWORK_UID, client.name, network = true),
                             send = { out.trySend(it).isSuccess },
@@ -186,6 +192,7 @@ class KitNetwork @Inject constructor(
                         try {
                             for (frame in incoming) if (frame is Frame.Text) session.receive(frame.readText())
                         } finally {
+                            revoked.cancel()
                             session.end()
                             out.close()
                             writer.join()
