@@ -84,6 +84,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.AboutKey
 import com.macedonga.visor.AdvancedKey
+import com.macedonga.visor.AppsKey
 import com.macedonga.visor.AssistantSettingsKey
 import com.macedonga.visor.BackupKey
 import com.macedonga.visor.BuildConfig
@@ -93,7 +94,6 @@ import com.macedonga.visor.FlagsKey
 import com.macedonga.visor.AccountsKey
 import com.macedonga.visor.GlassesKey
 import com.macedonga.visor.IntegrationsKey
-import com.macedonga.visor.WebAppsKey
 import com.macedonga.visor.WifiNetworksKey
 import com.macedonga.visor.LanguageKey
 import com.macedonga.visor.LiveSettingsKey
@@ -110,6 +110,7 @@ import com.macedonga.visor.band.BandPeers
 import com.macedonga.visor.band.BandSetup
 import com.macedonga.visor.band.Bands
 import com.macedonga.visor.connection.GLASSES_CAMERA_KEYS
+import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.DEFAULT_CLAUDE_MODEL
@@ -196,6 +197,7 @@ class SettingsViewModel @Inject constructor(
     val networkClients: NetworkClients,
     val kitNetwork: KitNetwork,
     val media: MediaImport,
+    val webApps: WebApps,
 ) : ViewModel()
 
 /** Settings: the lit pair on the stage, and a sheet with search, pinned tiles and topics that folds the stage as it scrolls. */
@@ -263,13 +265,14 @@ fun SettingsScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                 item(key = "glasses") {
                     Column(Modifier.padding(top = 18.dp)) {
                         NavRow(VisorIcons.Glasses, stringResource(R.string.glasses_title), null, onClick = { open(GlassesKey) })
+                        // The VDK's home, up front: the apps, programs and agents that use the glasses.
+                        NavRow(VisorIcons.Apps, stringResource(R.string.apps_title), appsSummary(model), onClick = { open(AppsKey) })
                     }
                 }
                 // The Display's own pages, up front rather than inside the Glasses page.
                 if (isDisplayProduct(product)) item(key = "display") {
                     Column(Modifier.padding(top = 14.dp)) {
                         NavRow(VisorIcons.Wifi, stringResource(R.string.wifi_networks), null, onClick = { open(WifiNetworksKey) })
-                        NavRow(VisorIcons.Globe, stringResource(R.string.webapps_row), null, onClick = { open(WebAppsKey) })
                         NavRow(VisorIcons.People, stringResource(R.string.accounts_title), null, onClick = { open(AccountsKey) })
                     }
                 }
@@ -760,7 +763,7 @@ private fun LazyListScope.searchResults(
 
 private fun displayPages(product: Int?): List<Triple<Int, Int?, NavKey>> = if (!isDisplayProduct(product)) emptyList() else listOf(
     Triple(R.string.wifi_networks, R.string.search_words_wifi, WifiNetworksKey),
-    Triple(R.string.webapps_row, R.string.search_words_webapps, WebAppsKey),
+    Triple(R.string.webapps_row, R.string.search_words_webapps, AppsKey),
     Triple(R.string.accounts_title, R.string.search_words_accounts, AccountsKey),
 )
 
@@ -769,6 +772,7 @@ private fun pageHits(product: Int?): List<Triple<Int, Int?, NavKey>> =
     Topic.entries.filter { it.shownOn(product) }.map { Triple(it.title, if (it == Topic.HEARING) R.string.search_words_hearing else null, placeOf(it)) } +
         displayPages(product) + listOf(
             Triple(R.string.glasses_title, R.string.search_words_glasses, GlassesKey),
+            Triple(R.string.apps_title, R.string.search_words_apps, AppsKey),
             Triple(R.string.advanced_title, R.string.search_words_advanced, AdvancedKey),
             Triple(R.string.backup_title, R.string.search_words_backup, BackupKey),
             Triple(R.string.about_title, R.string.search_words_about, AboutKey),

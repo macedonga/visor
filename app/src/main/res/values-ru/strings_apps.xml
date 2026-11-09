@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apps_title">Приложения</string>
+    <string name="apps_sum_none">Пока нет</string>
+    <plurals name="apps_count">
+        <item quantity="one">%d приложение</item>
+        <item quantity="few">%d приложения</item>
+        <item quantity="many">%d приложений</item>
+        <item quantity="other">%d приложения</item>
+    </plurals>
+    <plurals name="apps_webapps_count">
+        <item quantity="one">%d веб-приложение</item>
+        <item quantity="few">%d веб-приложения</item>
+        <item quantity="many">%d веб-приложений</item>
+        <item quantity="other">%d веб-приложения</item>
+    </plurals>
+    <plurals name="apps_programs_count">
+        <item quantity="one">%d программа</item>
+        <item quantity="few">%d программы</item>
+        <item quantity="many">%d программ</item>
+        <item quantity="other">%d программы</item>
+    </plurals>
+    <string name="apps_on_phone">На этом телефоне</string>
+    <string name="apps_empty_title">Пока ни одно приложение не использует ваши очки</string>
+    <string name="apps_webapp_add">Добавить веб-приложение</string>
+    <string name="apps_webapp_browse">Веб-приложения от Meta</string>
+    <string name="apps_display">На Display</string>
+    <string name="apps_developers">Разработчикам</string>
+    <string name="apps_build">Создайте своё для очков</string>
+    <string name="apps_sheet_none">Сейчас ему ничего не разрешено.</string>
+    <string name="apps_done">Готово</string>
+    <string name="search_words_apps">vdk,разработчики,режим разработчика,kit,сеть,mcp,агенты,программы,разрешения,доступ,токен</string>
+</resources>

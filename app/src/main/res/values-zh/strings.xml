@@ -424,11 +424,11 @@
     <string name="settings_developer_token_required">操作需要令牌</string>
     <string name="settings_kit_apps">有访问权限的应用</string>
     <string name="settings_kit_remove">移除访问权限</string>
-    <string name="settings_kit_network">网络访问</string>
-    <string name="settings_kit_network_on">向客户端开放</string>
+    <string name="settings_kit_network">程序和代理</string>
+    <string name="settings_kit_network_on">允许程序连接</string>
     <string name="settings_kit_network_lan">允许局域网访问</string>
-    <string name="settings_kit_client_add">添加客户端</string>
-    <string name="settings_kit_client_new">新客户端</string>
+    <string name="settings_kit_client_add">添加程序</string>
+    <string name="settings_kit_client_new">新程序</string>
     <string name="settings_kit_client_name">名称</string>
     <string name="settings_kit_client_create">创建</string>
     <string name="settings_kit_client_token">%1$s 的令牌</string>

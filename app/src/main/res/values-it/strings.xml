@@ -434,11 +434,11 @@
     <string name="settings_developer_token_required">Le azioni richiedono il token</string>
     <string name="settings_kit_apps">App con accesso</string>
     <string name="settings_kit_remove">Rimuovi accesso</string>
-    <string name="settings_kit_network">Accesso di rete</string>
-    <string name="settings_kit_network_on">Aperto ai client</string>
+    <string name="settings_kit_network">Programmi e agenti</string>
+    <string name="settings_kit_network_on">Consenti ai programmi di collegarsi</string>
     <string name="settings_kit_network_lan">Dalla rete locale</string>
-    <string name="settings_kit_client_add">Aggiungi un client</string>
-    <string name="settings_kit_client_new">Nuovo client</string>
+    <string name="settings_kit_client_add">Aggiungi un programma</string>
+    <string name="settings_kit_client_new">Nuovo programma</string>
     <string name="settings_kit_client_name">Nome</string>
     <string name="settings_kit_client_create">Crea</string>
     <string name="settings_kit_client_token">Token per %1$s</string>

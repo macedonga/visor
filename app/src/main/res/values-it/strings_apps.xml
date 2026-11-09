@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apps_title">App</string>
+    <string name="apps_sum_none">Ancora nessuna</string>
+    <plurals name="apps_count">
+        <item quantity="one">%d app</item>
+        <item quantity="many">%d app</item>
+        <item quantity="other">%d app</item>
+    </plurals>
+    <plurals name="apps_webapps_count">
+        <item quantity="one">%d app web</item>
+        <item quantity="many">%d app web</item>
+        <item quantity="other">%d app web</item>
+    </plurals>
+    <plurals name="apps_programs_count">
+        <item quantity="one">%d programma</item>
+        <item quantity="many">%d programmi</item>
+        <item quantity="other">%d programmi</item>
+    </plurals>
+    <string name="apps_on_phone">Su questo telefono</string>
+    <string name="apps_empty_title">Nessuna app usa ancora i tuoi occhiali</string>
+    <string name="apps_webapp_add">Aggiungi un\'app web</string>
+    <string name="apps_webapp_browse">Sfoglia le app web di Meta</string>
+    <string name="apps_display">Sul Display</string>
+    <string name="apps_developers">Sviluppatori</string>
+    <string name="apps_build">Crea per i tuoi occhiali</string>
+    <string name="apps_sheet_none">Ora non può fare nulla.</string>
+    <string name="apps_done">Fatto</string>
+    <string name="search_words_apps">vdk,sviluppatori,modalità sviluppatore,kit,rete,mcp,agenti,programmi,permessi,accesso,token</string>
+</resources>

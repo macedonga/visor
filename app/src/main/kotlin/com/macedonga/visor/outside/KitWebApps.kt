@@ -35,7 +35,7 @@ import org.json.JSONObject
  * session, open}` opens a session on that scan's channel, where Visor's answers and events go out as advertisements;
  * `{v, origin, session, rpc}` hands one JSON-RPC message to that session. A frame is "VDK1", a flags byte (1: more
  * follow), a message id (4 bytes, big endian), then the bytes. A session ends with its scan. Only the origins the
- * person allows in Settings > Web apps get in, with the scopes chosen there; the Display lets only those scan at all.
+ * person allows in Settings > Apps get in, with the scopes chosen there; the Display lets only those scan at all.
  */
 @Singleton
 class KitWebApps @Inject constructor(
@@ -97,7 +97,7 @@ class KitWebApps @Inject constructor(
         val origin = message.optString("origin")
         val sessionId = message.optString("session")
         if (!bluetooth.allowed.value.contains(origin)) {
-            log.add("VDK: a web app from $origin is not allowed in Settings > Web apps")
+            log.add("VDK: a web app from $origin is not allowed in Settings > Apps")
             return
         }
         if (message.optBoolean("open")) return open(connection, channel, requestId, origin, sessionId)

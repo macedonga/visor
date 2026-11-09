@@ -1,6 +1,20 @@
 package com.macedonga.visor.settings
 
 import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import com.macedonga.visor.ui.VisorIcons
+import com.macedonga.visor.ui.lineLimit
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -196,148 +210,164 @@ class WebAppsModel @Inject constructor(
     }
 }
 
-/** The Display's web apps, as the glasses list them, and opening one on the glasses. */
+/**
+ * The Display's web apps on the Apps page, as the glasses list them: each one's access, opening it on the glasses,
+ * adding one, and their tools for the assistant.
+ */
 @Composable
-fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
+fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val ready = glasses.link == LinkState.READY
     val apps by model.apps.collectAsStateWithLifecycle()
     val note by model.note.collectAsStateWithLifecycle()
     val catalogue by model.catalogue.collectAsStateWithLifecycle()
+    val access by model.access.collectAsStateWithLifecycle()
+    val scanning by model.bluetoothOrigins.collectAsStateWithLifecycle()
     var adding by remember { mutableStateOf(false) }
     var browsing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<WebApp?>(null) }
     var selected by remember { mutableStateOf<WebApp?>(null) }
-    val access by model.access.collectAsStateWithLifecycle()
-    val scanning by model.bluetoothOrigins.collectAsStateWithLifecycle()
-
-    SettingsPage(stringResource(R.string.webapps_title), light = 0f, sheet = {
-        selected?.let { app ->
-            AppSheet(
-                app, model, ready,
-                onRemove = {
-                    selected = null
-                    removing = app
-                },
-                onDismiss = {
-                    selected = null
-                    model.clearProblem()
-                },
-            )
+    val host = LocalHost.current
+    val opened = stringResource(R.string.webapps_opened)
+    LaunchedEffect(note) {
+        if (note == R.string.webapps_opened) {
+            host.notice.show(opened)
+            model.clearNote()
         }
-        if (browsing) {
-            VisorSheet({ browsing = false }, full = true) {
-                SheetTitle(stringResource(R.string.webapps_browse))
-                when (val c = catalogue) {
-                    CatalogueState.Loading -> Spinner(Modifier.padding(SIDE).padding(top = 16.dp))
-                    CatalogueState.Failed -> {
-                        Text(stringResource(R.string.webapps_catalogue_failed), style = Visor.type.label, color = Visor.colors.signal, modifier = Modifier.padding(horizontal = SIDE))
-                        ActionPill(stringResource(R.string.try_again), model::browse, Modifier.padding(start = SIDE, top = 12.dp), quiet = true)
-                    }
-                    is CatalogueState.Loaded -> if (c.apps.isEmpty()) {
-                        Text(stringResource(R.string.webapps_catalogue_none), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE))
-                    } else {
-                        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                            Rows(
-                                *c.apps.map { app ->
-                                    @Composable {
-                                        val on = apps.any { it.url == app.url }
-                                        RowFrame(app.name, onClick = null, sub = app.url, value = if (on) stringResource(R.string.webapps_on_glasses) else null) {
-                                            if (!on) ActionPill(stringResource(R.string.webapps_add), { model.addFromCatalogue(app) }, quiet = true, modifier = Modifier.padding(start = 12.dp))
-                                        }
-                                    }
-                                }.toTypedArray(),
-                            )
-                        }
-                    }
-                }
-                note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
+    }
+
+    Column {
+        SectionLabel(stringResource(R.string.apps_display))
+        Rows(apps) { app ->
+            val origin = WebAppBluetooth.originOf(app.url)
+            val held = origin?.let { access[it] }.orEmpty()
+            val summary = when {
+                held.isNotEmpty() -> stringResource(R.string.webapps_summary_visor, scopeList(held))
+                origin != null && origin in scanning -> stringResource(R.string.webapps_summary_bluetooth)
+                else -> null
             }
+            val where = Uri.parse(app.url).host ?: app.url
+            WebAppRow(app, listOfNotNull(where, summary).joinToString(" · "), ready, onClick = { selected = app }, onOpen = { model.open(app) })
         }
-
-        if (adding) {
-            var name by remember { mutableStateOf("") }
-            var url by remember { mutableStateOf("https://") }
-            VisorSheet({ adding = false }) {
-                SheetTitle(stringResource(R.string.webapps_add))
-                SheetField(name, { name = it }, hint = stringResource(R.string.webapps_name), focus = true)
-                Spacer(Modifier.height(10.dp))
-                SheetField(url, { url = it }, hint = stringResource(R.string.webapps_url))
-                Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
-                    ActionPill(stringResource(R.string.settings_save), {
-                        model.add(name.trim(), url.trim())
-                        adding = false
-                    }, enabled = Uri.parse(url.trim()).let { it.scheme == "https" && !it.host.isNullOrEmpty() })
-                }
-            }
-        }
-
-        removing?.let { app ->
-            ConfirmSheet(app.name, app.url, stringResource(R.string.webapps_remove), onConfirm = { model.remove(app) }, onDismiss = { removing = null })
-        }
-    }) {
-        item(key = "apps") {
-            val host = LocalHost.current
-            val opened = stringResource(R.string.webapps_opened)
-            LaunchedEffect(note) {
-                if (note == R.string.webapps_opened) {
-                    host.notice.show(opened)
+        if (apps.isNotEmpty()) Spacer(Modifier.height(12.dp))
+        Rows(
+            {
+                NavRow(VisorIcons.Plus, stringResource(R.string.apps_webapp_add), null, onClick = {
                     model.clearNote()
+                    adding = true
+                }, onCard = true, enabled = ready, chevron = false)
+            },
+            {
+                NavRow(VisorIcons.Globe, stringResource(R.string.apps_webapp_browse), null, onClick = {
+                    browsing = true
+                    model.browse()
+                }, onCard = true, enabled = ready)
+            },
+        )
+        note?.takeIf { it != R.string.webapps_opened && !browsing }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
+        Spacer(Modifier.height(12.dp))
+        ToolsRow(model, ready)
+    }
+
+    selected?.let { app ->
+        AppSheet(
+            app, model, ready,
+            onRemove = {
+                selected = null
+                removing = app
+            },
+            onDismiss = {
+                selected = null
+                model.clearProblem()
+            },
+        )
+    }
+    if (browsing) {
+        VisorSheet({ browsing = false }, full = true) {
+            SheetTitle(stringResource(R.string.apps_webapp_browse))
+            when (val c = catalogue) {
+                CatalogueState.Loading -> Spinner(Modifier.padding(SIDE).padding(top = 16.dp))
+                CatalogueState.Failed -> {
+                    Text(stringResource(R.string.webapps_catalogue_failed), style = Visor.type.label, color = Visor.colors.signal, modifier = Modifier.padding(horizontal = SIDE))
+                    ActionPill(stringResource(R.string.try_again), model::browse, Modifier.padding(start = SIDE, top = 12.dp), quiet = true)
                 }
-            }
-            Column {
-                Rows(
-                    *apps.map { app ->
-                        @Composable {
-                            val origin = WebAppBluetooth.originOf(app.url)
-                            val held = origin?.let { access[it] }.orEmpty()
-                            val summary = when {
-                                held.isNotEmpty() -> stringResource(R.string.webapps_summary_visor, scopeList(held))
-                                origin != null && origin in scanning -> stringResource(R.string.webapps_summary_bluetooth)
-                                else -> null
-                            }
-                            RowFrame(app.name, onClick = { selected = app }, sub = listOfNotNull(app.url, summary).joinToString(" · ")) {
-                                ActionPill(
-                                    stringResource(R.string.webapps_open), { model.open(app) }, quiet = true,
-                                    modifier = Modifier.padding(start = 12.dp), enabled = ready,
-                                )
+                is CatalogueState.Loaded -> if (c.apps.isEmpty()) {
+                    Text(stringResource(R.string.webapps_catalogue_none), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE))
+                } else {
+                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                        Rows(c.apps) { app ->
+                            val on = apps.any { it.url == app.url }
+                            RowFrame(app.name, onClick = null, sub = app.url, value = if (on) stringResource(R.string.webapps_on_glasses) else null) {
+                                if (!on) ActionPill(stringResource(R.string.webapps_add), { model.addFromCatalogue(app) }, quiet = true, modifier = Modifier.padding(start = 12.dp))
                             }
                         }
-                    }.toTypedArray(),
-                    {
-                        ValueRow(stringResource(R.string.webapps_add), null, onClick = {
-                            model.clearNote()
-                            adding = true
-                        }, locked = !ready)
-                    },
-                    { ValueRow(stringResource(R.string.webapps_browse), null, onClick = { browsing = true; model.browse() }, locked = !ready) },
-                )
-                note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
-                if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
+                    }
+                }
             }
+            note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
         }
-        item(key = "tools") {
-            val on by model.toolsOn.collectAsStateWithLifecycle()
-            val saving by model.toolsSaving.collectAsStateWithLifecycle()
-            val busy by model.configBusy.collectAsStateWithLifecycle()
-            val problem by model.toolsProblem.collectAsStateWithLifecycle()
-            Column(Modifier.padding(top = 14.dp)) {
-                Rows({
-                    ToggleRow(
-                        stringResource(R.string.webapps_tools), on == true, model::setTools,
-                        sub = when {
-                            saving && busy == ConfigBusy.READING -> stringResource(R.string.webapps_saving_read)
-                            saving -> stringResource(R.string.webapps_saving_send)
-                            else -> stringResource(R.string.webapps_tools_sub)
-                        },
-                        busy = saving,
-                        locked = !ready || saving,
-                        problem = problem?.let { stringResource(R.string.webapps_bluetooth_failed, it) },
-                    )
-                })
+    }
+    if (adding) {
+        var name by remember { mutableStateOf("") }
+        var url by remember { mutableStateOf("https://") }
+        VisorSheet({ adding = false }) {
+            SheetTitle(stringResource(R.string.apps_webapp_add))
+            SheetField(name, { name = it }, hint = stringResource(R.string.webapps_name), focus = true)
+            Spacer(Modifier.height(10.dp))
+            SheetField(url, { url = it }, hint = stringResource(R.string.webapps_url), keyboard = KeyboardType.Uri)
+            Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
+                ActionPill(stringResource(R.string.settings_save), {
+                    model.add(name.trim(), url.trim())
+                    adding = false
+                }, enabled = Uri.parse(url.trim()).let { it.scheme == "https" && !it.host.isNullOrEmpty() })
             }
         }
     }
+    removing?.let { app ->
+        ConfirmSheet(app.name, app.url, stringResource(R.string.webapps_remove), onConfirm = { model.remove(app) }, onDismiss = { removing = null })
+    }
+}
+
+/** A web app on the glasses: a globe where a phone app has its icon, its address and what it holds, and Open. */
+@Composable
+private fun WebAppRow(app: WebApp, sub: String, ready: Boolean, onClick: () -> Unit, onOpen: () -> Unit) {
+    val colors = Visor.colors
+    Row(
+        Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(colors.control), contentAlignment = Alignment.Center) {
+            Icon(VisorIcons.Globe, null, Modifier.size(20.dp), tint = colors.textPrimary)
+        }
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(app.name, style = Visor.type.body, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sub, style = Visor.type.label, color = colors.textSecondary, maxLines = lineLimit(2), overflow = TextOverflow.Ellipsis)
+        }
+        ActionPill(stringResource(R.string.webapps_open), onOpen, Modifier.padding(start = 12.dp), quiet = true, enabled = ready)
+    }
+}
+
+/** Whether web apps open on the glasses may give the assistant tools. A change writes the glasses' configuration. */
+@Composable
+private fun ToolsRow(model: WebAppsModel, ready: Boolean) {
+    val on by model.toolsOn.collectAsStateWithLifecycle()
+    val saving by model.toolsSaving.collectAsStateWithLifecycle()
+    val busy by model.configBusy.collectAsStateWithLifecycle()
+    val problem by model.toolsProblem.collectAsStateWithLifecycle()
+    Rows({
+        ToggleRow(
+            stringResource(R.string.webapps_tools), on == true, model::setTools,
+            sub = when {
+                saving && busy == ConfigBusy.READING -> stringResource(R.string.webapps_saving_read)
+                saving -> stringResource(R.string.webapps_saving_send)
+                else -> stringResource(R.string.webapps_tools_sub)
+            },
+            busy = saving,
+            locked = !ready || saving,
+            problem = problem?.let { stringResource(R.string.webapps_bluetooth_failed, it) },
+        )
+    })
 }
 
 /**
@@ -359,7 +389,6 @@ private fun AppSheet(app: WebApp, model: WebAppsModel, ready: Boolean, onRemove:
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             ToggleRow(
                 stringResource(R.string.webapps_bluetooth), scan || scopes.isNotEmpty(), { scan = it },
-                sub = stringResource(R.string.webapps_bluetooth_sub),
                 // Visor access travels over the scans, so they stay on with it.
                 locked = scopes.isNotEmpty() || saving,
             )
@@ -367,12 +396,11 @@ private fun AppSheet(app: WebApp, model: WebAppsModel, ready: Boolean, onRemove:
             // Raw DataX stays with Developer mode's own clients.
             for (s in KitConsentActivity.KNOWN - Scope.RAW) {
                 ToggleRow(
-                    stringResource(KitConsentActivity.SCOPE_TEXT.getValue(s)), s in scopes,
+                    KitConsentActivity.SCOPE_NAME[s]?.let { stringResource(it) } ?: s.id, s in scopes,
                     { scopes = if (it) scopes + s else scopes - s },
                     locked = saving,
                 )
             }
-            Footnote(stringResource(R.string.webapps_access_note))
         }
         if (saving) {
             Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 12.dp)) {

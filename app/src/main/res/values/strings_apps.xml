@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apps_title">Apps</string>
+    <string name="apps_sum_none">None yet</string>
+    <plurals name="apps_count">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
+    <plurals name="apps_webapps_count">
+        <item quantity="one">%d web app</item>
+        <item quantity="other">%d web apps</item>
+    </plurals>
+    <plurals name="apps_programs_count">
+        <item quantity="one">%d program</item>
+        <item quantity="other">%d programs</item>
+    </plurals>
+    <string name="apps_on_phone">On this phone</string>
+    <string name="apps_empty_title">No app uses your glasses yet</string>
+    <string name="apps_webapp_add">Add a web app</string>
+    <string name="apps_webapp_browse">Browse Meta\'s web apps</string>
+    <string name="apps_display">On the Display</string>
+    <string name="apps_developers">Developers</string>
+    <string name="apps_build">Build for your glasses</string>
+    <string name="apps_sheet_none">It may do nothing now.</string>
+    <string name="apps_done">Done</string>
+    <string name="search_words_apps">vdk,developers,developer mode,kit,network,mcp,agents,programs,permissions,access,token</string>
+</resources>
