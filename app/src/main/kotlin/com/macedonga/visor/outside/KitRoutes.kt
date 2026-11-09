@@ -28,6 +28,7 @@ import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
 import com.macedonga.visor.core.connection.parseBuild
 import com.macedonga.visor.core.connection.productId
+import com.macedonga.visor.core.connection.productName
 import com.macedonga.visor.core.identity.look.GlassesLook as MetaLook
 import com.macedonga.visor.core.media.Capture as GlassesCapture
 import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
@@ -302,14 +303,16 @@ class KitRoutes @Inject constructor(
         val target = state.target ?: return GlassesStatus(paired = false, link = Link.DISCONNECTED)
         val device = state.device
         val battery = device?.battery
+        val product = productId(state.info?.build) ?: lastSeen.product.value
         return GlassesStatus(
             paired = true,
             link = kitLink(state.link),
-            model = state.info?.model?.ifEmpty { null },
+            // The name Meta sells it under; the codename the glasses give only for a model with none known.
+            model = productName(product) ?: state.info?.model?.ifEmpty { null },
             name = lastSeen.seen.value[target.serial]?.name,
             serial = target.serial,
             firmware = parseBuild(state.info?.build)?.firmware?.ifEmpty { null },
-            display = (productId(state.info?.build) ?: lastSeen.product.value)?.let(::isDisplayProduct),
+            display = product?.let(::isDisplayProduct),
             battery = battery?.percent?.toInt(),
             charging = battery?.charging,
             worn = device?.worn,

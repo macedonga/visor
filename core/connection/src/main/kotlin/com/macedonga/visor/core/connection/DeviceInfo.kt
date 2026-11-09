@@ -46,6 +46,16 @@ private val DISPLAY_PRODUCTS = setOf(259, 270, 271)
 
 fun isDisplayProduct(product: Int?): Boolean = product in DISPLAY_PRODUCTS
 
+/** The name Meta sells a model under, for the product ids Visor has seen named; null for the others. */
+fun productName(product: Int?): String? = when {
+    product == 257 -> "Ray-Ban Stories"
+    isDisplayProduct(product) -> "Meta Ray-Ban Display"
+    product == 264 -> "Oakley Meta Vanguard"
+    product == 265 -> "Oakley Meta HSTN"
+    product == 266 -> "Ray-Ban Meta (Gen 2)"
+    else -> null
+}
+
 /** Whether a build fingerprint is a Meta Ray-Ban Display's. */
 fun isDisplayBuild(build: String?): Boolean = isDisplayProduct(productId(build))
 

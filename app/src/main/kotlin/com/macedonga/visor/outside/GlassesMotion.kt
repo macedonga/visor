@@ -44,7 +44,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  * screen. The svc28 SNIntent starts the daemon; CONFIGURE turns on the accelerometer, gyroscope and magnetometer
  * through Android's sensor API; START_RECORDING runs them; SUBSCRIBE_STREAM sends a SensorDataBatch every 100 ms.
  * Every app shares one stream at the first app's rate. It starts again when the glasses' link comes back, and the last
- * app leaving stops it and deletes what the daemon kept on the glasses. Measured on the Display, 2026-11-08.
+ * app leaving stops it and deletes what the daemon kept on the glasses. Measured on the Display, 2026-11-08, and on
+ * Ray-Ban Meta (Gen 2), which sends no magnetometer, 2026-11-09.
  * The same daemon speaks text in the glasses' voice, unasked: [say].
  */
 @Singleton
