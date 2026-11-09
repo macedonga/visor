@@ -82,7 +82,8 @@ class GlassesEars(
     /**
      * One chunk from the glasses' s0 stream, repeated records of either `[u32 LE len][u32 LE ms][u32 BE opus len]
      * [u32 BE range][opus]` (a follow-up) or `[u32 BE len][opus]` (the question itself, as the glasses send it in Italian,
-     * with no time: each packet's own length is counted).
+     * with no time: each packet's own length is counted). Audio-only glasses group their packets: `[u32 LE len][u32 LE ms]
+     * [5 bytes]`, then `[u32 LE opus len][opus]` up to len (#80).
      */
     fun hear(chunk: ByteArray) {
         if (!accepting) return
@@ -102,27 +103,50 @@ class GlassesEars(
             return
         }
         while (b.remaining() >= 16) {
+            val at = b.position()
             b.order(ByteOrder.LITTLE_ENDIAN)
-            b.int
+            val len = b.int
             val ms = b.int.toLong() and 0xFFFFFFFFL
             b.order(ByteOrder.BIG_ENDIAN)
             val opusLen = b.int
             b.int
-            if (opusLen <= 0 || opusLen > b.remaining()) {
+            if (opusLen in 1..b.remaining()) {
+                val packet = ByteArray(opusLen).also { b.get(it) }
+                clockMs = ms
+                decode(packet, ms)
+            } else if (!grouped(b, at, len, ms)) {
                 if (odd == null) odd = chunk
                 return
             }
-            val packet = ByteArray(opusLen).also { b.get(it) }
-            clockMs = ms
-            decode(packet, ms)
         }
+    }
+
+    /** A grouped record starting at [at]; false unless its packets fill it exactly. */
+    private fun grouped(b: ByteBuffer, at: Int, len: Int, ms: Long): Boolean {
+        val end = at + 4 + len
+        if (len < GROUP_HEAD + 5 || end > b.limit()) return false
+        b.order(ByteOrder.LITTLE_ENDIAN).position(at + 4 + GROUP_HEAD)
+        val packets = ArrayList<ByteArray>()
+        while (b.position() + 4 <= end) {
+            val n = b.int
+            if (n <= 0 || n > end - b.position()) return false
+            packets += ByteArray(n).also { b.get(it) }
+        }
+        if (b.position() != end) return false
+        var t = ms
+        for (packet in packets) {
+            clockMs = t
+            decode(packet, t)
+            t += opusDurationUs(packet) / 1000
+        }
+        return true
     }
 
     /** The stream ended: what is queued still goes to the recogniser, then it hears the end and gives its result. */
     fun finish() {
         if (!accepting) return
         accepting = false
-        odd?.let { c -> onProblem("a microphone chunk did not parse: " + c.toHexString(0, minOf(32, c.size))) }
+        odd?.let { c -> onProblem("a microphone chunk of ${c.size} bytes did not parse: " + c.toHexString(0, minOf(64, c.size))) }
         queue.offer(END)
     }
 
@@ -294,6 +318,8 @@ class GlassesEars(
 
     private companion object {
         const val RATE = 16_000
+        // A grouped record's head after its length: the time and five bytes not decoded yet.
+        const val GROUP_HEAD = 9
         const val RESTARTS = 5
         const val RESTART_WINDOW_MS = 5_000L
         val END = ShortArray(0)
