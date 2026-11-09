@@ -1108,6 +1108,8 @@
     <string name="band_left">Left</string>
     <string name="band_right">Right</string>
     <string name="band_vibrate">Vibrate</string>
+    <string name="band_share">Share with the phone</string>
+    <string name="band_share_sub">The band stays connected to the phone, and the Display reaches it through the phone. Apps get its gestures and vibrate it at once.</string>
     <string name="band_not_changed">Not changed</string>
     <string name="band_refused">Refused</string>
     <string name="band_glasses">Glasses</string>

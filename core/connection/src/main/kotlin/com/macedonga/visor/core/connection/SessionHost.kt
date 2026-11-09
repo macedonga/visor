@@ -3,6 +3,7 @@ package com.macedonga.visor.core.connection
 import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.LinkMove
+import com.macedonga.visor.core.session.SecureLink
 import com.macedonga.visor.core.session.SessionEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -21,6 +22,9 @@ interface SessionHost {
 
     /** What the glasses sent in the link handshake, or null before the link is up. */
     val handshake: String?
+
+    /** The session's secure link, for a relay to carry sub-streams on; null before it is up or for a session without one. */
+    val link: SecureLink? get() = null
 
     fun start(scope: CoroutineScope)
 

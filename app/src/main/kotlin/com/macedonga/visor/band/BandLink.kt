@@ -22,6 +22,7 @@ import com.macedonga.visor.core.session.ProtocolError
 import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
+import com.macedonga.visor.core.session.SubstreamRelay
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.dat.ToolkitStore
 import com.macedonga.visor.log.EventLog
@@ -36,15 +37,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -70,7 +74,10 @@ data class BandState(
 /** How an errand on the band ended. */
 enum class BandErrand { DONE, NO_ANSWER, NOT_CHANGED, REFUSED }
 
-/** The phone's link to the Neural Band (svc52822), taken from the Display only for a lesson, a pairing, an update or one errand. */
+/**
+ * The phone's link to the Neural Band (svc52822), taken from the Display for a lesson, a pairing, an update or one
+ * errand, or kept while the band is shared: then the Display reaches the band through the phone's relay.
+ */
 @Singleton
 class BandLink @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -98,6 +105,11 @@ class BandLink @Inject constructor(
     private val errands = MutableStateFlow(0)
     private val updating = MutableStateFlow(false)
     private val pairing = MutableStateFlow(false)
+    private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val sharing = MutableStateFlow(prefs.getBoolean(SHARE_KEY, false))
+
+    /** True while the band stays on the phone and the Display reaches it through the relay. */
+    val shared: StateFlow<Boolean> = sharing.asStateFlow()
     private val _peer = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 16)
     /** What the band says on svc41109, its messages and its error frames. */
     val peer: SharedFlow<SessionEvent> = _peer
@@ -116,10 +128,23 @@ class BandLink @Inject constructor(
         scope.launch {
             // A lesson or an errand takes the band from the Display; when it ends, the band goes back. Never otherwise:
             // the Display reaches the band on its own, and a phone holding it while the Display restarts keeps it off.
-            val wanted = combine(lessons, errands, updating, pairing) { learning, errand, update, pair -> learning > 0 || errand > 0 || update || pair }
+            val wanted = combine(lessons, errands, updating, pairing, sharing) { learning, errand, update, pair, share ->
+                learning > 0 || errand > 0 || update || pair || share
+            }
             combine(connection.running, connection.pair, bands.all, wanted, held) { running, pair, all, want, hold ->
                 pair?.let { p -> all.firstOrNull { it.glasses == p } }?.takeIf { running && hold && want }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
+        }
+        // While shared, the Display's link and the band's are joined whenever both are up.
+        scope.launch {
+            combine(sharing, _state.map { it.link }, connection.state.map { it.link }) { share, band, glasses ->
+                share && band == LinkState.READY && glasses == LinkState.READY
+            }.distinctUntilChanged().collectLatest { up ->
+                val display = connection.link
+                val band = session?.link
+                if (!up || display == null || band == null) return@collectLatest
+                coroutineScope { SubstreamRelay(display, band) { log.add(it) }.start(this) }
+            }
         }
         // A band given back while the glasses' link was down goes back once it is up again.
         scope.launch {
@@ -137,6 +162,16 @@ class BandLink @Inject constructor(
 
     fun hold() {
         held.value = true
+    }
+
+    /**
+     * Shares the band between the phone and the Display, or stops: shared, the band stays on the phone, where apps get
+     * its gestures and buzz it at once, and the Display reaches it through the phone as on Meta's relay lease.
+     */
+    fun share(on: Boolean) {
+        prefs.edit().putBoolean(SHARE_KEY, on).apply()
+        if (sharing.value != on) log.add(if (on) "Band: shared with the Display through the phone" else "Band: no longer shared")
+        sharing.value = on
     }
 
     /** Holds the band for [block], which needs it for minutes, then gives it back. */
@@ -495,6 +530,8 @@ class BandLink @Inject constructor(
     }
 
     private companion object {
+        const val PREFS = "band"
+        const val SHARE_KEY = "share_with_display"
         val MANIFEST_SERVICES = listOf(102, ConstellationManifest.SERVICE)
         const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L

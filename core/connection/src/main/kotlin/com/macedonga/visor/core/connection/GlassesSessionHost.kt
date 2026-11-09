@@ -7,6 +7,7 @@ import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.GlassesSession
 import com.macedonga.visor.core.session.LinkMove
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.core.session.SecureLink
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
 import com.macedonga.visor.core.session.TrustExchange
@@ -29,6 +30,7 @@ class GlassesSessionHost(
     override val credentialReceived: Boolean get() = session.trustResult?.rxOk == true
 
     override val handshake: String? get() = session.handshake
+    override val link: SecureLink? get() = session.link
 
     override fun start(scope: CoroutineScope) = session.start(scope)
 

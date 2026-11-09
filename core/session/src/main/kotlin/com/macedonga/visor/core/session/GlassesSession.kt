@@ -104,6 +104,9 @@ class GlassesSession(
     /** The handshake line of the current attempt, once its link is up. */
     val handshake: String? get() = secureLink?.handshake
 
+    /** The link of the attempt under way, for a relay to borrow its sub-streams. */
+    val link: SecureLink? get() = secureLink
+
     // The attempt's scope, which the link pumps run in, and the main link's pump.
     @Volatile
     private var attempt: CoroutineScope? = null

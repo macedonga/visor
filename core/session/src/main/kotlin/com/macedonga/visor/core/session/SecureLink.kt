@@ -57,6 +57,17 @@ class SecureLink(private val transport: Transport) {
     var handshake: String = ""
         private set
 
+    /** The AirShield version of the peer's RequestEncryption; 0 until [open] succeeds. */
+    var peerAirshieldVersion: Int = 0
+        private set
+
+    /**
+     * Takes the frames of relay sub-streams (ids 1 to 63) whole, header byte included: they belong to a session the
+     * peer runs with another device through this phone, which this link neither seals nor reads. Null drops them.
+     */
+    @Volatile
+    var substreams: ((ByteArray) -> Unit)? = null
+
     /** DATA frames [open] queued; [receive] unseals these first. */
     private var handshakeQueued = 0
 
@@ -136,6 +147,7 @@ class SecureLink(private val transport: Transport) {
         rxCrypto = FrameCrypto(rxKeys, enable.base.toInt(), quirks = enable.quirks)
         txCrypto = FrameCrypto(txKeys, mySeq.toInt(), quirks = request.quirks)
         handshake = describe(request, enable, multikey)
+        peerAirshieldVersion = request.airshieldVersion
 
         // EndLinkSetup is NOT sent here.
     }
@@ -171,6 +183,11 @@ class SecureLink(private val transport: Transport) {
 
     suspend fun send(plaintext: ByteArray) = sealAndSend(plaintext)
 
+    /** Send a relay sub-stream frame as it is, between whole messages of this link's own stream. */
+    suspend fun sendRaw(sdu: ByteArray) {
+        txMutex.withLock { withContext(NonCancellable) { txTransport.send(sdu) } }
+    }
+
     // Where sealed frames go: this link's transport, or another link's after a switch.
     @Volatile
     private var txTransport: Transport = transport
@@ -187,6 +204,10 @@ class SecureLink(private val transport: Transport) {
     fun open(sdu: ByteArray): ByteArray? {
         val crypto = checkNotNull(rxCrypto) { "link not open" }
         val frame = Framing.unpack(sdu)
+        if (frame.streamId != 0) {
+            substreams?.invoke(sdu)
+            return null
+        }
         if (frame.type != FrameType.DATA.value) {
             lastCommand = frame.body.firstOrNull()?.toInt()?.and(0xFF)
             return null

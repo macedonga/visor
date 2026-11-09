@@ -34,6 +34,7 @@ import com.macedonga.visor.core.media.CaptureType as GlassesCaptureType
 import com.macedonga.visor.core.media.Kept
 import com.macedonga.visor.core.media.LiveStream
 import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.protocol.Band
 import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.LinkState
@@ -82,6 +83,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -90,6 +92,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -186,7 +189,7 @@ class KitRoutes @Inject constructor(
         answer(Methods.BAND_STATUS) { _, _ -> bandStatus(band.state.value) }
         // The Display reports the band it holds in its device state, so that changes the answer too.
         stream(Topics.BAND_STATUS) { _, _ ->
-            combine(connection.pair, bands.all, band.state, connection.state) { _, _, state, _ -> bandStatus(state) }.distinctUntilChanged()
+            combine(connection.pair, bands.all, band.state, connection.state, band.shared) { _, _, state, _, _ -> bandStatus(state) }.distinctUntilChanged()
         }
         stream(Topics.BAND_GESTURES) { caller, _ -> gestures(caller.packageName) }
         answer(Methods.BAND_BUZZ) { _, request ->
@@ -525,18 +528,44 @@ class KitRoutes @Inject constructor(
             leftHanded = state.leftHanded.takeIf { held },
             borrowed = held && state.gestures,
             held = held,
+            shared = held && band.shared.value,
         )
     }
 
-    /** The band's gestures while collected: the band is borrowed from the Display for as long as that lasts. */
-    // The band stays on the Display: its gestures come forwarded through a toolkit session, which needs no toolkit app.
-    private fun gestures(app: String): Flow<Gesture> = flow {
-        // Any band the Display holds will do: the session needs none of the band's keys.
-        if (!paired() && connection.state.value.device?.bandBattery == null) {
-            throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+    /**
+     * The band's gestures while collected. A shared band gives them straight from its link, which the phone holds
+     * anyway. Otherwise the band stays on the Display and its gestures come forwarded through a toolkit session, which
+     * needs no toolkit app. A change of sharing moves the collection over.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun gestures(app: String): Flow<Gesture> = band.shared.flatMapLatest { shared ->
+        if (shared && paired()) {
+            flow {
+                band.startLesson()
+                try {
+                    emitAll(band.gestures.map(::bandGesture))
+                } finally {
+                    band.endLesson()
+                }
+            }
+        } else {
+            flow {
+                // Any band the Display holds will do: the session needs none of the band's keys.
+                if (!paired() && connection.state.value.device?.bandBattery == null) {
+                    throw KitException(ErrorCode.UNSUPPORTED, "No Neural Band is paired with these glasses.")
+                }
+                emitAll(toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.map(::kitGesture))
+            }
         }
-        emitAll(toolkit.inputs(app).filter { it.source == Dat.INPUT_EMG }.map(::kitGesture))
     }
+
+    // A gesture as the band sent it: the finger, its own event and what it made of it (Band.Gesture's codes).
+    private fun bandGesture(g: Band.Gesture) = Gesture(
+        finger = BAND_FINGERS[g.finger] ?: Finger("unknown"),
+        action = BAND_ACTIONS[g.action] ?: GestureAction.UNKNOWN,
+        derived = BAND_DERIVED[g.derived],
+        time = System.currentTimeMillis(),
+    )
 
     // A touchpad or band gesture forwarded by a toolkit session, as DAT names them.
     private fun sessionInput(input: Dat.SessionInput): GlassesInput? = GlassesInput(
@@ -607,6 +636,15 @@ class KitRoutes @Inject constructor(
         val NAV_ACTIONS = setOf(InputAction.NAV_UP, InputAction.NAV_DOWN, InputAction.NAV_LEFT, InputAction.NAV_RIGHT)
         val NAV_DIRECTIONS = mapOf(1 to InputAction.NAV_UP, 2 to InputAction.NAV_DOWN, 3 to InputAction.NAV_LEFT, 4 to InputAction.NAV_RIGHT)
         val DRAG_ACTIONS = mapOf(1 to InputAction.DRAG_START, 2 to InputAction.DRAG_MOVE, 3 to InputAction.DRAG_END)
+        val BAND_FINGERS = mapOf(1 to Finger.THUMB, 2 to Finger.INDEX, 3 to Finger.MIDDLE)
+        val BAND_ACTIONS = mapOf(
+            1 to GestureAction.PRESS, 2 to GestureAction.RELEASE, 3 to GestureAction.TAP, 4 to GestureAction.DOUBLE_TAP,
+            5 to GestureAction.CLICK, 6 to GestureAction.UP, 7 to GestureAction.DOWN, 8 to GestureAction.LEFT, 9 to GestureAction.RIGHT,
+        )
+        val BAND_DERIVED = mapOf(
+            1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction.HOLD, 4 to GestureAction.RELEASE,
+            5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,
+        )
         val SESSION_GESTURES = mapOf(
             1 to GestureAction.TAP, 2 to GestureAction.DOUBLE_TAP, 3 to GestureAction("triple_tap"), 4 to GestureAction.HOLD,
             5 to GestureAction.UP, 6 to GestureAction.DOWN, 7 to GestureAction.LEFT, 8 to GestureAction.RIGHT,

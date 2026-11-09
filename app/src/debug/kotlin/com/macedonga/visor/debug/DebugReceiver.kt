@@ -18,6 +18,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Base64
 import android.util.Log
+import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.connection.ClassicBond
 import com.macedonga.visor.connection.GlassesService
@@ -159,6 +160,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var wifiLink: WifiLink
     @Inject lateinit var hearing: Hearing
     @Inject lateinit var bandPair: BandPair
+    @Inject lateinit var bandLink: BandLink
     @Inject lateinit var classicBond: ClassicBond
     @Inject lateinit var albums: Albums
     @Inject lateinit var library: PhoneLibrary
@@ -661,6 +663,11 @@ class DebugReceiver : BroadcastReceiver() {
                 resultData = "started; BAND_PAIR_STATUS for how it ended, LOG for the steps"
             }
             "BAND_PAIR_STATUS" -> resultData = bandPair.status.value.toString()
+            // Shares the band with the Display through the phone's relay (--ez on false stops); LOG has the relay's steps.
+            "BAND_SHARE" -> {
+                bandLink.share(intent.getBooleanExtra("on", true))
+                resultData = "shared=${bandLink.shared.value} band=${bandLink.state.value.link}"
+            }
             // The strongest BLE advertisers heard in --ei ms (10 s by default), each with its manufacturer data by company id.
             "BLE_SCAN" -> answerLater { bleScan(context, intent.getIntExtra("ms", 10_000).toLong()) }
             // A Display's classic bond for calls: CLASSIC_PROBE only reads. CLASSIC_REBOND and CLASSIC_UNDO unpair the glasses

@@ -26,6 +26,7 @@ internal fun BandPart(model: SettingsViewModel) {
     val all by model.bands.all.collectAsStateWithLifecycle()
     val pair by model.connection.pair.collectAsStateWithLifecycle()
     val own by model.band.state.collectAsStateWithLifecycle()
+    val shared by model.band.shared.collectAsStateWithLifecycle()
     val ready = glasses.link == LinkState.READY
     LaunchedEffect(ready) { if (ready) model.bandPeers.refresh() }
     val device = glasses.device
@@ -97,6 +98,12 @@ internal fun BandPart(model: SettingsViewModel) {
                 },
                 busy = wristBusy,
                 problem = errandProblem(wristOutcome),
+            )
+        } else null,
+        if (owned) row {
+            ToggleRow(
+                stringResource(R.string.band_share), shared, model.band::share,
+                sub = stringResource(R.string.band_share_sub),
             )
         } else null,
         if (owned) row {

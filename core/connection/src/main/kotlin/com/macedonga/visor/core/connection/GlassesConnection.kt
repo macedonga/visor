@@ -15,6 +15,7 @@ import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.LinkStateChanged
 import com.macedonga.visor.core.session.ProtocolError
 import com.macedonga.visor.core.session.ServiceData
+import com.macedonga.visor.core.session.SecureLink
 import com.macedonga.visor.core.session.SessionEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -240,6 +241,9 @@ class GlassesConnection(
 
     /** The current session's link handshake line, for the event log. */
     val handshake: String? get() = host?.handshake
+
+    /** The current session's secure link, while it has one. */
+    val link: SecureLink? get() = host?.link
 
     /** Run [work] on the session with its mux: queued until READY while it reconnects, dropped when there is no session. */
     fun submit(work: suspend (DataXConnection) -> Unit) {
