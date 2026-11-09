@@ -27,6 +27,7 @@ import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.connection.AddResult
 import com.macedonga.visor.connection.WebApp
+import com.macedonga.visor.connection.WebAppBluetooth
 import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.design.Visor
@@ -54,8 +55,30 @@ class WebAppsModel @Inject constructor(
     private val webApps: WebApps,
     val connection: GlassesConnection,
     private val login: MetaLogin,
+    private val bluetooth: WebAppBluetooth,
 ) : ViewModel() {
     val apps: StateFlow<List<WebApp>> = webApps.apps
+
+    /** The origins allowed to scan for Bluetooth devices. */
+    val bluetoothOrigins: StateFlow<Set<String>> = bluetooth.allowed
+
+    // The origin whose Bluetooth choice is on its way to the glasses, and why the last one did not get there.
+    private val _bluetoothBusy = MutableStateFlow<String?>(null)
+    val bluetoothBusy: StateFlow<String?> = _bluetoothBusy.asStateFlow()
+    private val _bluetoothProblem = MutableStateFlow<Pair<String, String>?>(null)
+    val bluetoothProblem: StateFlow<Pair<String, String>?> = _bluetoothProblem.asStateFlow()
+
+    fun setBluetooth(app: WebApp, on: Boolean) {
+        val origin = WebAppBluetooth.originOf(app.url) ?: return
+        if (_bluetoothBusy.value != null) return
+        _bluetoothBusy.value = origin
+        _bluetoothProblem.value = null
+        viewModelScope.launch {
+            val why = bluetooth.allow(app.url, on)
+            _bluetoothProblem.value = why?.let { origin to it }
+            _bluetoothBusy.value = null
+        }
+    }
 
     // The words for what the last action came to, as a string id.
     private val _note = MutableStateFlow<Int?>(null)
@@ -210,6 +233,29 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                 )
                 note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
                 if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
+            }
+        }
+        if (apps.isNotEmpty()) item(key = "bluetooth") {
+            val allowed by model.bluetoothOrigins.collectAsStateWithLifecycle()
+            val busy by model.bluetoothBusy.collectAsStateWithLifecycle()
+            val problem by model.bluetoothProblem.collectAsStateWithLifecycle()
+            Column {
+                SectionLabel(stringResource(R.string.webapps_bluetooth))
+                Rows(
+                    *apps.map { app ->
+                        @Composable {
+                            val origin = WebAppBluetooth.originOf(app.url)
+                            ToggleRow(
+                                app.name, origin != null && origin in allowed, { on -> model.setBluetooth(app, on) },
+                                sub = origin,
+                                busy = origin != null && busy == origin,
+                                locked = origin == null || !ready,
+                                problem = problem?.takeIf { it.first == origin }?.second?.let { stringResource(R.string.webapps_bluetooth_failed, it) },
+                            )
+                        }
+                    }.toTypedArray(),
+                )
+                Footnote(stringResource(R.string.webapps_bluetooth_note))
             }
         }
     }

@@ -8,6 +8,9 @@
     <string name="webapps_name">Name</string>
     <string name="webapps_url">Address (https)</string>
     <string name="webapps_none">No web apps</string>
+    <string name="webapps_bluetooth">Nearby Bluetooth devices</string>
+    <string name="webapps_bluetooth_failed">Could not change it: %1$s</string>
+    <string name="webapps_bluetooth_note">An app turned on here may look for Bluetooth devices around you through the phone, while it is open on the glasses. Changing it writes the glasses\' configuration, which reads it first the first time: that can take a minute.</string>
     <string name="webapps_browse">Browse</string>
     <string name="webapps_on_glasses">On the glasses</string>
     <string name="webapps_catalogue_failed">Could not load the catalogue</string>

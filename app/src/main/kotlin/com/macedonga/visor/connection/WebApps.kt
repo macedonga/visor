@@ -49,6 +49,7 @@ class WebApps @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: Provider<GlassesConnection>,
     private val settings: Provider<GlassesSettings>,
+    private val scans: WebBleScans,
     private val log: EventLog,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -58,16 +59,23 @@ class WebApps @Inject constructor(
     private val lock = Any()
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
-        if (message.payload.isEmpty() && message.info.flags.isClosed) return
+        if (message.info.flags.isClosed) {
+            scans.stop(message.info.channelId)
+            if (message.payload.isEmpty()) return
+        }
         val reply = DataXConnection.mirror(message.info.channelId)
         val f = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
         when (message.info.messageType) {
             MT_MANAGE -> connection.send(reply, manage(f), messageType = MT_MANAGE_RESPONSE)
             MT_GET_COOKIES -> connection.send(reply, cookies(f), messageType = MT_SET_COOKIES)
-            // Visor scans for nothing: the page gets an answer with no devices.
-            MT_BLE_SCAN_START -> connection.send(reply, Wire.fieldBytes(1, f.bytes(1)), messageType = MT_BLE_SCAN_RESPONSE)
+            WebBleScans.MT_START -> scans.start(connection, message.info.channelId, message.payload)
+            WebBleScans.MT_STOP -> scans.stop(message.info.channelId)
             else -> log.add("Web apps: type ${message.info.messageType} not served")
         }
+    }
+
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        scans.stop(channelId)
     }
 
     /** Add a page, from the Display's CREATE or the Add sheet, with Meta's [manifest] (base64) for a catalogue app. */
@@ -242,8 +250,6 @@ class WebApps @Inject constructor(
         private const val MT_MANAGE_RESPONSE = 16
         private const val MT_GET_COOKIES = 11
         private const val MT_SET_COOKIES = 9
-        private const val MT_BLE_SCAN_START = 17
-        private const val MT_BLE_SCAN_RESPONSE = 20
         private const val ACTION_CREATE = 1L
         private const val ACTION_DELETE = 2L
         private const val ACTION_LIST = 3L
