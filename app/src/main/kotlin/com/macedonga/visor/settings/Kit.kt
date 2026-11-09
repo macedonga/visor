@@ -186,6 +186,9 @@ val LocalHost = staticCompositionLocalOf<PageHost> { error("no settings page abo
 /** The same host for the plain rows, which also work outside a settings page without it. */
 internal val LocalRowHost = staticCompositionLocalOf<PageHost?> { null }
 
+// Rows straight on a sheet line up with its title and answers at SIDE; on a card they keep the card's own inset.
+private val LocalOnSheet = staticCompositionLocalOf { false }
+
 /** One line at the foot of the page, for a moment. */
 class PageNotice {
     var text by mutableStateOf("")
@@ -370,10 +373,12 @@ val CARD_RADIUS = 18.dp
 /** A run of rows on a raised card. */
 @Composable
 fun Card(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(CARD_RADIUS)).background(Visor.colors.raised),
-        content = content,
-    )
+    CompositionLocalProvider(LocalOnSheet provides false) {
+        Column(
+            modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(CARD_RADIUS)).background(Visor.colors.raised),
+            content = content,
+        )
+    }
 }
 
 /** Between two rows on a card, from edge to edge. */
@@ -428,13 +433,15 @@ fun <T> LazyListScope.cardItems(items: List<T>, key: (T) -> Any, row: @Composabl
 /** A small grey heading over a card. */
 @Composable
 fun SectionLabel(text: String) {
-    Text(text, style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.asHeading().padding(start = 32.dp, end = 32.dp, top = 28.dp, bottom = 8.dp))
+    val inset = if (LocalOnSheet.current) SIDE else 32.dp
+    Text(text, style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.asHeading().padding(start = inset, end = inset, top = 28.dp, bottom = 8.dp))
 }
 
 /** A note under a card. */
 @Composable
 fun Footnote(text: String, color: Color = Visor.colors.textSecondary) {
-    Text(text, style = Visor.type.label, color = color, modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 8.dp))
+    val inset = if (LocalOnSheet.current) SIDE else 32.dp
+    Text(text, style = Visor.type.label, color = color, modifier = Modifier.padding(start = inset, end = inset, top = 8.dp))
 }
 
 /** Changed from its default. */
@@ -487,7 +494,7 @@ fun RowFrame(
         base
             .fillMaxWidth()
             .heightIn(min = if (dense) 48.dp else 56.dp)
-            .padding(horizontal = 16.dp, vertical = if (dense) 10.dp else 13.dp),
+            .padding(horizontal = if (LocalOnSheet.current) SIDE else 16.dp, vertical = if (dense) 10.dp else 13.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Row(Modifier.alpha(if (locked || dim) 0.4f else 1f), verticalAlignment = Alignment.CenterVertically) {
@@ -956,7 +963,9 @@ fun VisorSheet(onDismiss: () -> Unit, state: SheetState, content: @Composable Co
         shape = RoundedCornerShape(topStart = SHEET_RADIUS, topEnd = SHEET_RADIUS),
         dragHandle = { Box(Modifier.padding(top = 10.dp, bottom = 6.dp).size(36.dp, 4.dp).clip(RoundedCornerShape(50)).background(Visor.colors.control)) },
     ) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = 20.dp), content = content)
+        CompositionLocalProvider(LocalOnSheet provides true) {
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(bottom = 20.dp), content = content)
+        }
     }
 }
 
