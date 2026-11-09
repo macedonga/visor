@@ -8,12 +8,14 @@
 </p>
 
 <p align="center">
+  <a href="https://visor.macedonga.com"><img src="https://img.shields.io/badge/Website-visor.macedonga.com-FFD2A1?style=for-the-badge&labelColor=161617" alt="Website: visor.macedonga.com"></a>
   <a href="https://github.com/macedonga/visor/releases/latest"><img src="https://img.shields.io/github/v/release/macedonga/visor?style=for-the-badge&label=Download&color=FFD2A1&labelColor=161617&v=1" alt="Download the latest release"></a>
   <a href="https://github.com/macedonga/visor/discussions"><img src="https://img.shields.io/badge/Discussions-ask%20and%20share-FFD2A1?style=for-the-badge&labelColor=161617" alt="Discussions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-FFD2A1?style=for-the-badge&labelColor=161617" alt="License: AGPL-3.0"></a>
 </p>
 
 <p align="center">
+  <a href="https://visor.macedonga.com">Website</a> |
   <a href="#what-it-does">Features</a> |
   <a href="#install">Install</a> |
   <a href="#what-it-sends-and-where">Privacy</a> |
@@ -38,7 +40,7 @@ Visor works with Ray-Ban Meta, Oakley Meta and the other Meta glasses. It speaks
 | **Notifications** | Message notifications go to the glasses, which announce the sender by the name in your contacts. |
 | **Settings** | Every setting the glasses have, the way the Meta app shows them. Advanced holds the rest, assistant language packs and the firmware's feature flags. |
 | **Outside the app** | A home screen widget, a Quick Settings tile, launcher shortcuts, and a Live Update notification while the Live view runs. |
-| **Developer mode** | Other apps and automations can take photos and videos, import captures and hear about new ones. See [Developer mode](docs/developer-mode.md). |
+| **Developer mode** | Other apps and automations can take photos and videos, import captures and hear about new ones. See [Developer mode](https://visor.macedonga.com/developers/docs/developer-mode/). |
 | **More than one pair** | Keep several pairs on one phone. Home swipes between them, each with its name, batteries and a Connect button, and ends with a page to set up another. |
 | **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. |
 | **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. |
@@ -154,7 +156,8 @@ A tag like `v1.2.3` builds the signed release APK in CI and publishes it as a Gi
 | `core/design` | Colours and type. |
 | `app` | The service, the screens, setup, the widget and the tile. |
 
-[CLAUDE.md](CLAUDE.md) lists the protocol traps that cost the most time to find.
+[CLAUDE.md](CLAUDE.md) lists the protocol traps that cost the most time to find. The protocol itself, down to the bytes, is documented at
+[visor.macedonga.com/protocol](https://visor.macedonga.com/protocol/).
 
 </details>
 
