@@ -30,6 +30,7 @@ import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.Brain
+import com.macedonga.visor.core.assistant.ChatGptPlan
 import com.macedonga.visor.core.assistant.Diary
 import com.macedonga.visor.core.assistant.GlassesPhotos
 import com.macedonga.visor.core.assistant.Hearing
@@ -243,6 +244,10 @@ object ConnectionModule {
 
     @Provides
     @Singleton
+    fun chatGptPlan(@ApplicationContext context: Context, config: AssistantConfigStore): ChatGptPlan = ChatGptPlan(context, config)
+
+    @Provides
+    @Singleton
     fun mcpStore(@ApplicationContext context: Context): McpStore = McpStore(context)
 
     @Provides
@@ -272,8 +277,9 @@ object ConnectionModule {
         camera: AssistantCamera,
         kitVoices: KitVoices,
         kitTools: KitTools,
+        chatGpt: ChatGptPlan,
     ): Assistant = Assistant(
-        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools), config, airship, diary,
+        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools, chatGpt), config, airship, diary,
         liveSession = live.wifiSession,
         liveFrame = live::frameNow,
         camera = camera,

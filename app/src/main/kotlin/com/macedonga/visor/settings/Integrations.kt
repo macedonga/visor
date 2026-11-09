@@ -611,7 +611,7 @@ private fun firstSentences(text: String, max: Int = 160): String? {
 private fun hostOf(url: String): String = runCatching { Uri.parse(url.trim()).host.orEmpty() }.getOrDefault("").removePrefix("www.")
 
 /** The sign-in page in a Custom Tab, or in any browser there is. */
-private fun openInBrowser(context: Context, url: String) {
+internal fun openInBrowser(context: Context, url: String) {
     val uri = Uri.parse(url)
     runCatching {
         CustomTabsIntent.Builder().setShowTitle(true).setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK).build().launchUrl(context, uri)

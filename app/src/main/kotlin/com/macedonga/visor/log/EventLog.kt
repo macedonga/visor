@@ -7,6 +7,7 @@ import com.macedonga.visor.connection.DataFetcher
 import com.macedonga.visor.connection.PhoneInternet
 import com.macedonga.visor.connection.words
 import com.macedonga.visor.core.assistant.Assistant
+import com.macedonga.visor.core.assistant.ChatGptPlan
 import com.macedonga.visor.core.assistant.Hearing
 import com.macedonga.visor.core.assistant.SVC_ASSISTANT
 import com.macedonga.visor.core.assistant.Timers
@@ -92,6 +93,7 @@ class LogFeed @Inject constructor(
     hearing: Hearing,
     shutter: Shutter,
     phone: PhoneActions,
+    chatGpt: ChatGptPlan,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -130,6 +132,7 @@ class LogFeed @Inject constructor(
             "Capture: " to shutter.notes,
             "Phone: " to phone.notes,
             "Custom wake word: " to assistant.wakeWord.notes,
+            "ChatGPT: " to chatGpt.notes,
         ).forEach { (tag, notes) -> scope.launch { notes.collect { add(tag + it) } } }
     }
 

@@ -113,9 +113,7 @@ import com.macedonga.visor.connection.GLASSES_CAMERA_KEYS
 import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
-import com.macedonga.visor.core.assistant.DEFAULT_CLAUDE_MODEL
 import com.macedonga.visor.core.assistant.Hearing
-import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayProduct
@@ -689,7 +687,7 @@ internal fun assistantWords(config: AssistantConfig): String {
         !config.enabled -> stringResource(R.string.sum_ai_off)
         !configured -> stringResource(R.string.sum_ai_unset)
         else -> listOfNotNull(
-            modelWords(config.model.ifBlank { if (config.provider == Provider.CLAUDE) DEFAULT_CLAUDE_MODEL else "" }),
+            modelWords(config.answerModel),
             stringResource(R.string.sum_ai_glasses_voice).takeIf { config.tts == TtsPath.GLASSES },
         ).filter { it.isNotEmpty() }.joinToString(" · ")
     }

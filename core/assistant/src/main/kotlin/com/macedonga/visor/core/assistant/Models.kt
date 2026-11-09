@@ -23,10 +23,11 @@ class ModelsError(val refused: Boolean, message: String) : Exception(message)
 
 /**
  * The models the configured provider offers, newest first. Asking also proves the key: a refused key throws
- * [ModelsError] with [ModelsError.refused] set.
+ * [ModelsError] with [ModelsError.refused] set. The ChatGPT plan lists its own, through [plan].
  */
-suspend fun listModels(config: AssistantConfig): List<ModelInfo> = withContext(Dispatchers.IO) {
+suspend fun listModels(config: AssistantConfig, plan: ChatGptPlan? = null): List<ModelInfo> = withContext(Dispatchers.IO) {
     when (config.provider) {
+        Provider.CHATGPT -> checkNotNull(plan) { "no ChatGPT sign-in" }.models()
         Provider.CLAUDE -> {
             val headers = anthropicHeaders(config.apiKey)
             val all = mutableListOf<ModelInfo>()
@@ -41,8 +42,8 @@ suspend fun listModels(config: AssistantConfig): List<ModelInfo> = withContext(D
             } while (after != null)
             all
         }
-        Provider.OPENAI_COMPATIBLE -> {
-            val page = get(config.baseUrl.trimEnd('/') + "/models", bearerHeaders(config.apiKey))
+        else -> {
+            val page = get(config.api.trimEnd('/') + "/models", bearerHeaders(config.apiKey))
             val data = page.optJSONArray("data") ?: JSONArray()
             data.objects().map { m -> ModelInfo(m.getString("id"), m.getString("id"), m.optLong("created")) }
         }

@@ -4,7 +4,6 @@ import android.content.Context
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.AssistantConfig
 import com.macedonga.visor.core.assistant.AssistantConfigStore
-import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.assistant.TtsPath
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.settings.GlassesSettings
@@ -153,10 +152,10 @@ class VisorToggles @Inject constructor(
         VisorToggle("phone_steady", R.string.phone_steady, null, Topic.CAMERA, steady.on, steady::set),
     )
 
-    /** The switches the chosen provider has no use for: web search is Claude's alone. */
+    /** The switches the chosen provider has no use for: a server Visor does not know has no web search it can ask for. */
     val unoffered: StateFlow<Set<String>> = assistant.config.map(::unofferedOf).stateIn(scope, SharingStarted.Eagerly, unofferedOf(assistant.config.value))
 
-    private fun unofferedOf(c: AssistantConfig): Set<String> = if (c.provider == Provider.CLAUDE) emptySet() else setOf("web")
+    private fun unofferedOf(c: AssistantConfig): Set<String> = if (c.provider.search != null) emptySet() else setOf("web")
 
     fun byId(id: String): VisorToggle? = all.firstOrNull { it.id == id }
 }

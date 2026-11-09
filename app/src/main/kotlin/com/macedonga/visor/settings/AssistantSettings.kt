@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import com.macedonga.visor.IntegrationsKey
@@ -44,7 +46,7 @@ import com.macedonga.visor.core.assistant.ANSWER_WAITS
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.assistant.AssistantPhase
-import com.macedonga.visor.core.assistant.DEFAULT_CLAUDE_MODEL
+import com.macedonga.visor.core.assistant.ChatGptPlan
 import com.macedonga.visor.core.assistant.ModelInfo
 import com.macedonga.visor.core.assistant.ModelsError
 import com.macedonga.visor.core.assistant.Provider
@@ -74,6 +76,7 @@ class AssistantViewModel @Inject constructor(
     val toggles: VisorToggles,
     val settings: GlassesSettings,
     val hub: McpHub,
+    val chatGpt: ChatGptPlan,
 ) : ViewModel()
 
 /** What came of asking the provider for its models, which is also the test of the key. */
@@ -106,7 +109,7 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     }
 
     var check by remember { mutableStateOf<KeyCheck>(KeyCheck.None) }
-    LaunchedEffect(config.provider, config.apiKey, config.baseUrl) {
+    LaunchedEffect(config.provider, config.apiKey, config.baseUrl, config.chatGpt) {
         if (!config.hasModel) {
             check = KeyCheck.None
             return@LaunchedEffect
@@ -114,7 +117,12 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
         check = KeyCheck.Checking
         delay(350)
         check = try {
-            KeyCheck.Works(listModels(config))
+            val models = listModels(config, model.chatGpt)
+            // The plan lists only models it answers with: the newest is the one to start from.
+            if (config.provider == Provider.CHATGPT && config.model.isBlank()) {
+                models.firstOrNull()?.let { m -> model.store.update { it.copy(model = m.id) } }
+            }
+            KeyCheck.Works(models)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -142,13 +150,37 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     }
 
     var sheet by remember { mutableStateOf<String?>(null) }
+
+    // Sign in with ChatGPT: the page opens once; back in Visor the plan's first use is said once.
+    val signIn by model.chatGpt.signIn.collectAsStateWithLifecycle()
+    val limited by model.chatGpt.limited.collectAsStateWithLifecycle()
+    val noteShown by model.chatGpt.noteShown.collectAsStateWithLifecycle()
+    var opened by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(signIn) {
+        val s = signIn
+        if (s is ChatGptPlan.SignIn.Waiting && s.url != opened) {
+            opened = s.url
+            model.chatGpt.pageOpened(s.url)
+            openInBrowser(context, s.url)
+        }
+    }
+    // Back from the browser without signing in: the row stops waiting.
+    LifecycleResumeEffect(Unit) {
+        model.chatGpt.leftBrowser()
+        onPauseOrDispose { }
+    }
+    val plan = config.provider == Provider.CHATGPT
+    LaunchedEffect(plan, config.chatGpt, noteShown) {
+        if (plan && config.chatGpt.isNotEmpty() && !noteShown) sheet = "plan_note"
+    }
+    val noSearch by model.store.noSearch.collectAsStateWithLifecycle()
+
     var trial by remember { mutableStateOf("") }
     var trialError by remember { mutableStateOf<String?>(null) }
     var trying by remember { mutableStateOf(false) }
     var ttsTrying by remember { mutableStateOf(false) }
     var ttsProblem by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val claude = config.provider == Provider.CLAUDE
     val phoneSpeaks = phoneSpeaksVoice(voice, sessionVoices) || config.speechLanguage.isNotEmpty()
     val known = model.settings.specs.keys
 
@@ -167,35 +199,33 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
             Column {
                 SectionLabel(stringResource(R.string.ai_section_model))
                 Rows(
-                    {
-                        PillsRow(
-                            stringResource(R.string.ai_provider),
-                            listOf(Provider.CLAUDE to "Claude", Provider.OPENAI_COMPATIBLE to stringResource(R.string.ai_openai_compatible)),
-                            config.provider,
-                            onPick = { p -> model.store.update { it.copy(provider = p) } },
-                        )
-                    },
-                    if (!claude) row {
+                    { ValueRow(stringResource(R.string.ai_provider), providerName(config.provider), onClick = { sheet = "provider" }) },
+                    if (config.provider == Provider.OPENAI_COMPATIBLE) row {
                         ValueRow(stringResource(R.string.ai_base_url), config.baseUrl, onClick = { sheet = "url" })
                     } else null,
-                    {
-                        val (sub, problem) = when (val c = check) {
-                            KeyCheck.None -> (if (claude) stringResource(R.string.ai_key_needed) else null) to null
-                            KeyCheck.Checking -> stringResource(R.string.ai_key_checking) to null
-                            is KeyCheck.Works -> pluralStringResource(R.plurals.ai_key_works, c.models.size, c.models.size) to null
-                            is KeyCheck.Refused -> null to stringResource(R.string.ai_key_refused, c.words)
-                            is KeyCheck.Failed -> null to stringResource(R.string.ai_key_failed, c.words)
-                        }
-                        ValueRow(
+                    if (plan) row {
+                        ChatGptRow(config.chatGpt, signIn, limited, check, onStart = model.chatGpt::start, onOpen = { sheet = "chatgpt" })
+                    } else row {
+                        val (sub, problem) = keyWords(check)
+                        // Without a key, the way to make one is on the row.
+                        val getKey = config.apiKey.isBlank() && config.provider.keys.isNotEmpty()
+                        RowFrame(
                             stringResource(R.string.ai_key),
-                            masked(config.apiKey) ?: stringResource(R.string.settings_not_set),
-                            onClick = { sheet = "key" }, sub = sub, problem = problem, busy = check == KeyCheck.Checking,
-                        )
+                            onClick = { sheet = "key" },
+                            value = masked(config.apiKey) ?: stringResource(R.string.settings_not_set).takeIf { !getKey },
+                            sub = sub, problem = problem, busy = check == KeyCheck.Checking,
+                        ) {
+                            if (getKey) {
+                                ActionPill(stringResource(R.string.ai_get_key), { openInBrowser(context, config.provider.keys) }, Modifier.padding(start = 12.dp), quiet = true)
+                            } else {
+                                Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = Visor.colors.textTertiary)
+                            }
+                        }
                     },
                     {
                         ValueRow(
                             stringResource(R.string.ai_model),
-                            modelWords(config.model.ifBlank { if (claude) DEFAULT_CLAUDE_MODEL else "" }).ifEmpty { stringResource(R.string.settings_not_set) },
+                            modelWords(config.answerModel).ifEmpty { stringResource(R.string.settings_not_set) },
                             onClick = { sheet = "model" },
                         )
                     },
@@ -314,7 +344,10 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                     } else null,
                     { VisorToggleRow(model.toggles.byId("vision")!!) },
                     if (partner || config.voicePhotos) row { VisorToggleRow(model.toggles.byId("voice_photos")!!) } else null,
-                    if (claude) row { VisorToggleRow(model.toggles.byId("web")!!) } else null,
+                    if (config.provider.search != null) row {
+                        val refused = config.webSearch && "${config.provider.name} ${config.answerModel}" in noSearch
+                        VisorToggleRow(model.toggles.byId("web")!!, problem = if (refused) stringResource(R.string.ai_web_unavailable) else null)
+                    } else null,
                     { VisorToggleRow(model.toggles.byId("quiet_actions")!!) },
                     {
                         PillsRow(
@@ -361,11 +394,46 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
     }
 
     when (sheet) {
-        "key" -> TextSheet(
-            stringResource(R.string.ai_key), config.apiKey, onSave = { key -> model.store.update { it.copy(apiKey = key.trim()) } },
-            onDismiss = { sheet = null }, secret = true, keyboard = KeyboardType.Password,
-            extra = { set -> ActionPill(stringResource(R.string.ai_paste), { paste(context)?.let { set(it.trim()) } }, quiet = true) },
+        "provider" -> ChoiceSheet(
+            stringResource(R.string.ai_provider),
+            Provider.entries.map { Triple(it, providerName(it), providerDetail(it)) },
+            config.provider,
+            onPick = model.store::switchProvider,
+            onDismiss = { sheet = null },
         )
+        "key" -> TextSheet(
+            providerName(config.provider) + " · " + stringResource(R.string.ai_key), config.apiKey,
+            onSave = { key -> model.store.update { it.copy(apiKey = key.trim()) } },
+            onDismiss = { sheet = null }, secret = true, keyboard = KeyboardType.Password,
+            extra = { set ->
+                ActionPill(stringResource(R.string.ai_paste), { paste(context)?.let { set(it.trim()) } }, quiet = true)
+                if (config.provider.keys.isNotEmpty()) {
+                    ActionPill(stringResource(R.string.ai_get_key), { openInBrowser(context, config.provider.keys) }, quiet = true)
+                }
+            },
+        )
+        "chatgpt" -> VisorSheet({ sheet = null }) {
+            SheetBody {
+                SheetTitle(
+                    if (limited) stringResource(R.string.ai_chatgpt_limit) else config.chatGpt,
+                    stringResource(if (limited) R.string.ai_chatgpt_limit_text else R.string.ai_chatgpt_using),
+                )
+            }
+            SheetAnswers(
+                stringResource(R.string.ai_chatgpt_manage), { openInBrowser(context, CHATGPT_USAGE) },
+                stringResource(R.string.mcp_sign_out), {
+                    sheet = null
+                    model.chatGpt.signOut()
+                },
+            )
+        }
+        "plan_note" -> VisorSheet({ model.chatGpt.noteSeen(); sheet = null }) {
+            SheetBody { SheetTitle(stringResource(R.string.ai_chatgpt_plan_title), stringResource(R.string.ai_chatgpt_plan_text)) }
+            SheetAnswers(
+                stringResource(R.string.ai_chatgpt_got_it), { model.chatGpt.noteSeen(); sheet = null },
+                stringResource(R.string.ai_chatgpt_manage), { openInBrowser(context, CHATGPT_USAGE) },
+            )
+        }
         "url" -> TextSheet(
             stringResource(R.string.ai_base_url), config.baseUrl, onSave = { url -> model.store.update { it.copy(baseUrl = url.trim()) } },
             onDismiss = { sheet = null }, keyboard = KeyboardType.Uri, valid = ::isWebAddress,
@@ -408,13 +476,73 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                 title = stringResource(if (lines) R.string.ai_lines_model else R.string.ai_model),
                 check = check,
                 current = if (lines) config.linesModel else config.model,
-                emptyLabel = if (lines) stringResource(R.string.ai_same_model) else if (claude) stringResource(R.string.ai_default_model, modelWords(DEFAULT_CLAUDE_MODEL)) else null,
+                emptyLabel = if (lines) stringResource(R.string.ai_same_model)
+                    else config.provider.defaultModel.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ai_default_model, modelWords(it)) },
                 onPick = { id -> model.store.update { if (lines) it.copy(linesModel = id) else it.copy(model = id) } },
                 onDismiss = { sheet = null },
             )
         }
     }
 }
+
+@Composable
+private fun keyWords(check: KeyCheck): Pair<String?, String?> = when (check) {
+    KeyCheck.None -> null to null
+    KeyCheck.Checking -> stringResource(R.string.ai_key_checking) to null
+    is KeyCheck.Works -> pluralStringResource(R.plurals.ai_key_works, check.models.size, check.models.size) to null
+    is KeyCheck.Refused -> null to stringResource(R.string.ai_key_refused, check.words)
+    is KeyCheck.Failed -> null to stringResource(R.string.ai_key_failed, check.words)
+}
+
+@Composable
+private fun providerName(p: Provider): String = if (p == Provider.OPENAI_COMPATIBLE) stringResource(R.string.ai_provider_other) else p.title
+
+/** A line under a provider only where its name does not say how it is paid or reached. */
+@Composable
+private fun providerDetail(p: Provider): String? = when (p) {
+    Provider.CHATGPT -> stringResource(R.string.ai_provider_chatgpt_sub)
+    Provider.OPENAI -> stringResource(R.string.ai_provider_openai_sub)
+    Provider.OPENAI_COMPATIBLE -> stringResource(R.string.ai_openai_compatible)
+    else -> null
+}
+
+/**
+ * The ChatGPT account: Continue with ChatGPT while signed out, with how the sign-in goes; signed in, the account,
+ * that answers use its plan, and a reached limit.
+ */
+@Composable
+private fun ChatGptRow(account: String, signIn: ChatGptPlan.SignIn, limited: Boolean, check: KeyCheck, onStart: () -> Unit, onOpen: () -> Unit) {
+    val title = stringResource(R.string.ai_chatgpt_account)
+    if (account.isNotEmpty()) {
+        val problem = keyWords(check).second
+        ValueRow(
+            title, account, onClick = onOpen,
+            sub = stringResource(R.string.ai_chatgpt_using).takeIf { !limited && problem == null },
+            problem = if (limited) stringResource(R.string.ai_chatgpt_limit) else problem,
+            busy = check == KeyCheck.Checking,
+        )
+        return
+    }
+    val failed = signIn as? ChatGptPlan.SignIn.Failed
+    RowFrame(
+        title, onClick = null, busy = signIn is ChatGptPlan.SignIn.Finishing,
+        sub = if (signIn is ChatGptPlan.SignIn.Waiting) stringResource(R.string.mcp_finish_in_browser) else null,
+        problem = failed?.let {
+            when (it.why) {
+                ChatGptPlan.Why.DECLINED -> stringResource(R.string.ai_chatgpt_declined)
+                ChatGptPlan.Why.NOT_ELIGIBLE -> stringResource(R.string.ai_chatgpt_not_eligible)
+                ChatGptPlan.Why.EXPIRED -> stringResource(R.string.ai_chatgpt_expired)
+                ChatGptPlan.Why.OTHER -> stringResource(R.string.ai_chatgpt_failed, it.words)
+            }
+        },
+    ) {
+        // Tapped again while the browser is out, it starts over: a closed tab is not a dead end.
+        ActionPill(stringResource(R.string.ai_chatgpt_continue), onStart, Modifier.padding(start = 12.dp), enabled = signIn !is ChatGptPlan.SignIn.Finishing)
+    }
+}
+
+/** Where the person sees and limits what Visor uses of their plan. */
+private const val CHATGPT_USAGE = "https://chatgpt.com/settings/usage"
 
 /** The phone speaks a partner-language voice, and a glasses voice that runs session turns (sessionVoices). */
 fun phoneSpeaksVoice(voice: String?, sessionVoices: Set<String>): Boolean =

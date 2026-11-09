@@ -285,14 +285,14 @@ fun GlassesRow(key: String, overline: String? = null) {
 
 /** One of Visor's own switches: lives on the phone, so it works with the glasses away. */
 @Composable
-fun VisorToggleRow(toggle: VisorToggle, overline: String? = null, sub: String? = null) {
+fun VisorToggleRow(toggle: VisorToggle, overline: String? = null, sub: String? = null, problem: String? = null) {
     val host = LocalHost.current
     val on by toggle.on.collectAsState()
     val restriction = languageRestriction(toggle.id)
     if (restriction != null) ValueRow(
         stringResource(toggle.label), stringResource(R.string.ai_voice_phone), onClick = null,
         onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = restriction, dim = true,
-    ) else ToggleRow(stringResource(toggle.label), on, toggle.set, onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = sub)
+    ) else ToggleRow(stringResource(toggle.label), on, toggle.set, onLongClick = { host.openDetails(Pins.visor(toggle.id)) }, overline = overline, sub = sub, problem = problem)
 }
 
 private const val SLOW_MS = 8_000L

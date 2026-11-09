@@ -228,13 +228,20 @@ internal class OAuth(private val http: OkHttpClient) {
  * The loopback redirect: one request to 127.0.0.1, answered with a page that sends the person back to the app.
  * Returns the full redirect URL; cancelling closes the socket.
  */
-internal suspend fun awaitLoopback(port: Int): String = coroutineScope {
-    val server = withContext(Dispatchers.IO) { ServerSocket(port, 1, InetAddress.getByName("127.0.0.1")) }
+internal suspend fun awaitLoopback(port: Int): String =
+    awaitLoopback(withContext(Dispatchers.IO) { loopbackSocket(port) }, "/callback")
+
+/** A socket on 127.0.0.1, at [port] or, with 0, any free one; bound before the browser opens. */
+internal fun loopbackSocket(port: Int): ServerSocket = ServerSocket(port, 1, InetAddress.getByName("127.0.0.1"))
+
+/** The redirect to [path] on [server], which this closes. */
+internal suspend fun awaitLoopback(server: ServerSocket, path: String): String = coroutineScope {
+    val port = server.localPort
     val watcher = launch { try { awaitCancellation() } finally { runCatching { server.close() } } }
     try {
         withContext(Dispatchers.IO) {
             var target = ""
-            while (!target.startsWith("/callback")) {
+            while (!target.startsWith(path)) {
                 target = server.accept().use { socket ->
                     val line = socket.getInputStream().bufferedReader().readLine().orEmpty()
                     val page = "<!doctype html><meta name=viewport content='width=device-width'><body style='font:16px sans-serif;" +
