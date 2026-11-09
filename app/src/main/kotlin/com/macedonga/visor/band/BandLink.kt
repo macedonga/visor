@@ -22,6 +22,7 @@ import com.macedonga.visor.core.session.ProtocolError
 import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.SessionCommand
 import com.macedonga.visor.core.session.SessionEvent
+import com.macedonga.visor.core.session.RelayState
 import com.macedonga.visor.core.session.SubstreamRelay
 import com.macedonga.visor.core.transport.BluetoothLeTransport
 import com.macedonga.visor.dat.ToolkitStore
@@ -71,6 +72,25 @@ data class BandState(
     val firmware: Long? = null,
 )
 
+/** How sharing the band goes, for the band settings. */
+sealed interface ShareState {
+    data object Off : ShareState
+
+    /** Reaching the band, or the Display and the band starting their link through the phone. */
+    data object Connecting : ShareState
+
+    /** Shared, with the glasses away: the Display reaches the band once they are back. */
+    data object Waiting : ShareState
+
+    /** The Display and the band talk through the phone. */
+    data object On : ShareState
+
+    /** Sharing turned itself off, and the band went back to the Display. */
+    data class Stopped(val problem: ShareProblem) : ShareState
+}
+
+enum class ShareProblem { BAND_UNREACHABLE, DISPLAY_SILENT, KEPT_DROPPING }
+
 /** How an errand on the band ended. */
 enum class BandErrand { DONE, NO_ANSWER, NOT_CHANGED, REFUSED }
 
@@ -110,6 +130,10 @@ class BandLink @Inject constructor(
 
     /** True while the band stays on the phone and the Display reaches it through the relay. */
     val shared: StateFlow<Boolean> = sharing.asStateFlow()
+    private val _share = MutableStateFlow<ShareState>(if (sharing.value) ShareState.Connecting else ShareState.Off)
+
+    /** Where sharing is, and why it stopped on its own. */
+    val shareState: StateFlow<ShareState> = _share.asStateFlow()
     private val _peer = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 16)
     /** What the band says on svc41109, its messages and its error frames. */
     val peer: SharedFlow<SessionEvent> = _peer
@@ -142,15 +166,35 @@ class BandLink @Inject constructor(
                 pair?.let { p -> all.firstOrNull { it.glasses == p } }?.takeIf { running && hold && want }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
         }
-        // While shared, the Display's link and the band's are joined whenever both are up.
+        // While shared, the Display's link and the band's are joined whenever both are up. A band out of reach, or a
+        // relay the two never use, ends the sharing, so the Display gets its band back rather than none.
         scope.launch {
             combine(sharing, _state.map { it.link }, connection.state.map { it.link }) { share, band, glasses ->
-                share && band == LinkState.READY && glasses == LinkState.READY
-            }.distinctUntilChanged().collectLatest { up ->
-                val display = connection.link
-                val band = session?.link
-                if (!up || display == null || band == null) return@collectLatest
-                coroutineScope { SubstreamRelay(display, band) { log.add(it) }.start(this) }
+                Triple(share, band, glasses)
+            }.distinctUntilChanged().collectLatest { (share, band, glasses) ->
+                if (!share) return@collectLatest
+                if (glasses != LinkState.READY) {
+                    _share.value = ShareState.Waiting
+                    return@collectLatest
+                }
+                if (band != LinkState.READY) {
+                    _share.value = ShareState.Connecting
+                    delay(REACH_MS)
+                    return@collectLatest stopSharing(ShareProblem.BAND_UNREACHABLE)
+                }
+                val displayLink = connection.link ?: return@collectLatest
+                val bandLink = session?.link ?: return@collectLatest
+                coroutineScope {
+                    val relay = SubstreamRelay(displayLink, bandLink) { log.add(it) }
+                    relay.start(this)
+                    relay.state.collect { s ->
+                        when (s) {
+                            RelayState.Opening -> _share.value = ShareState.Connecting
+                            RelayState.Up -> _share.value = ShareState.On
+                            is RelayState.Failed -> stopSharing(if (s.silent) ShareProblem.DISPLAY_SILENT else ShareProblem.KEPT_DROPPING)
+                        }
+                    }
+                }
             }
         }
         // A band given back while the glasses' link was down goes back once it is up again.
@@ -176,8 +220,19 @@ class BandLink @Inject constructor(
      * its gestures and buzz it at once, and the Display reaches it through the phone as on Meta's relay lease.
      */
     fun share(on: Boolean) {
-        prefs.edit().putBoolean(SHARE_KEY, on).apply()
         if (sharing.value != on) log.add(if (on) "Band: shared with the Display through the phone" else "Band: no longer shared")
+        _share.value = if (on) ShareState.Connecting else ShareState.Off
+        setSharing(on)
+    }
+
+    private fun stopSharing(problem: ShareProblem) {
+        log.add("Band: sharing stopped (${problem.name.lowercase()}); the band goes back to the Display")
+        _share.value = ShareState.Stopped(problem)
+        setSharing(false)
+    }
+
+    private fun setSharing(on: Boolean) {
+        prefs.edit().putBoolean(SHARE_KEY, on).apply()
         sharing.value = on
     }
 
@@ -564,6 +619,8 @@ class BandLink @Inject constructor(
     private companion object {
         const val PREFS = "band"
         const val SHARE_KEY = "share_with_display"
+        // Taking the band from the Display and reaching it, as a borrow allows, with room to spare.
+        const val REACH_MS = 60_000L
         val MANIFEST_SERVICES = listOf(102, ConstellationManifest.SERVICE)
         const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L

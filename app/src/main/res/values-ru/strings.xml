@@ -1147,6 +1147,12 @@
     <string name="band_vibrate">Вибрация</string>
     <string name="band_share">Делить с телефоном</string>
     <string name="band_share_sub">Браслет остаётся подключённым к телефону, а Display связывается с ним через телефон. Приложения получают его жесты и сразу включают вибрацию.</string>
+    <string name="band_share_on">Display связывается с браслетом через телефон. Приложения получают его жесты и сразу включают вибрацию.</string>
+    <string name="band_share_connecting">Подключение Display к браслету через телефон…</string>
+    <string name="band_share_waiting">Ожидание очков</string>
+    <string name="band_share_stopped_unreachable">Остановлено: телефон не смог связаться с браслетом, и он вернулся к Display.</string>
+    <string name="band_share_stopped_silent">Остановлено: Display не смог связаться с браслетом через телефон, и браслет вернулся к нему.</string>
+    <string name="band_share_stopped_dropping">Остановлено: связь через телефон постоянно обрывалась, и браслет вернулся к Display.</string>
     <string name="band_not_changed">Не изменено</string>
     <string name="band_refused">Отклонено</string>
     <string name="band_glasses">Очки</string>

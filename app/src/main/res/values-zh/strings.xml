@@ -1061,6 +1061,12 @@
     <string name="band_vibrate">震动</string>
     <string name="band_share">与手机共享</string>
     <string name="band_share_sub">腕带保持连接到手机，Display 通过手机连接它。应用可以收到它的手势，并立即让它震动。</string>
+    <string name="band_share_on">Display 通过手机连接腕带。应用可以收到它的手势，并立即让它震动。</string>
+    <string name="band_share_connecting">正在通过手机将 Display 连接到腕带…</string>
+    <string name="band_share_waiting">正在等待眼镜</string>
+    <string name="band_share_stopped_unreachable">已停止：手机无法连接腕带，腕带已回到 Display。</string>
+    <string name="band_share_stopped_silent">已停止：Display 无法通过手机连接腕带，腕带已回到 Display。</string>
+    <string name="band_share_stopped_dropping">已停止：通过手机的连接不断中断，腕带已回到 Display。</string>
     <string name="band_not_changed">未更改</string>
     <string name="band_refused">已拒绝</string>
     <string name="band_glasses">眼镜</string>

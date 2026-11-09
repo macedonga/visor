@@ -1110,6 +1110,12 @@
     <string name="band_vibrate">Vibrate</string>
     <string name="band_share">Share with the phone</string>
     <string name="band_share_sub">The band stays connected to the phone, and the Display reaches it through the phone. Apps get its gestures and vibrate it at once.</string>
+    <string name="band_share_on">The Display reaches the band through the phone. Apps get its gestures and vibrate it at once.</string>
+    <string name="band_share_connecting">Connecting the Display to the band through the phone…</string>
+    <string name="band_share_waiting">Waiting for the glasses</string>
+    <string name="band_share_stopped_unreachable">Stopped: the phone could not reach the band, so it went back to the Display.</string>
+    <string name="band_share_stopped_silent">Stopped: the Display did not reach the band through the phone, so the band went back to it.</string>
+    <string name="band_share_stopped_dropping">Stopped: the link through the phone kept dropping, so the band went back to the Display.</string>
     <string name="band_not_changed">Not changed</string>
     <string name="band_refused">Refused</string>
     <string name="band_glasses">Glasses</string>

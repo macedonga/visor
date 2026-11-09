@@ -3,11 +3,32 @@ package com.macedonga.visor.core.session
 import com.macedonga.visor.core.protocol.FrameType
 import com.macedonga.visor.core.protocol.Framing
 import com.macedonga.visor.core.protocol.StreamCommand
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** Where a [SubstreamRelay] is. */
+sealed interface RelayState {
+    /** The sub-streams are opening, or open with nothing across them yet. */
+    data object Opening : RelayState
+
+    /** Both devices have sent something across: their link inside is coming up or up. */
+    data object Up : RelayState
+
+    /** The relay stopped for good: [silent] when the devices never started, else their link kept dropping. */
+    data class Failed(val silent: Boolean) : RelayState
+}
 
 /**
  * Joins two devices through this phone, as the Meta app's RelayedConnection does: an AirShield sub-stream on each link,
@@ -24,7 +45,11 @@ class SubstreamRelay(
 ) {
     private class Side(val link: SecureLink, val name: String) {
         val frames = Channel<ByteArray>(Channel.UNLIMITED)
+        val sent = AtomicInteger(0)
     }
+
+    private val _state = MutableStateFlow<RelayState>(RelayState.Opening)
+    val state: StateFlow<RelayState> = _state.asStateFlow()
 
     private val a = Side(central, "Display")
     private val b = Side(peripheral, "band")
@@ -42,12 +67,27 @@ class SubstreamRelay(
             var tries = 0
             while (true) {
                 val opened = System.nanoTime()
+                a.sent.set(0)
+                b.sent.set(0)
+                _state.value = RelayState.Opening
                 open()
+                // Both devices start their link at once, so silence means they will not.
+                if (!firstTraffic(lost)) {
+                    closeBoth()
+                    val why = "the Display and the band did not start their link through the phone"
+                    log("Relay: $why in ${FIRST_TRAFFIC_MS / 1000} s")
+                    _state.value = RelayState.Failed(silent = true)
+                    return@launch
+                }
                 lost.receive()
                 closeBoth()
                 // A pair that held a while starts the count again; five quick losses end the relay.
                 tries = if (System.nanoTime() - opened > HELD_NS) 1 else tries + 1
-                if (tries >= MAX_OPENS) return@launch log("Relay: gave up after $MAX_OPENS quick losses")
+                if (tries >= MAX_OPENS) {
+                    log("Relay: gave up after $MAX_OPENS quick losses")
+                    _state.value = RelayState.Failed(silent = false)
+                    return@launch
+                }
                 delay(REOPEN_MS)
             }
         }
@@ -65,6 +105,19 @@ class SubstreamRelay(
         log("Relay: opening sub-stream $STREAM on both links (${code.name}; AirShield ${hex(central.peerAirshieldVersion)} and ${hex(peripheral.peerAirshieldVersion)})")
         a.link.sendRaw(command(code))
         b.link.sendRaw(command(code))
+    }
+
+    // True once both sides sent something across in time; false on silence or a side that closed first.
+    private suspend fun firstTraffic(lost: Channel<Unit>): Boolean = coroutineScope {
+        val up = async { _state.first { it is RelayState.Up } }
+        val result = withTimeoutOrNull(FIRST_TRAFFIC_MS) {
+            select<Boolean> {
+                up.onAwait { true }
+                lost.onReceive { false }
+            }
+        } ?: false
+        up.cancel()
+        result
     }
 
     private suspend fun closeBoth() {
@@ -86,6 +139,11 @@ class SubstreamRelay(
                 }
             }
             runCatching { to.link.sendRaw(sdu) }.onFailure { lost.trySend(Unit) }
+            from.sent.incrementAndGet()
+            if (a.sent.get() > 0 && b.sent.get() > 0 && _state.value == RelayState.Opening) {
+                _state.value = RelayState.Up
+                log("Relay: the Display and the band talk through the phone")
+            }
         }
     }
 
@@ -101,6 +159,7 @@ class SubstreamRelay(
         const val HELD_NS = 60_000_000_000L
         const val ADVERTISING_VERSION = 0x11
         const val MAX_OPENS = 5
+        const val FIRST_TRAFFIC_MS = 30_000L
         const val REOPEN_MS = 2_000L
         val CLOSING = setOf(StreamCommand.LOST.value, StreamCommand.REJECTED.value, StreamCommand.NO_ROUTE.value)
     }

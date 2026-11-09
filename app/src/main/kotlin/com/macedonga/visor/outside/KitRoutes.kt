@@ -198,12 +198,7 @@ class KitRoutes @Inject constructor(
         stream(Topics.BAND_GESTURES) { caller, _ -> gestures(caller.packageName) }
         stream(Topics.BAND_MOTION) { _, request ->
             requireBand()
-            if (!band.shared.value) {
-                throw KitException(
-                    ErrorCode.UNSUPPORTED, "Reading the band's motion needs the band shared with the phone, in Visor's band settings.",
-                    reason = "not_shared",
-                )
-            }
+            if (!band.shared.value) throw notShared()
             if (request.rateHz !in MotionRequest.RATES) {
                 throw KitException(ErrorCode.INVALID_PARAMS, "The band is read at ${MotionRequest.RATES.joinToString()} Hz.")
             }
@@ -584,13 +579,15 @@ class KitRoutes @Inject constructor(
     private fun bandMotion(rateHz: Int): Flow<MotionSample> = flow {
         band.startMotion()
         try {
+            // Sharing that stops, by the person or on its own, ends the stream rather than leaving it silent.
+            val stopped = band.shared.filter { !it }.map<Boolean, MotionSample> { throw notShared() }
             var accel: Vector3? = null
             var gyro: Vector3? = null
             var mag: Vector3? = null
             var quat: Quaternion? = null
             var sentAt = Long.MIN_VALUE
             val gapNs = 1_000_000_000L / rateHz
-            band.motion.collect { m ->
+            merge(stopped, band.motion.transform { m ->
                 val v = m.values
                 when (m.type) {
                     Band.IMU_ACCEL -> accel = Vector3(v[0], v[1], v[2])
@@ -599,14 +596,20 @@ class KitRoutes @Inject constructor(
                     Band.IMU_QUAT -> quat = Quaternion(v[0], v[1], v[2], v[3])
                 }
                 val now = System.nanoTime()
-                if (now - sentAt < gapNs) return@collect
+                if (now - sentAt < gapNs) return@transform
                 sentAt = now
                 emit(MotionSample(now, accel, gyro, mag, quat, MotionSource.BAND))
-            }
+            }).collect { emit(it) }
         } finally {
             band.endMotion()
         }
     }
+
+    private fun notShared() = KitException(
+        ErrorCode.UNSUPPORTED,
+        "The band's motion needs the band shared with the phone: in Visor, Settings > Neural Band > Share with the phone.",
+        reason = "not_shared",
+    )
 
     // A gesture as the band sent it: the finger, its own event and what it made of it (Band.Gesture's codes).
     private fun bandGesture(g: Band.Gesture) = Gesture(

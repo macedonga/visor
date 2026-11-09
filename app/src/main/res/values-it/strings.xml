@@ -1103,6 +1103,12 @@
     <string name="band_vibrate">Fai vibrare</string>
     <string name="band_share">Condividi con il telefono</string>
     <string name="band_share_sub">Il band resta collegato al telefono, e il Display lo raggiunge attraverso il telefono. Le app ricevono i suoi gesti e lo fanno vibrare subito.</string>
+    <string name="band_share_on">Il Display raggiunge il band attraverso il telefono. Le app ricevono i suoi gesti e lo fanno vibrare subito.</string>
+    <string name="band_share_connecting">Collegamento del Display al band attraverso il telefono…</string>
+    <string name="band_share_waiting">In attesa degli occhiali</string>
+    <string name="band_share_stopped_unreachable">Interrotto: il telefono non ha raggiunto il band, che è tornato al Display.</string>
+    <string name="band_share_stopped_silent">Interrotto: il Display non ha raggiunto il band attraverso il telefono, quindi il band è tornato al Display.</string>
+    <string name="band_share_stopped_dropping">Interrotto: il collegamento attraverso il telefono continuava a cadere, quindi il band è tornato al Display.</string>
     <string name="band_not_changed">Non cambiato</string>
     <string name="band_refused">Rifiutato</string>
     <string name="band_glasses">Occhiali</string>
