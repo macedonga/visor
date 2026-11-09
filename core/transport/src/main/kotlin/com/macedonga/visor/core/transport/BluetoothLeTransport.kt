@@ -132,11 +132,11 @@ class BluetoothLeTransport(
 
     override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
-    @SuppressLint("MissingPermission")
     override fun handshakeDone() {
         stream?.encrypted = true
     }
 
+    @SuppressLint("MissingPermission")
     override fun close() {
         closes.incrementAndGet()
         stream = null
