@@ -118,6 +118,7 @@ import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.RowFrame
 import com.macedonga.visor.settings.Rows
 import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.SheetField
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.Spinner
@@ -810,14 +811,16 @@ internal fun LiveSheet(model: LiveViewModel, onSettings: () -> Unit, onDismiss: 
     val settings by model.settings.settings.collectAsStateWithLifecycle()
     val auto by model.live.auto.collectAsStateWithLifecycle()
     val rung by model.live.rung.collectAsStateWithLifecycle()
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         SheetTitle(stringResource(R.string.live_settings_on_picture))
-        LiveOverlayRows(model, settings.overlays)
-        Spacer(Modifier.height(12.dp))
-        Card {
-            val detail = (if (auto) stringResource(R.string.live_auto) else stringResource(R.string.live_manual)) +
-                (rung?.let { " · ${it.quality.label}" } ?: "")
-            NavRow(null, stringResource(R.string.settings_title), detail, onClick = onSettings, onCard = true)
+        SheetBody {
+            LiveOverlayRows(model, settings.overlays)
+            Spacer(Modifier.height(12.dp))
+            Card {
+                val detail = (if (auto) stringResource(R.string.live_auto) else stringResource(R.string.live_manual)) +
+                    (rung?.let { " · ${it.quality.label}" } ?: "")
+                NavRow(null, stringResource(R.string.settings_title), detail, onClick = onSettings, onCard = true)
+            }
         }
     }
 }
@@ -831,7 +834,7 @@ internal fun BroadcastSheet(model: LiveViewModel, onDismiss: () -> Unit) {
     var url by rememberSaveable { mutableStateOf(settings.rtmpUrl) }
     var key by rememberSaveable { mutableStateOf(settings.rtmpKey) }
     var codec by rememberSaveable { mutableStateOf(settings.rtmpCodec) }
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         if (state.airing) {
             val host = runCatching { URI(settings.rtmpUrl).host }.getOrNull() ?: settings.rtmpUrl
             SheetTitle(stringResource(R.string.live_broadcast), stringResource(R.string.live_broadcast_to, host))
@@ -849,13 +852,15 @@ internal fun BroadcastSheet(model: LiveViewModel, onDismiss: () -> Unit) {
             }, modifier = Modifier.padding(horizontal = SIDE))
         } else {
             SheetTitle(stringResource(R.string.live_broadcast))
-            SheetField(url, { url = it }, hint = stringResource(R.string.live_broadcast_server), keyboard = KeyboardType.Uri)
-            Spacer(Modifier.height(10.dp))
-            SheetField(key, { key = it }, hint = stringResource(R.string.live_broadcast_key), secret = true)
-            Spacer(Modifier.height(12.dp))
-            Rows(listOf(BroadcastCodec.H264 to R.string.live_broadcast_h264, BroadcastCodec.HEVC to R.string.live_broadcast_hevc)) { (choice, name) ->
-                RowFrame(stringResource(name), onClick = { codec = choice }, modifier = Modifier.semantics { selected = codec == choice }) {
-                    ChoiceMark(codec == choice, Modifier.padding(start = 12.dp))
+            SheetBody {
+                SheetField(url, { url = it }, hint = stringResource(R.string.live_broadcast_server), keyboard = KeyboardType.Uri)
+                Spacer(Modifier.height(10.dp))
+                SheetField(key, { key = it }, hint = stringResource(R.string.live_broadcast_key), secret = true)
+                Spacer(Modifier.height(12.dp))
+                Rows(listOf(BroadcastCodec.H264 to R.string.live_broadcast_h264, BroadcastCodec.HEVC to R.string.live_broadcast_hevc)) { (choice, name) ->
+                    RowFrame(stringResource(name), onClick = { codec = choice }, modifier = Modifier.semantics { selected = codec == choice }) {
+                        ChoiceMark(codec == choice, Modifier.padding(start = 12.dp))
+                    }
                 }
             }
             Spacer(Modifier.height(18.dp))

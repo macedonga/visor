@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,7 +71,7 @@ internal fun CalendarSheet(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         SearchField(query, { query = it }, stringResource(R.string.meta_ai_search), Modifier.padding(horizontal = 16.dp).focusRequester(focus))
         if (search) LaunchedEffect(Unit) { focus.requestFocus() }
         Crossfade(query.isBlank(), label = "calendar") { browsing ->
@@ -86,7 +88,7 @@ private fun Month(turns: List<TurnRecord>, shownDay: LocalDate?, onDay: (LocalDa
     val withEntries = remember(turns) { turns.map { it.date }.toSet() }
     val firstMonth = remember(turns) { turns.firstOrNull()?.date?.let(YearMonth::from) ?: YearMonth.now() }
     var month by rememberSaveable { mutableStateOf(YearMonth.from(shownDay ?: today)) }
-    Column(Modifier.padding(horizontal = 16.dp).padding(top = 20.dp)) {
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(top = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 DateTimeFormatter.ofPattern("LLLL yyyy", locale).format(month).replaceFirstChar { it.titlecase(locale) },

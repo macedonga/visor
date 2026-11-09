@@ -53,6 +53,7 @@ import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.design.VisorTheme
 import com.macedonga.visor.settings.ProgressRing
 import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.WidePill
 import com.macedonga.visor.stage.SETTLE_EASE
@@ -98,23 +99,25 @@ class ToolkitActivity : ComponentActivity() {
                     }
                 }
                 VisorSheet(onDismiss = ::leave, state = sheet) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = SIDE)) {
-                        Emblem(progress)
-                        AnimatedContent(
-                            targetState = progress,
-                            contentKey = ::phase,
-                            transitionSpec = {
-                                (fadeIn(tween(260, delayMillis = 90)) togetherWith fadeOut(tween(120)))
-                                    .using(SizeTransform(clip = false) { _, _ -> tween(360, easing = SETTLE_EASE) })
-                            },
-                            label = "phase",
-                        ) { shown ->
-                            when (shown) {
-                                is ToolkitProgress.Asking -> Ask(shown.app, onAllow = { toolkit.answer(true) }, onDeny = close)
-                                is ToolkitProgress.Running -> Working(shown.step, shown.fraction)
-                                ToolkitProgress.Ready -> Working(null, null)
-                                is ToolkitProgress.Failed -> Stopped(shown, close)
-                                ToolkitProgress.Idle -> Unit
+                    SheetBody {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = SIDE)) {
+                            Emblem(progress)
+                            AnimatedContent(
+                                targetState = progress,
+                                contentKey = ::phase,
+                                transitionSpec = {
+                                    (fadeIn(tween(260, delayMillis = 90)) togetherWith fadeOut(tween(120)))
+                                        .using(SizeTransform(clip = false) { _, _ -> tween(360, easing = SETTLE_EASE) })
+                                },
+                                label = "phase",
+                            ) { shown ->
+                                when (shown) {
+                                    is ToolkitProgress.Asking -> Ask(shown.app, onAllow = { toolkit.answer(true) }, onDeny = close)
+                                    is ToolkitProgress.Running -> Working(shown.step, shown.fraction)
+                                    ToolkitProgress.Ready -> Working(null, null)
+                                    is ToolkitProgress.Failed -> Stopped(shown, close)
+                                    ToolkitProgress.Idle -> Unit
+                                }
                             }
                         }
                     }

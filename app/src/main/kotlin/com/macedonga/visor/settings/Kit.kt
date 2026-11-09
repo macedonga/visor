@@ -24,6 +24,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.progressSemantics
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -946,11 +948,11 @@ fun UndoPill(text: String?, onUndo: () -> Unit, modifier: Modifier = Modifier) {
     }
 }
 
-/** The bottom sheet every settings page uses. */
+/** The bottom sheet every settings page uses. It opens whole, so its answers at the foot are in view. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VisorSheet(onDismiss: () -> Unit, full: Boolean = false, content: @Composable ColumnScope.() -> Unit) =
-    VisorSheet(onDismiss, rememberModalBottomSheetState(skipPartiallyExpanded = full), content)
+fun VisorSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) =
+    VisorSheet(onDismiss, rememberModalBottomSheetState(skipPartiallyExpanded = true), content)
 
 /** The same sheet with its [state] in the caller's hands, to slide it away before it goes. */
 @ExperimentalMaterial3Api
@@ -969,6 +971,11 @@ fun VisorSheet(onDismiss: () -> Unit, state: SheetState, content: @Composable Co
     }
 }
 
+/** The part of a sheet that can outgrow the screen: it scrolls, and what comes after it stays in view. */
+@Composable
+fun ColumnScope.SheetBody(content: @Composable ColumnScope.() -> Unit) =
+    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), content = content)
+
 @Composable
 fun SheetTitle(title: String, sub: String? = null) {
     Column(Modifier.padding(horizontal = SIDE).padding(top = 6.dp, bottom = 16.dp)) {
@@ -981,7 +988,7 @@ fun SheetTitle(title: String, sub: String? = null) {
 @Composable
 fun ConfirmSheet(title: String, text: String?, confirm: String, onConfirm: () -> Unit, onDismiss: () -> Unit, dismiss: String = stringResource(R.string.cancel)) {
     VisorSheet(onDismiss) {
-        SheetTitle(title, text)
+        SheetBody { SheetTitle(title, text) }
         SheetAnswers(confirm, {
             onDismiss()
             onConfirm()
@@ -1009,7 +1016,7 @@ fun <T> ChoiceSheet(
     sub: String? = null,
 ) {
     var query by remember { mutableStateOf("") }
-    VisorSheet(onDismiss, full = options.size > 8) {
+    VisorSheet(onDismiss) {
         SheetTitle(title, sub)
         if (options.size > 12) {
             SearchField(query, { query = it }, stringResource(R.string.settings_filter), Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp))
@@ -1048,11 +1055,12 @@ fun SheetField(
     secret: Boolean = false,
     keyboard: KeyboardType = KeyboardType.Text,
     focus: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val focusRequester = remember { FocusRequester() }
     if (focus) LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Box(
-        Modifier
+        modifier
             .padding(horizontal = 16.dp)
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
@@ -1090,9 +1098,13 @@ fun TextSheet(
     extra: (@Composable RowScope.(set: (String) -> Unit) -> Unit)? = null,
 ) {
     var draft by remember { mutableStateOf(initial) }
-    VisorSheet(onDismiss, full = !singleLine) {
+    VisorSheet(onDismiss) {
         SheetTitle(title, sub)
-        SheetField(draft, { draft = filter(it) }, hint = hint, singleLine = singleLine, secret = secret, keyboard = keyboard, focus = true)
+        // Long text scrolls inside the field; Save stays below it.
+        SheetField(
+            draft, { draft = filter(it) }, hint = hint, singleLine = singleLine, secret = secret, keyboard = keyboard, focus = true,
+            modifier = Modifier.weight(1f, fill = false),
+        )
         Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             extra?.invoke(this) { draft = it }
             Spacer(Modifier.weight(1f))

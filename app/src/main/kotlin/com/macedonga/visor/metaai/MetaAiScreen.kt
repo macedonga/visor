@@ -65,6 +65,7 @@ import com.macedonga.visor.settings.BAR
 import com.macedonga.visor.settings.BarShade
 import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.SIDE
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.TopBar
 import com.macedonga.visor.settings.UndoPill
@@ -346,40 +347,42 @@ private fun Actions(
             action()
             onDismiss()
         }
-        when (pressed) {
-            is Pressed.OnTurn -> {
-                val turn = pressed.turn
-                Text(
-                    turn.question,
-                    style = Visor.type.body,
-                    color = colors.textSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 10.dp),
-                )
-                val answered = turn.answer.isNotEmpty()
-                if (answered) ActionRow(VisorIcons.Copy, stringResource(R.string.meta_ai_copy)) { then { onCopy(turn) } }
-                if (answered) ActionRow(VisorIcons.Share, stringResource(R.string.meta_ai_share)) { then { onShare(turn) } }
-                if (turn.problem != ON_GLASSES && !turn.awaiting(asking)) ActionRow(VisorIcons.Replay, stringResource(R.string.meta_ai_again)) { then { onAgain(turn) } }
-                ActionRow(VisorIcons.Reply, stringResource(R.string.meta_ai_continue)) { then { onContinue(pressed.conversation) } }
-                ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete)) { then { onDelete(setOf(turn.interactionId)) } }
-                val all = whole(pressed.conversation)
-                if (all.size > 1) {
-                    ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_conversation)) {
-                        then { onDelete(all.map { it.interactionId }.toSet()) }
+        SheetBody {
+            when (pressed) {
+                is Pressed.OnTurn -> {
+                    val turn = pressed.turn
+                    Text(
+                        turn.question,
+                        style = Visor.type.body,
+                        color = colors.textSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 10.dp),
+                    )
+                    val answered = turn.answer.isNotEmpty()
+                    if (answered) ActionRow(VisorIcons.Copy, stringResource(R.string.meta_ai_copy)) { then { onCopy(turn) } }
+                    if (answered) ActionRow(VisorIcons.Share, stringResource(R.string.meta_ai_share)) { then { onShare(turn) } }
+                    if (turn.problem != ON_GLASSES && !turn.awaiting(asking)) ActionRow(VisorIcons.Replay, stringResource(R.string.meta_ai_again)) { then { onAgain(turn) } }
+                    ActionRow(VisorIcons.Reply, stringResource(R.string.meta_ai_continue)) { then { onContinue(pressed.conversation) } }
+                    ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete)) { then { onDelete(setOf(turn.interactionId)) } }
+                    val all = whole(pressed.conversation)
+                    if (all.size > 1) {
+                        ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_conversation)) {
+                            then { onDelete(all.map { it.interactionId }.toSet()) }
+                        }
                     }
                 }
-            }
-            is Pressed.OnDay -> {
-                SheetTitle(dayTitle(pressed.day.date))
-                ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_day)) {
-                    then { onDelete(pressed.day.conversations.flatMap { it.turns }.map { it.interactionId }.toSet()) }
+                is Pressed.OnDay -> {
+                    SheetTitle(dayTitle(pressed.day.date))
+                    ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_day)) {
+                        then { onDelete(pressed.day.conversations.flatMap { it.turns }.map { it.interactionId }.toSet()) }
+                    }
                 }
-            }
-            is Pressed.OnLive -> {
-                SheetTitle(stringResource(R.string.meta_ai_live_ai))
-                ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_conversation)) {
-                    then { onDelete(whole(pressed.conversation).map { it.interactionId }.toSet()) }
+                is Pressed.OnLive -> {
+                    SheetTitle(stringResource(R.string.meta_ai_live_ai))
+                    ActionRow(VisorIcons.Trash, stringResource(R.string.meta_ai_delete_conversation)) {
+                        then { onDelete(whole(pressed.conversation).map { it.interactionId }.toSet()) }
+                    }
                 }
             }
         }

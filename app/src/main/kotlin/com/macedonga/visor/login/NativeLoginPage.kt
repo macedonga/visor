@@ -102,6 +102,7 @@ import com.macedonga.visor.settings.ProgressRing
 import com.macedonga.visor.settings.RoundIcon
 import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SheetAnswers
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.WidePill
@@ -252,7 +253,7 @@ fun NativeLoginPage(onDone: () -> Unit, model: NativeLoginViewModel = hiltViewMo
     s?.dialog?.let { d ->
         VisorSheet({ session.dismissDialog() }) {
             val message = if (d.failed) stringResource(R.string.native_login_request_failed) else d.message
-            (d.title ?: message)?.let { SheetTitle(it, message.takeIf { d.title != null }) }
+            SheetBody { (d.title ?: message)?.let { SheetTitle(it, message.takeIf { d.title != null }) } }
             FlowRow(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Meta lists the main answer last; it goes first and white, as in every other sheet.
                 d.buttons.asReversed().forEachIndexed { i, (label, handler) ->
@@ -347,8 +348,8 @@ private fun DateAsked(model: NativeLoginViewModel) {
         model.dateAsk.value = null
         current.done(seconds)
     }
-    VisorSheet({ answer(null) }, full = true) {
-        DatePicker(picker, title = null, headline = null, showModeToggle = false, colors = DatePickerDefaults.colors(containerColor = Visor.colors.surface))
+    VisorSheet({ answer(null) }) {
+        SheetBody { DatePicker(picker, title = null, headline = null, showModeToggle = false, colors = DatePickerDefaults.colors(containerColor = Visor.colors.surface)) }
         SheetAnswers(stringResource(R.string.settings_save), { answer(picker.selectedDateMillis?.div(1000)) }, stringResource(R.string.cancel), { answer(null) })
     }
 }

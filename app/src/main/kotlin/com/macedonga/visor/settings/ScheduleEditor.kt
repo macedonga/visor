@@ -285,7 +285,7 @@ private fun TimeButton(label: String, time: String, enabled: Boolean, onSet: (St
     val (h, m) = time.split(':').let { (it.getOrNull(0)?.toIntOrNull() ?: 9) to (it.getOrNull(1)?.toIntOrNull() ?: 0) }
     val state = rememberTimePickerState(initialHour = h.coerceIn(0, 23), initialMinute = m.coerceIn(0, 59), is24Hour = DateFormat.is24HourFormat(LocalContext.current))
     VisorSheet({ picking = false }) {
-        TimePicker(state, Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 16.dp))
+        SheetBody { TimePicker(state, Modifier.align(Alignment.CenterHorizontally).padding(horizontal = 16.dp)) }
         SheetAnswers(stringResource(R.string.adv_set), {
             picking = false
             onSet(String.format(Locale.ROOT, "%02d:%02d", state.hour, state.minute))

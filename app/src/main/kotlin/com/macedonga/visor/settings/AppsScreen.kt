@@ -164,13 +164,15 @@ private fun AppSheet(app: String, grants: KitGrants, onDismiss: () -> Unit) {
                 Text(app, style = MONO, color = colors.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (scopes.isEmpty()) {
-            Text(stringResource(R.string.apps_sheet_none), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 8.dp))
+        SheetBody {
+            if (scopes.isEmpty()) {
+                Text(stringResource(R.string.apps_sheet_none), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 8.dp))
+            }
+            for (scope in KitConsentActivity.KNOWN.filter { it in scopes }) {
+                ToggleRow(scopeName(scope), true, { grants.set(app, scopes - scope) })
+            }
+            Spacer(Modifier.height(8.dp))
         }
-        for (scope in KitConsentActivity.KNOWN.filter { it in scopes }) {
-            ToggleRow(scopeName(scope), true, { grants.set(app, scopes - scope) })
-        }
-        Spacer(Modifier.height(8.dp))
         SheetAnswers(
             stringResource(R.string.settings_kit_remove),
             {
@@ -246,18 +248,20 @@ private fun NewClientSheet(onDismiss: () -> Unit, onCreate: (String, Set<Scope>,
     var topics by remember { mutableStateOf(setOf<String>()) }
     VisorSheet(onDismiss) {
         SheetTitle(stringResource(R.string.settings_kit_client_new))
-        SheetField(name, { name = it }, hint = stringResource(R.string.settings_kit_client_name), focus = true)
-        Spacer(Modifier.height(8.dp))
-        for (scope in KitConsentActivity.KNOWN) {
-            ToggleRow(scopeName(scope), scope in scopes, { scopes = if (it) scopes + scope else scopes - scope })
-        }
-        Spacer(Modifier.height(8.dp))
-        SheetField(webhook, { webhook = it }, hint = stringResource(R.string.settings_kit_client_webhook), keyboard = KeyboardType.Uri)
         // A webhook posts the events of the topics the program's scopes allow.
         val offered = Topics.all.filter { it.scope != null && it.scope in scopes && it.params.descriptor.elementsCount == 0 }
-        if (webhook.isNotBlank()) {
-            for (topic in offered) {
-                ToggleRow(topic.name, topic.name in topics, { topics = if (it) topics + topic.name else topics - topic.name })
+        SheetBody {
+            SheetField(name, { name = it }, hint = stringResource(R.string.settings_kit_client_name), focus = true)
+            Spacer(Modifier.height(8.dp))
+            for (scope in KitConsentActivity.KNOWN) {
+                ToggleRow(scopeName(scope), scope in scopes, { scopes = if (it) scopes + scope else scopes - scope })
+            }
+            Spacer(Modifier.height(8.dp))
+            SheetField(webhook, { webhook = it }, hint = stringResource(R.string.settings_kit_client_webhook), keyboard = KeyboardType.Uri)
+            if (webhook.isNotBlank()) {
+                for (topic in offered) {
+                    ToggleRow(topic.name, topic.name in topics, { topics = if (it) topics + topic.name else topics - topic.name })
+                }
             }
         }
         SheetAnswers(

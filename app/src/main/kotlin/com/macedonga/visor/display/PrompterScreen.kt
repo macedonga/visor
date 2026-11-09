@@ -236,7 +236,7 @@ private fun ScriptSheet(text: String, onText: (String) -> Unit, onDismiss: () ->
     val context = LocalContext.current
     // What Clear took, until the next edit.
     var cleared by remember { mutableStateOf<String?>(null) }
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         SheetTitle(stringResource(R.string.prompter_script))
         Box(
             Modifier

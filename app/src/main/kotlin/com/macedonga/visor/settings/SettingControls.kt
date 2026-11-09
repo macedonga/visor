@@ -330,35 +330,37 @@ internal fun SettingDetails(id: String, onDismiss: () -> Unit) {
     val canRestore = restriction == null && host.ready && info?.writable == true && spec.control !is Control.ReadOnly && state.changed(key, info)
     val refused = stringResource(R.string.settings_not_sent)
     VisorSheet(onDismiss) {
-        SheetTitle(spec.label, restriction ?: spec.note.takeIf { host.engineering })
-        Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-            Reading(stringResource(R.string.settings_now), value?.let { spec.words(it) } ?: stringResource(R.string.settings_not_read))
-            Reading(stringResource(R.string.settings_default), default?.let { spec.words(it) } ?: stringResource(R.string.settings_unknown))
-        }
-        Row(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (canRestore && default != null) {
-                ActionPill(stringResource(R.string.settings_restore), {
-                    if (!settings.write(key, default)) host.notice.show(refused)
-                    onDismiss()
-                })
+        SheetBody {
+            SheetTitle(spec.label, restriction ?: spec.note.takeIf { host.engineering })
+            Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+                Reading(stringResource(R.string.settings_now), value?.let { spec.words(it) } ?: stringResource(R.string.settings_not_read))
+                Reading(stringResource(R.string.settings_default), default?.let { spec.words(it) } ?: stringResource(R.string.settings_unknown))
             }
-            ActionPill(stringResource(if (pinned) R.string.settings_unpin else R.string.settings_pin), { host.pins.toggle(id); onDismiss() }, quiet = true)
-        }
-        Column(Modifier.padding(horizontal = SIDE).padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (host.engineering) {
-                KeyLine(key)
-                val how = when {
-                    info == null -> stringResource(R.string.settings_how_nothing)
-                    else -> info.field?.takeIf { !info.viaDrive }?.let { stringResource(R.string.settings_how_field, it) }
-                        ?: stringResource(R.string.settings_how_drive, info.driveNamespace)
+            Row(Modifier.padding(horizontal = SIDE), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (canRestore && default != null) {
+                    ActionPill(stringResource(R.string.settings_restore), {
+                        if (!settings.write(key, default)) host.notice.show(refused)
+                        onDismiss()
+                    })
                 }
-                Text(how, style = Visor.type.label, color = Visor.colors.textSecondary)
-                Text(stringResource(R.string.settings_mapping, spec.confidence), style = Visor.type.label, color = Visor.colors.textSecondary)
+                ActionPill(stringResource(if (pinned) R.string.settings_unpin else R.string.settings_pin), { host.pins.toggle(id); onDismiss() }, quiet = true)
             }
-            when {
-                info == null -> Unit
-                isProtected(key) -> Text(stringResource(R.string.settings_never_written), style = Visor.type.label, color = Visor.colors.textSecondary)
-                !info.writable -> Text(stringResource(R.string.settings_no_way_to_write), style = Visor.type.label, color = Visor.colors.textSecondary)
+            Column(Modifier.padding(horizontal = SIDE).padding(top = 22.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (host.engineering) {
+                    KeyLine(key)
+                    val how = when {
+                        info == null -> stringResource(R.string.settings_how_nothing)
+                        else -> info.field?.takeIf { !info.viaDrive }?.let { stringResource(R.string.settings_how_field, it) }
+                            ?: stringResource(R.string.settings_how_drive, info.driveNamespace)
+                    }
+                    Text(how, style = Visor.type.label, color = Visor.colors.textSecondary)
+                    Text(stringResource(R.string.settings_mapping, spec.confidence), style = Visor.type.label, color = Visor.colors.textSecondary)
+                }
+                when {
+                    info == null -> Unit
+                    isProtected(key) -> Text(stringResource(R.string.settings_never_written), style = Visor.type.label, color = Visor.colors.textSecondary)
+                    !info.writable -> Text(stringResource(R.string.settings_no_way_to_write), style = Visor.type.label, color = Visor.colors.textSecondary)
+                }
             }
         }
     }

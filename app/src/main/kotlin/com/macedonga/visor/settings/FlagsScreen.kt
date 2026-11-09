@@ -94,7 +94,7 @@ fun FlagsScreen(model: FlagsViewModel = hiltViewModel()) {
         },
         sheet = {
             details?.let { n ->
-                VisorSheet({ details = null }) { SheetTitle(n, notes[n]?.let { listOfNotNull(it.does, it.change).joinToString(" ") }) }
+                VisorSheet({ details = null }) { SheetBody { SheetTitle(n, notes[n]?.let { listOfNotNull(it.does, it.change).joinToString(" ") }) } }
             }
         },
     ) {

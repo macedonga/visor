@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -267,7 +265,7 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
         )
     }
     if (browsing) {
-        VisorSheet({ browsing = false }, full = true) {
+        VisorSheet({ browsing = false }) {
             SheetTitle(stringResource(R.string.apps_webapp_browse))
             when (val c = catalogue) {
                 CatalogueState.Loading -> Spinner(Modifier.padding(SIDE).padding(top = 16.dp))
@@ -278,7 +276,7 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
                 is CatalogueState.Loaded -> if (c.apps.isEmpty()) {
                     Text(stringResource(R.string.webapps_catalogue_none), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(horizontal = SIDE))
                 } else {
-                    Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    SheetBody {
                         Rows(c.apps) { app ->
                             val on = apps.any { it.url == app.url }
                             RowFrame(app.name, onClick = null, sub = app.url, value = if (on) stringResource(R.string.webapps_on_glasses) else null) {
@@ -370,7 +368,7 @@ private fun AppSheet(app: WebApp, model: WebAppsModel, ready: Boolean, onRemove:
     var scopes by remember(app.key) { mutableStateOf(origin?.let { access[it] }.orEmpty()) }
     VisorSheet(onDismiss) {
         SheetTitle(app.name, origin ?: app.url)
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+        SheetBody {
             ToggleRow(
                 stringResource(R.string.webapps_bluetooth), scan || scopes.isNotEmpty(), { scan = it },
                 // Visor access travels over the scans, so they stay on with it.

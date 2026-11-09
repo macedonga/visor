@@ -18,6 +18,7 @@ import com.macedonga.visor.kit.protocol.KitProtocol
 import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.settings.SIDE
 import com.macedonga.visor.settings.SheetAnswers
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.WidePill
@@ -53,13 +54,15 @@ class KitConsentActivity : ComponentActivity() {
             VisorTheme {
                 VisorSheet(onDismiss = ::finish) {
                     SheetTitle(stringResource(R.string.kit_consent_title, label))
-                    for (scope in KNOWN.filter { it in missing }) {
-                        Text(
-                            stringResource(SCOPE_TEXT.getValue(scope)),
-                            style = Visor.type.body,
-                            color = Visor.colors.textPrimary,
-                            modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 12.dp),
-                        )
+                    SheetBody {
+                        for (scope in KNOWN.filter { it in missing }) {
+                            Text(
+                                stringResource(SCOPE_TEXT.getValue(scope)),
+                                style = Visor.type.body,
+                                color = Visor.colors.textPrimary,
+                                modifier = Modifier.padding(horizontal = SIDE).padding(bottom = 12.dp),
+                            )
+                        }
                     }
                     WidePill(
                         stringResource(R.string.kit_consent_once),

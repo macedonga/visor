@@ -429,7 +429,7 @@ private fun ModelSheet(title: String, check: KeyCheck, current: String, emptyLab
         TextSheet(title, current, onSave = { onPick(it.trim()) }, onDismiss = onDismiss, hint = "model-id")
         return
     }
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         SheetTitle(title)
         val models = (check as? KeyCheck.Works)?.models.orEmpty()
         if (models.size > 10) SearchField(query, { query = it }, stringResource(R.string.settings_filter), Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp))

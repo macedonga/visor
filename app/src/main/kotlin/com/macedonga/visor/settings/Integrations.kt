@@ -256,35 +256,37 @@ private fun AddServerSheet(hub: McpHub, onDismiss: () -> Unit, onAdded: (String)
             }
         }
     }
-    VisorSheet(onDismiss, full = true) {
+    VisorSheet(onDismiss) {
         SheetTitle(stringResource(R.string.mcp_add))
-        FieldLabel(stringResource(R.string.mcp_address), first = true)
-        SheetField(url, { url = it.trim(); probe = null }, hint = "https://…", keyboard = KeyboardType.Uri, focus = true)
-        FieldLabel(stringResource(R.string.mcp_name))
-        SheetField(name, { name = it }, hint = hostOf(address))
-        AnimatedVisibility(auth != AuthKind.NONE, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-            Column {
-                Box(Modifier.padding(horizontal = 16.dp).padding(top = 20.dp)) {
-                    Pills(listOf(AuthKind.TOKEN to stringResource(R.string.mcp_token), AuthKind.HEADER to stringResource(R.string.mcp_header)), auth) { auth = it; probe = null }
-                }
-                if (auth == AuthKind.HEADER) {
-                    FieldLabel(stringResource(R.string.mcp_header_name))
-                    SheetField(header, { header = it.trim(); probe = null }, hint = "X-API-Key")
-                }
-                FieldLabel(stringResource(if (auth == AuthKind.HEADER) R.string.mcp_header_value else R.string.mcp_token))
-                SheetField(secret, { secret = it; probe = null }, secret = true, keyboard = KeyboardType.Password)
-            }
-        }
         val found = probe
-        Box(Modifier.padding(horizontal = 32.dp).padding(top = 14.dp)) {
-            when {
-                probing -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spinner()
-                    Text(stringResource(R.string.mcp_phase_checking), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 10.dp))
+        SheetBody {
+            FieldLabel(stringResource(R.string.mcp_address), first = true)
+            SheetField(url, { url = it.trim(); probe = null }, hint = "https://…", keyboard = KeyboardType.Uri, focus = true)
+            FieldLabel(stringResource(R.string.mcp_name))
+            SheetField(name, { name = it }, hint = hostOf(address))
+            AnimatedVisibility(auth != AuthKind.NONE, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                Column {
+                    Box(Modifier.padding(horizontal = 16.dp).padding(top = 20.dp)) {
+                        Pills(listOf(AuthKind.TOKEN to stringResource(R.string.mcp_token), AuthKind.HEADER to stringResource(R.string.mcp_header)), auth) { auth = it; probe = null }
+                    }
+                    if (auth == AuthKind.HEADER) {
+                        FieldLabel(stringResource(R.string.mcp_header_name))
+                        SheetField(header, { header = it.trim(); probe = null }, hint = "X-API-Key")
+                    }
+                    FieldLabel(stringResource(if (auth == AuthKind.HEADER) R.string.mcp_header_value else R.string.mcp_token))
+                    SheetField(secret, { secret = it; probe = null }, secret = true, keyboard = KeyboardType.Password)
                 }
-                found is Probe.Failed -> Text(phaseWords(found.phase), style = Visor.type.label, color = Visor.colors.signal)
-                found is Probe.NeedsKey && secret.isNotBlank() -> Text(stringResource(R.string.mcp_phase_refused), style = Visor.type.label, color = Visor.colors.signal)
-                else -> Unit
+            }
+            Box(Modifier.padding(horizontal = 32.dp).padding(top = 14.dp)) {
+                when {
+                    probing -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        Spinner()
+                        Text(stringResource(R.string.mcp_phase_checking), style = Visor.type.label, color = Visor.colors.textSecondary, modifier = Modifier.padding(start = 10.dp))
+                    }
+                    found is Probe.Failed -> Text(phaseWords(found.phase), style = Visor.type.label, color = Visor.colors.signal)
+                    found is Probe.NeedsKey && secret.isNotBlank() -> Text(stringResource(R.string.mcp_phase_refused), style = Visor.type.label, color = Visor.colors.signal)
+                    else -> Unit
+                }
             }
         }
         Row(

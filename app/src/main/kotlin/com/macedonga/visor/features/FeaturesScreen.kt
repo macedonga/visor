@@ -59,6 +59,7 @@ import com.macedonga.visor.settings.SectionLabel
 import com.macedonga.visor.settings.SheetTitle
 import com.macedonga.visor.settings.Spinner
 import com.macedonga.visor.settings.Topic
+import com.macedonga.visor.settings.SheetBody
 import com.macedonga.visor.settings.VisorSheet
 import com.macedonga.visor.settings.VisorSwitch
 import com.macedonga.visor.ui.VisorIcons
@@ -345,14 +346,16 @@ private fun FeatureSheet(
     val host = LocalHost.current
     val connectFirst = stringResource(R.string.settings_locked)
     VisorSheet(onDismiss) {
-        Row(Modifier.padding(horizontal = SIDE).padding(top = 6.dp, bottom = 4.dp)) { FeatureTile(feature.icon, lit = standing == Standing.ON, size = 48) }
-        SheetTitle(stringResource(feature.title), stringResource(feature.about))
-        Column(Modifier.padding(horizontal = SIDE), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.features_how), style = Visor.type.label, color = Visor.colors.textSecondary)
-            Text(stringResource(feature.use), style = Visor.type.body, color = Visor.colors.textPrimary)
-            Spacer(Modifier.size(14.dp))
-            Text(stringResource(R.string.features_changes), style = Visor.type.label, color = Visor.colors.textSecondary)
-            for (gate in gates) KeyLine(gateWords(gate, config, settings))
+        SheetBody {
+            Row(Modifier.padding(horizontal = SIDE).padding(top = 6.dp, bottom = 4.dp)) { FeatureTile(feature.icon, lit = standing == Standing.ON, size = 48) }
+            SheetTitle(stringResource(feature.title), stringResource(feature.about))
+            Column(Modifier.padding(horizontal = SIDE), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.features_how), style = Visor.type.label, color = Visor.colors.textSecondary)
+                Text(stringResource(feature.use), style = Visor.type.body, color = Visor.colors.textPrimary)
+                Spacer(Modifier.size(14.dp))
+                Text(stringResource(R.string.features_changes), style = Visor.type.label, color = Visor.colors.textSecondary)
+                for (gate in gates) KeyLine(gateWords(gate, config, settings))
+            }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = SIDE).padding(top = 22.dp)) {
             val pin = Pins.feature(feature.id)
