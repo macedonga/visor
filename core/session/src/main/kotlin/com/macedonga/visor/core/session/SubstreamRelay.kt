@@ -70,6 +70,8 @@ class SubstreamRelay(
                 a.sent.set(0)
                 b.sent.set(0)
                 _state.value = RelayState.Opening
+                // The other side's close of the last round may still be queued.
+                while (lost.tryReceive().isSuccess) Unit
                 open()
                 // Both devices start their link at once, so silence means they will not.
                 if (!firstTraffic(lost)) {
