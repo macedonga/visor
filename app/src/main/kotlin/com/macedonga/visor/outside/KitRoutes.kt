@@ -489,7 +489,8 @@ class KitRoutes @Inject constructor(
 
     /** A capture in the gallery, which the caller may now read without a media permission. */
     private fun kitCapture(caller: Caller, kept: Kept): Capture {
-        if (!caller.shell) {
+        // A network client's or web app's name is no package, though it could match one.
+        if (!caller.shell && !caller.network) {
             try {
                 context.grantUriPermission(caller.packageName, Uri.parse(kept.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (e: SecurityException) {
