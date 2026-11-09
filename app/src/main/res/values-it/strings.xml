@@ -807,6 +807,7 @@
     <string name="onboard_step_meta">Chiedo a Meta</string>
     <string name="onboard_step_connect">Raggiungo gli occhiali</string>
     <string name="onboard_step_finish">Salvo questo telefono sugli occhiali</string>
+    <string name="onboard_step_press">Premi il tasto sugli occhiali</string>
 
     <!-- Il widget nella home e il riquadro nelle Impostazioni rapide. -->
     <string name="widget_name">Occhiali</string>
