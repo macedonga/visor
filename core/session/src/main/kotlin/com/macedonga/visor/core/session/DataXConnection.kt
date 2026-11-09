@@ -78,11 +78,10 @@ class DataXConnection(
                     for (message in decode(plaintext)) {
                         fromReader.send(message)
                         val move = rxMove
-                        if (move != null && move.trigger(message)) {
+                        // Switches only if the switch did not give up first: one side wins, never both.
+                        if (move != null && move.trigger(message) && move.done.complete(rx)) {
                             rxMove = null
-                            val left = rx
                             rx = move.next
-                            move.done.complete(left)
                         }
                     }
                 }
@@ -170,7 +169,7 @@ class DataXConnection(
         rxMove = RxMove(next, answer, done)
         val header = Header.build(channelId = openChannel(serviceId), dataLen = payload.size, serviceId = serviceId, messageType = messageType)
         writeNow(header + payload)
-        if (withTimeoutOrNull(waitMillis) { done.await() } == null) {
+        if (withTimeoutOrNull(waitMillis) { done.await() } == null && done.completeExceptionally(CancellationException("no answer to the switch"))) {
             rxMove = null
             return@withLock false
         }
