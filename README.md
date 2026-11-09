@@ -38,11 +38,11 @@ Visor works with Ray-Ban Meta, Oakley Meta and the other Meta glasses. It speaks
 | **Notifications** | Message notifications go to the glasses, which announce the sender by the name in your contacts. |
 | **Settings** | Every setting the glasses have, the way the Meta app shows them. Advanced holds the rest, assistant language packs and the firmware's feature flags. |
 | **Outside the app** | A home screen widget, a Quick Settings tile, launcher shortcuts, and a Live Update notification while the Live view runs. |
-| **Apps for your glasses** | Other apps on the phone, and programs on your computer, use the glasses through the [Visor Development Kit](https://github.com/macedonga/visor-kit), with your consent for each: the camera and captures, the band's gestures, the Display's layouts and Briefing cards, voice, the assistant's tools, settings. No Meta account or Meta AI app. |
+| **Apps for your glasses** | Other apps on the phone, programs on your computer and web apps on the Display use the glasses through the [Visor Development Kit](https://github.com/macedonga/visor-kit), with your consent for each: the camera and captures, the band's gestures and motion, the Display's layouts and Briefing cards, voice, the assistant's tools, settings. No Meta account or Meta AI app. |
 | **Developer mode** | Other apps and automations can take photos and videos, import captures and hear about new ones. See [Developer mode](docs/developer-mode.md). |
 | **More than one pair** | Keep several pairs on one phone. Home swipes between them, each with its name, batteries and a Connect button, and ends with a page to set up another. |
-| **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel with your apps' own cards, and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. |
-| **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. |
+| **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel with your apps' own cards, and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. Web apps get the phone's location, motion sensors and nearby Bluetooth devices, and can give your assistant tools. |
+| **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. Share it with the phone, and apps buzz it at once and read its gestures and motion while the Display keeps using it. |
 
 ## Requirements
 
