@@ -87,7 +87,6 @@ class KitLive @Inject constructor(
 
     @Synchronized
     private fun join(caller: Caller, quality: StreamQuality, frameRate: Int) {
-        watchers++
         val runs = live.running.value || live.status.value.phase !in setOf(LivePhase.IDLE, LivePhase.FAILED)
         if (!runs) {
             live.start(GlassesApp.LIVE_STREAMING, SessionApp.FAIR_DEMO, quality, BITRATES.getValue(quality), frameRate, overWifi = true)
@@ -96,6 +95,8 @@ class KitLive @Inject constructor(
             // The watcher joins mid-stream: a keyframe now beats waiting for the next one.
             live.requestKeyframe()
         }
+        // Counted only now: join runs before the try whose finally leaves.
+        watchers++
         log.add("Kit: ${caller.packageName} watches the camera live")
     }
 
