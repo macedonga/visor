@@ -67,6 +67,8 @@ class DeveloperMode @Inject constructor(
     private val log: EventLog,
     private val assistant: AssistantConfigStore,
     private val kitGrants: KitGrants,
+    private val networkClients: NetworkClients,
+    private val webApps: KitWebApps,
 ) {
     private val prefs = context.getSharedPreferences("developer", Context.MODE_PRIVATE)
     private val _on = MutableStateFlow(prefs.getBoolean(ON, false))
@@ -201,7 +203,11 @@ class DeveloperMode @Inject constructor(
             val ready = connection.state.map { it.link == LinkState.READY }.distinctUntilChanged()
                 .onEach { if (it) upAt = SystemClock.elapsedRealtime() }
             val photos = assistant.config.map { it.voicePhotos }.distinctUntilChanged()
-            val kitCamera = kitGrants.all.map { apps -> apps.values.any { Scope.CAMERA in it.scopes } }.distinctUntilChanged()
+            // Apps, computers and web apps alike: a phone-asked photo needs the switch for each of them.
+            val kitCamera = combine(kitGrants.all, networkClients.all, webApps.grants) { apps, clients, web ->
+                apps.keys.any { Scope.CAMERA in kitGrants.scopesOf(it) } || clients.any { Scope.CAMERA in it.scopes } ||
+                    web.values.any { Scope.CAMERA in it }
+            }.distinctUntilChanged()
             combine(ready, on, photos, kitCamera) { ready, on, photos, kit -> (on || photos || kit).takeIf { ready } }.collectLatest { on ->
                 on ?: return@collectLatest
                 // A link just up settles first; the configuration comes in a bug report.
