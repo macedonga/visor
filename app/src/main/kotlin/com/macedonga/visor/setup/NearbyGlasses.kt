@@ -3,7 +3,10 @@ package com.macedonga.visor.setup
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -110,31 +113,57 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
             .map { NearbyPair(it.address, it.name, null, pairing = false, bonded = true) }
     }.getOrDefault(emptyList())
 
-    /** Bonds [address]; returns the identity address the bond is kept under. Polled: the bond broadcast names only that address. */
-    @SuppressLint("MissingPermission")
+    /** Bonds [address] over LE; returns the identity address the bond is kept under. Polled: the bond broadcast names only that address. */
+    @SuppressLint("MissingPermission", "NewApi")
     suspend fun bond(address: String): String {
         val adapter = adapter?.takeIf { it.isEnabled } ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
         val device = adapter.getRemoteDevice(address)
         if (device.bondState == BluetoothDevice.BOND_BONDED) return address
         val before = adapter.bondedDevices.map { it.address }.toSet()
-        if (!device.createBond()) throw BondFailed(BondFailed.Why.REFUSED)
-        var bonding = false
-        val deadline = SystemClock.elapsedRealtime() + BOND_MS
-        while (SystemClock.elapsedRealtime() < deadline) {
-            delay(POLL_MS)
-            val state = device.bondState
-            val added = adapter.bondedDevices.filter { it.address !in before }
-            if (state == BluetoothDevice.BOND_BONDED || added.isNotEmpty()) {
-                return added.firstOrNull { it.address == address }?.address
-                    ?: added.firstOrNull { it.name == device.name }?.address
-                    ?: added.firstOrNull()?.address
-                    ?: address
+        // Left to choose, some phones page the pair over BR/EDR first and time out (#92). From Android 17 the bond
+        // names LE; before, an LE link held open makes the phone bond on it.
+        val modern = Build.VERSION.SDK_INT >= 37
+        val link = if (modern) null else leLink(device)
+        try {
+            val asked = if (modern) device.createBond(BluetoothDevice.TRANSPORT_LE) else device.createBond()
+            // The glasses may start the bond themselves once the link is up.
+            if (!asked && device.bondState == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
+            var bonding = false
+            val deadline = SystemClock.elapsedRealtime() + BOND_MS
+            while (SystemClock.elapsedRealtime() < deadline) {
+                delay(POLL_MS)
+                val state = device.bondState
+                val added = adapter.bondedDevices.filter { it.address !in before }
+                if (state == BluetoothDevice.BOND_BONDED || added.isNotEmpty()) {
+                    return added.firstOrNull { it.address == address }?.address
+                        ?: added.firstOrNull { it.name == device.name }?.address
+                        ?: added.firstOrNull()?.address
+                        ?: address
+                }
+                if (state == BluetoothDevice.BOND_BONDING) bonding = true
+                // Back to none after trying: turned down on the phone or by the glasses.
+                if (bonding && state == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
             }
-            if (state == BluetoothDevice.BOND_BONDING) bonding = true
-            // Back to none after trying: turned down on the phone or by the glasses.
-            if (bonding && state == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
+            throw BondFailed(BondFailed.Why.NO_ANSWER)
+        } finally {
+            link?.let { runCatching { it.disconnect() }; it.close() }
         }
-        throw BondFailed(BondFailed.Why.NO_ANSWER)
+    }
+
+    /** An LE link to [device] for a bond to go over; null when it is not up within [LINK_MS]. */
+    @SuppressLint("MissingPermission")
+    private suspend fun leLink(device: BluetoothDevice): BluetoothGatt? {
+        val up = CompletableDeferred<Boolean>()
+        val callback = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) up.complete(true)
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) up.complete(false)
+            }
+        }
+        val gatt = runCatching { device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE) }.getOrNull() ?: return null
+        if (withTimeoutOrNull(LINK_MS) { up.await() } == true) return gatt
+        gatt.close()
+        return null
     }
 
     /**
@@ -236,6 +265,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         const val FORGET_MS = 12_000L
         const val SWEEP_MS = 2_000L
         const val BOND_MS = 90_000L
+        const val LINK_MS = 8_000L
         const val BAND_SCAN_MS = 15_000L
         const val POLL_MS = 400L
         val GLASSES_NAME = Regex("ray-?ban|meta|oakley|stories", RegexOption.IGNORE_CASE)
