@@ -75,9 +75,9 @@ class KitWebApps @Inject constructor(
         for (filter in filters) {
             val f = runCatching { Wire.parse(filter) }.getOrNull() ?: continue
             for (entry in f.repeatedBytes(4)) {
-                val e = Wire.parse(entry)
+                val e = runCatching { Wire.parse(entry) }.getOrNull() ?: continue
                 if (e.varint(1).toInt() != COMPANY) continue
-                val prefix = Wire.parse(e.bytes(2)).bytes(1)
+                val prefix = runCatching { Wire.parse(e.bytes(2)).bytes(1) }.getOrNull() ?: continue
                 if (prefix.size >= HEADER && MAGIC.indices.all { prefix[it] == MAGIC[it] }) return prefix
             }
         }
