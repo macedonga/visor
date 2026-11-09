@@ -8,10 +8,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -26,21 +22,18 @@ import com.macedonga.visor.RequestLogKey
 import com.macedonga.visor.SettingsGroupKey
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GROUPS
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
-import com.macedonga.visor.outside.DeveloperMode
 import com.macedonga.visor.ui.VisorIcons
-import com.macedonga.visor.ui.copy
 
 /** Every setting by firmware group, other models' groups last and dimmed, then the tools. */
 @Composable
 fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewModel()) {
     val glasses by model.connection.state.collectAsStateWithLifecycle()
     val state by model.settings.state.collectAsStateWithLifecycle()
-    val developer by model.developer.on.collectAsStateWithLifecycle()
-    val tokenRequired by model.developer.tokenRequired.collectAsStateWithLifecycle()
     val display = isDisplayProduct(rememberProduct(model.settings, model.lastSeen))
     val byGroup = allKeys(model.settings, state).groupBy { specOf(model.settings, it).group }
     val (own, others) = ALL_GROUPS.filter { byGroup[it] != null }.partition { display || it !in DISPLAY_GROUPS }
@@ -74,14 +67,11 @@ fun AdvancedScreen(open: (NavKey) -> Unit, model: SettingsViewModel = hiltViewMo
                     { NavRow(VisorIcons.Globe, stringResource(R.string.requests_title), null, onClick = { open(RequestLogKey) }, onCard = true) },
                     { BugReportRow(model) },
                 )
-                Spacer(Modifier.height(12.dp))
-                Rows(
-                    // The bond needs a Display connected now.
-                    if (isDisplayBuild(glasses.info?.build) && classicBondOffered) row { ClassicBondRows() } else null,
-                    { ToggleRow(stringResource(R.string.settings_developer), developer, { model.developer.set(it) }) },
-                    if (developer) row { TokenRow(model.developer) } else null,
-                    if (developer) row { ToggleRow(stringResource(R.string.settings_developer_token_required), tokenRequired, { model.developer.requireToken(it) }) } else null,
-                )
+                // The bond needs a Display connected now.
+                if (isDisplayBuild(glasses.info?.build) && classicBondOffered) {
+                    Spacer(Modifier.height(12.dp))
+                    Rows({ ClassicBondRows() })
+                }
             }
         }
     }
@@ -100,30 +90,6 @@ private fun BugReportRow(model: SettingsViewModel) {
         },
         onCard = true, enabled = host.ready, chevron = false,
     )
-}
-
-/** Developer mode's token: copy it, or replace it after a confirm. */
-@Composable
-private fun TokenRow(developer: DeveloperMode) {
-    val token by developer.token.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val host = LocalHost.current
-    val copied = stringResource(R.string.mcp_copied)
-    var renewing by remember { mutableStateOf(false) }
-    val copyToken = {
-        copy(context, token, "token", sensitive = true)
-        host.notice.show(copied)
-    }
-    RowFrame(stringResource(R.string.settings_developer_token), onClick = copyToken, keyLine = token) {
-        RoundIcon(VisorIcons.Copy, stringResource(R.string.meta_ai_copy), copyToken, size = 40.dp)
-        RoundIcon(VisorIcons.Refresh, stringResource(R.string.settings_developer_token_new), { renewing = true }, size = 40.dp)
-    }
-    if (renewing) {
-        ConfirmSheet(
-            stringResource(R.string.settings_developer_token_new_title), null, stringResource(R.string.settings_developer_token_new),
-            onConfirm = developer::renewToken, onDismiss = { renewing = false },
-        )
-    }
 }
 
 @Composable

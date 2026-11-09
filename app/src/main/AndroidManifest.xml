@@ -50,6 +50,10 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- VDK apps that a voice phrase starts. -->
+        <intent>
+            <action android:name="com.macedonga.visor.kit.action.VOICE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
@@ -152,6 +156,34 @@
                 <action android:name="com.macedonga.visor.action.IMPORT_MEDIA" />
             </intent-filter>
         </receiver>
+
+        <!-- The VDK, the Visor Development Kit: apps bind this, and get what the person grants them. -->
+        <service
+            android:name=".outside.KitService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.macedonga.visor.kit.action.BIND" />
+            </intent-filter>
+        </service>
+
+        <!-- The VDK's consent screen, over the app that asks. -->
+        <activity
+            android:name=".dat.ToolkitActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".outside.KitConsentActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="com.macedonga.visor.kit.action.REQUEST_SCOPES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <!-- The Live view's frames for an app holding developer mode's token. -->
         <service

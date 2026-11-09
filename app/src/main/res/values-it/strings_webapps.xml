@@ -1,19 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="webapps_row">App web</string>
-    <string name="webapps_title">App web</string>
     <string name="webapps_add">Aggiungi</string>
-    <string name="webapps_open">Apri</string>
     <string name="webapps_remove">Rimuovi</string>
     <string name="webapps_name">Nome</string>
     <string name="webapps_url">Indirizzo (https)</string>
-    <string name="webapps_none">Nessuna app web</string>
-    <string name="webapps_browse">Sfoglia</string>
+    <string name="webapps_bluetooth">Dispositivi Bluetooth vicini</string>
+    <string name="webapps_bluetooth_failed">Non è stato possibile cambiarlo: %1$s</string>
+    <string name="webapps_access">Accesso a Visor</string>
+    <string name="webapps_saving_read">Lettura della configurazione degli occhiali. Succede una volta sola e può richiedere un minuto.</string>
+    <string name="webapps_saving_send">Salvataggio sugli occhiali…</string>
+    <string name="webapps_summary_bluetooth">Bluetooth</string>
+    <string name="webapps_summary_visor">Visor: %1$s</string>
+    <string name="webapps_tools">Strumenti delle web app per l\'assistente</string>
+    <string name="webapps_tools_sub">Una web app aperta sugli occhiali può dare all\'assistente degli strumenti da usare, come aggiungere qualcosa alla sua lista. Cambiarlo scrive la configurazione degli occhiali.</string>
     <string name="webapps_on_glasses">Sugli occhiali</string>
     <string name="webapps_catalogue_failed">Impossibile caricare il catalogo</string>
     <string name="webapps_catalogue_none">Nessuna app web per questi occhiali</string>
-    <string name="webapps_opened">Aperta sugli occhiali</string>
-    <string name="webapps_not_opened">Gli occhiali non l\'hanno aperta</string>
     <string name="webapps_not_https">Usa un indirizzo https</string>
     <string name="webapps_full">Massimo 20 app web</string>
     <string name="webapps_unreadable">Impossibile leggere le app web degli occhiali</string>

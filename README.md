@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>An Android app for Meta glasses that replaces the Meta AI app.</b><br>
-  Your photos stay on your phone, and "Hey Meta" answers with the model you choose.
+  Your photos stay on your phone, "Hey Meta" answers with the model you choose, and your apps use the glasses too.
 </p>
 
 <p align="center">
@@ -16,6 +16,7 @@
 <p align="center">
   <a href="https://visor.macedonga.com">Website</a> |
   <a href="#what-it-does">Features</a> |
+  <a href="#apps-for-your-glasses">Apps</a> |
   <a href="#install">Install</a> |
   <a href="#what-it-sends-and-where">Privacy</a> |
   <a href="#good-to-know">Good to know</a> |
@@ -39,10 +40,23 @@ Visor works with Ray-Ban Meta, Oakley Meta and the other Meta glasses. It speaks
 | **Notifications** | Message notifications go to the glasses, which announce the sender by the name in your contacts. |
 | **Settings** | Every setting the glasses have, the way the Meta app shows them. Advanced holds the rest, assistant language packs and the firmware's feature flags. |
 | **Outside the app** | A home screen widget, a Quick Settings tile, launcher shortcuts, and a Live Update notification while the Live view runs. |
-| **Developer mode** | Other apps and automations can take photos and videos, import captures and hear about new ones. See [Developer mode](https://visor.macedonga.com/developers/docs/developer-mode/). |
 | **More than one pair** | Keep several pairs on one phone. Home swipes between them, each with its name, batteries and a Connect button, and ends with a page to set up another. |
-| **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. |
-| **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. |
+| **Meta Ray-Ban Display** | A teleprompter, live captions and translation, the Neural Band's gestures, the Briefing panel with your apps' own cards, and saved Wi-Fi networks. The glasses' own apps reach the internet through the phone, with Instagram's Reels and messages among them. Web apps get the phone's location, motion sensors and nearby Bluetooth devices, and can give your assistant tools. |
+| **Neural Band** | Set up from the Display's settings, with its battery on Home and its wrist in Settings. Share it with the phone, and apps buzz it at once and read its gestures and motion while the Display keeps using it. |
+
+## Apps for your glasses
+
+Visor is also where your apps meet the glasses. Through the [Visor Development Kit](https://visor.macedonga.com/developers/)
+(VDK), apps on your phone, programs and AI agents on your computer, and web apps on the Display use the camera and
+captures, the Display's layouts and Briefing cards, the Neural Band's gestures and motion, voice, the assistant's
+tools and the glasses' settings. No Meta account, no Meta AI app, no developer review.
+
+| To | Do this |
+|---|---|
+| **Use an app** | It asks for what it needs the first time, on Visor's consent screen. **Settings, Apps** lists every app, program and web app with access, and takes any of it back. |
+| **Connect a program or an AI agent** | In **Settings, Apps**, turn on **Let programs connect** and add the program, with its own token. Agents get the glasses over MCP. |
+| **Build your own** | For Android, Python, TypeScript, or a web app on the Display: start with the [getting started guide](https://visor.macedonga.com/developers/docs/getting-started/). `visor fake` stands in for the glasses while you build. |
+| **Automate** | Automation apps such as Tasker take photos and videos and hear about new captures through [Developer mode](https://visor.macedonga.com/developers/docs/developer-mode/)'s intents. |
 
 ## Requirements
 

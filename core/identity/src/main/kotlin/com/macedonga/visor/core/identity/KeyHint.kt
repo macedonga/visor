@@ -39,7 +39,8 @@ fun keyHint(publicKey: ByteArray): ByteArray {
     return salt + hintHash(publicKey, salt)
 }
 
-private fun hintHash(publicKey: ByteArray, salt: ByteArray): ByteArray {
+/** SHA256(SHA256(key) ‖ salt)[:8]: a key hint's hash, and the key tag a constellation manifest names a peer by. */
+internal fun hintHash(publicKey: ByteArray, salt: ByteArray): ByteArray {
     val sha = MessageDigest.getInstance("SHA-256")
     val inner = sha.digest(publicKey)
     sha.update(inner)

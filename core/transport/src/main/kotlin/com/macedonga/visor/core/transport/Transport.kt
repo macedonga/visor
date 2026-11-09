@@ -16,6 +16,9 @@ interface Transport {
 
     /** Close the link, and end any read waiting on it. Safe to call twice. */
     fun close()
+
+    /** The handshake is done: a leading bit 7 now starts a COMMAND frame, not a bare DataX message. */
+    fun handshakeDone() {}
 }
 
 /** The peer closed the link, or this end did. */

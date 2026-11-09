@@ -1,0 +1,335 @@
+package com.macedonga.visor.core.protocol
+
+/**
+ * Meta's device access toolkit, as a phone app speaks it on an app-scope link: the session on svc7009, then the
+ * toolkit app on the glasses (com.meta.wearable.dat.developer in developer mode) on svc6500.
+ */
+object Dat {
+    const val SESSION_SERVICE = 7009
+    const val DWA_SERVICE = 6500
+
+    // svc7009 message types.
+    const val SESSION_START_REQUEST = 1
+    const val SESSION_START_RESPONSE = 2
+    const val SESSION_STOP_REQUEST = 3
+    const val SESSION_STOP_RESPONSE = 4
+    const val SESSION_STOP = 5
+    const val SESSION_PAUSE = 6
+    const val SESSION_RESUME = 7
+
+    // SessionStartResponse status.
+    const val START_OK = 0
+    const val START_UNAUTHORIZED = 1
+    const val START_DEVICE_UNAVAILABLE = 2
+    const val START_SDK_TOO_OLD = 3
+
+    // SessionStartResponse launch status of the toolkit app.
+    const val DWA_LAUNCHED = 1
+    const val DWA_NOT_REQUESTED = 2
+    const val DWA_LAUNCH_FAILED = 4
+
+    private const val PLATFORM_ANDROID = 2
+
+    /**
+     * SessionStartRequest {1 app_id, 2 session_id, 3 session_name, 4 is_dev_mode, 5 uses_dam, 7 platform, 8
+     * sdk_version}. Developer mode names no toolkit app (6): the glasses run the developer one.
+     */
+    fun sessionStart(appId: String, sessionId: String, name: String, sdkVersion: String, usesDam: Boolean = true): ByteArray =
+        Wire.fieldString(1, appId) + Wire.fieldString(2, sessionId) + Wire.fieldString(3, name) +
+            Wire.fieldVarint(4, 1) + (if (usesDam) Wire.fieldVarint(5, 1) else ByteArray(0)) +
+            Wire.fieldVarint(7, PLATFORM_ANDROID.toLong()) + Wire.fieldString(8, sdkVersion)
+
+    /** SessionStartResponse {1 status, 2 session_id, 3 dwa_version_name, 4 dwa_version_code, 5 dwa_launch, 6 compatibility}. */
+    class SessionStarted(val status: Int, val sessionId: String, val dwaVersion: String, val dwaLaunch: Int, val compatibility: Int)
+
+    fun sessionStarted(payload: ByteArray): SessionStarted {
+        val f = Wire.parse(payload)
+        return SessionStarted(
+            f.varint(1).toInt(), f.bytes(2).decodeToString(), f.bytes(3).decodeToString(), f.varint(5).toInt(), f.varint(6).toInt(),
+        )
+    }
+
+    /** SessionStopRequest {1 session_id, 2 is_dev_mode}. */
+    fun sessionStop(sessionId: String): ByteArray = Wire.fieldString(1, sessionId) + Wire.fieldVarint(2, 1)
+
+    /**
+     * A gesture the glasses forward during a session, with or without the toolkit app: svc7009 type 1 from the glasses,
+     * SessionInput {1 source, 2 gesture, 3 actuator, 4 timestamp_ms}. Measured on the Display, 2026-11-08.
+     */
+    const val SESSION_INPUT = 1
+    const val INPUT_EMG = 1
+    const val INPUT_CAPTOUCH = 2
+
+    // Gestures: 1 tap, 2 double tap, 3 triple tap, 4 hold, 5 to 8 a swipe up, down, left, right.
+    // Actuators: 3 thumb, 4 index, 5 middle.
+    class SessionInput(val source: Int, val gesture: Int, val actuator: Int, val timeMs: Long)
+
+    fun sessionInput(payload: ByteArray): SessionInput {
+        val f = Wire.parse(payload)
+        return SessionInput(f.varint(1).toInt(), f.varint(2).toInt(), f.varint(3).toInt(), f.varint(4))
+    }
+
+    // svc6500 message types.
+    const val REQUEST = 1
+    const val RESPONSE = 2
+    const val EVENT = 3
+
+    // Capabilities.
+    const val DISPLAY = 1
+    const val STREAM = 2
+    const val CAPTURE = 3
+    const val SPEECH = 4
+    const val IMU = 5
+    const val INPUT = 6
+
+    // DwaApiResponse status.
+    const val STATUS_OK = 1
+    const val STATUS_ERROR = 2
+    const val STATUS_UNSUPPORTED = 3
+
+    private const val PROTOCOL_VERSION = 1L
+
+    // A capability payload over this goes in pieces: fragments first, then the request with the last piece.
+    private const val FRAGMENT_BYTES = 15_000
+
+    /** DwaRequestBody {1 capability_query}. */
+    fun capabilityQuery(): ByteArray = Wire.fieldBytes(1, ByteArray(0))
+
+    /** DwaRequestBody {2 add_capability {1 capability}}. */
+    fun addCapability(capability: Int): ByteArray = Wire.fieldBytes(2, Wire.fieldVarint(1, capability.toLong()))
+
+    /** DwaRequestBody {3 remove_capability {1 capability}}. */
+    fun removeCapability(capability: Int): ByteArray = Wire.fieldBytes(3, Wire.fieldVarint(1, capability.toLong()))
+
+    /**
+     * DwaRequest {1 header {1 protocol_version, 2 message_id, 3 capability, 4 timestamp_ms}, 2 body}, each one
+     * a type [REQUEST] message. [payload] is the capability's own request, carried as body field 4, or null for a
+     * body made by [capabilityQuery], [addCapability] or [removeCapability].
+     */
+    fun requests(messageId: String, capability: Int, body: ByteArray?, payload: ByteArray?, nowMs: Long): List<ByteArray> {
+        val header = Wire.fieldBytes(
+            1,
+            Wire.fieldVarint(1, PROTOCOL_VERSION) + Wire.fieldString(2, messageId) + Wire.fieldVarint(3, capability.toLong()) +
+                Wire.fieldVarint(4, nowMs),
+        )
+        if (payload == null) return listOf(header + Wire.fieldBytes(2, body ?: ByteArray(0)))
+        val pieces = payload.toList().chunked(FRAGMENT_BYTES).map { it.toByteArray() }.ifEmpty { listOf(ByteArray(0)) }
+        val fragments = pieces.dropLast(1).map { Wire.fieldBytes(3, Wire.fieldBytes(1, it)) }
+        return fragments + (header + Wire.fieldBytes(2, Wire.fieldBytes(4, pieces.last())))
+    }
+
+    /**
+     * DwaApiResponse {2 request_message_id, 3 capability, 5 status, 6 error {1 code, 2 message, 3 recoverable},
+     * 7 add_capability {1 active}, 11 capability_denied {1 reason}, 12 capability_response_payload}.
+     */
+    class Response(
+        val requestId: String,
+        val capability: Int,
+        val status: Int,
+        val error: String?,
+        val active: Boolean?,
+        val denied: String?,
+        val payload: ByteArray?,
+    )
+
+    fun response(payload: ByteArray): Response {
+        val f = Wire.parse(payload)
+        val error = if (f.has(6)) Wire.parse(f.bytes(6)).let { e -> "${e.varint(1)}: ${e.bytes(2).decodeToString()}" } else null
+        return Response(
+            requestId = f.bytes(2).decodeToString(),
+            capability = f.varint(3).toInt(),
+            status = f.varint(5).toInt(),
+            error = error,
+            active = if (f.has(7)) Wire.parse(f.bytes(7)).varint(1) != 0L else null,
+            denied = if (f.has(11)) Wire.parse(f.bytes(11)).bytes(1).decodeToString() else null,
+            payload = if (f.has(12)) f.bytes(12) else null,
+        )
+    }
+
+    /** DwaEvent {2 capability, 5 forced_shutdown {1 reason}, 6 capability_event_payload, 7 heartbeat}. */
+    class Event(val capability: Int, val payload: ByteArray?, val shutdown: String?, val heartbeat: Boolean)
+
+    fun event(payload: ByteArray): Event {
+        val f = Wire.parse(payload)
+        return Event(
+            capability = f.varint(2).toInt(),
+            payload = if (f.has(6)) f.bytes(6) else null,
+            shutdown = if (f.has(5)) Wire.parse(f.bytes(5)).bytes(1).decodeToString() else null,
+            heartbeat = f.has(7),
+        )
+    }
+
+    /** DisplayRequestPayload {3 display_content {4 payload}}: a gzipped Bloks layout for the toolkit app to draw. */
+    fun displayContent(bloks: ByteArray): ByteArray = Wire.fieldBytes(3, Wire.fieldBytes(4, bloks))
+
+    /** DisplayRequestPayload {8 display_clear}. */
+    fun displayClear(): ByteArray = Wire.fieldBytes(8, ByteArray(0))
+
+    /** DisplayRequestPayload {4 video_view {1 uri}}: the toolkit app fetches and plays the video, alone on the screen. */
+    fun videoView(url: String): ByteArray = Wire.fieldBytes(4, Wire.fieldString(1, url))
+
+    /** DisplayRequestPayload {7 video_stop}. */
+    fun videoStop(): ByteArray = Wire.fieldBytes(7, ByteArray(0))
+
+    // VideoPlaybackEvent types and errors.
+    const val VIDEO_STARTED = 1
+    const val VIDEO_ENDED = 2
+    const val VIDEO_STOPPED = 3
+    const val VIDEO_ERROR = 4
+
+    /** A video's change, from DisplayEventPayload {2 video_event {1 type, 2 error}}: (type, error), or null for another event. */
+    fun videoEvent(eventPayload: ByteArray): Pair<Int, Int>? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(2) }?.bytes(2) ?: return null
+        val f = Wire.parse(event)
+        return f.varint(1).toInt() to f.varint(2).toInt()
+    }
+
+    /** The id of a click in a DisplayEventPayload {1 display_event {1 click {1 identifier}}}, or null for anything else. */
+    fun displayClick(eventPayload: ByteArray): String? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return null
+        val click = Wire.parse(event).takeIf { it.has(1) }?.bytes(1) ?: return null
+        return Wire.parse(click).bytes(1).decodeToString()
+    }
+
+    /** True for a DisplayEventPayload {1 display_event {2 back}}: the wearer went back, and the layout is gone. */
+    fun displayBack(eventPayload: ByteArray): Boolean {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return false
+        return Wire.parse(event).has(2)
+    }
+
+    // The input capability's sources.
+    const val NAV_TOUCHPAD = 1
+    const val NAV_BAND = 2
+    const val NAV_CAPTURE_BUTTON = 3
+    const val NAV_ACTION_BUTTON = 4
+    const val NAV_BAND_DRAG = 5
+
+    /** InputRequestPayload {1 input_start {1 packed sources, 2 consume_back}}: with [consumeBack], back is the app's. */
+    fun inputStart(sources: List<Int>, consumeBack: Boolean): ByteArray {
+        val packed = sources.fold(ByteArray(0)) { out, s -> out + Wire.encodeVarint(s.toLong()) }
+        return Wire.fieldBytes(1, Wire.fieldBytes(1, packed) + Wire.fieldVarint(2, if (consumeBack) 1 else 0))
+    }
+
+    /**
+     * One event of the input capability: InputEvent {1 source, 2 timestamp_ms, then one of 3 nav {1 direction: 1 up,
+     * 2 down, 3 left, 4 right}, 4 select, 5 back, 6 button {1 type}, 7 capture {1 press}, 8 drag {1 action: 1 down,
+     * 2 move, 3 up; 2 x, 3 y, 4 dx, 5 dy, floats}}. [kind] is the field of the one that came.
+     */
+    class Navigation(
+        val source: Int,
+        val timeMs: Long,
+        val kind: Int,
+        val direction: Int = 0,
+        val dragAction: Int = 0,
+        val x: Float = 0f,
+        val y: Float = 0f,
+        val dx: Float = 0f,
+        val dy: Float = 0f,
+    )
+
+    const val NAV = 3
+    const val SELECT = 4
+    const val BACK = 5
+    const val DRAG = 8
+
+    /** InputEventPayload {1 input_data {1 repeated InputEvent}}. */
+    fun navigation(eventPayload: ByteArray): List<Navigation> {
+        val data = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return emptyList()
+        return Wire.parse(data).repeatedBytes(1).map { raw ->
+            val e = Wire.parse(raw)
+            val kind = listOf(NAV, SELECT, BACK, 6, 7, DRAG).firstOrNull(e::has) ?: 0
+            val body = if (kind != 0) Wire.parse(e.bytes(kind)) else null
+            Navigation(
+                source = e.varint(1).toInt(),
+                timeMs = e.varint(2),
+                kind = kind,
+                direction = if (kind == NAV) body?.varint(1)?.toInt() ?: 0 else 0,
+                dragAction = if (kind == DRAG) body?.varint(1)?.toInt() ?: 0 else 0,
+                x = if (kind == DRAG) body?.float(2) ?: 0f else 0f,
+                y = if (kind == DRAG) body?.float(3) ?: 0f else 0f,
+                dx = if (kind == DRAG) body?.float(4) ?: 0f else 0f,
+                dy = if (kind == DRAG) body?.float(5) ?: 0f else 0f,
+            )
+        }
+    }
+
+    /** SpeechRequestPayload {1 speech_start {}}: the toolkit app hears in the Display's own language. */
+    fun speechStart(): ByteArray = Wire.fieldBytes(1, ByteArray(0))
+
+    /** SpeechRequestPayload {2 speech_stop {}}. */
+    fun speechStop(): ByteArray = Wire.fieldBytes(2, ByteArray(0))
+
+    /** The language speech_start answered, from SpeechResponsePayload {1 speech_start {1 started, 2 locale}}. */
+    fun speechLocale(responsePayload: ByteArray?): String? {
+        val start = responsePayload?.let(Wire::parse)?.takeIf { it.has(1) }?.bytes(1)?.let(Wire::parse) ?: return null
+        return start.bytes(2).decodeToString().takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * One event of the speech capability, SpeechEventPayload {1 speech_event {1 transcription {1 text, 2 is_final,
+     * 3 confidence}, 2 error {1 code, 2 message}, 3 completion {}}}: [text] for a transcription, [error] for an error,
+     * [done] when recognition ended.
+     */
+    class Speech(val text: String?, val final: Boolean, val confidence: Float, val error: String?, val done: Boolean)
+
+    private const val LEGACY_COMPLETION = -2
+
+    fun speech(eventPayload: ByteArray): Speech? {
+        val event = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1)?.let(Wire::parse) ?: return null
+        return when {
+            event.has(1) -> Wire.parse(event.bytes(1)).let {
+                Speech(it.bytes(1).decodeToString(), it.varint(2) != 0L, it.float(3), error = null, done = false)
+            }
+            // Older firmware ends an utterance with error -2, as DAT reads it.
+            event.has(2) -> Wire.parse(event.bytes(2)).let {
+                val code = it.varint(1).toInt()
+                if (code == LEGACY_COMPLETION) {
+                    Speech(null, final = false, confidence = 0f, error = null, done = true)
+                } else {
+                    Speech(null, final = false, confidence = 0f, error = "$code: ${it.bytes(2).decodeToString()}", done = false)
+                }
+            }
+            event.has(3) -> Speech(null, final = false, confidence = 0f, error = null, done = true)
+            else -> null
+        }
+    }
+
+    /** The IMU's rates, in Hz, in the order of their enum: 5 Hz is 1. */
+    val MOTION_RATES = listOf(5, 10, 15, 24, 30, 60)
+
+    /** MotionRequestPayload {1 motion_start {1 sampling_rate}}. */
+    fun motionStart(rateHz: Int): ByteArray {
+        val rate = MOTION_RATES.indexOf(rateHz) + 1
+        require(rate > 0) { "no IMU rate of $rateHz Hz" }
+        return Wire.fieldBytes(1, Wire.fieldVarint(1, rate.toLong()))
+    }
+
+    /** MotionRequestPayload {2 motion_stop}. */
+    fun motionStop(): ByteArray = Wire.fieldBytes(2, ByteArray(0))
+
+    class Vector(val x: Float, val y: Float, val z: Float)
+
+    class Rotation(val x: Float, val y: Float, val z: Float, val w: Float)
+
+    /** MotionSample {1 timestamp_ns, 2 accelerometer, 3 gyroscope, 4 magnetometer, 5 orientation, 6 source (1 glasses, 2 band)}. */
+    class Sample(val timeNs: Long, val accelerometer: Vector?, val gyroscope: Vector?, val magnetometer: Vector?, val orientation: Rotation?, val band: Boolean)
+
+    /** The samples of a MotionEventPayload {1 imu_data {1 repeated MotionSample}}. */
+    fun motionSamples(eventPayload: ByteArray): List<Sample> {
+        val imu = Wire.parse(eventPayload).takeIf { it.has(1) }?.bytes(1) ?: return emptyList()
+        return Wire.parse(imu).repeatedBytes(1).map { raw ->
+            val s = Wire.parse(raw)
+            Sample(
+                timeNs = s.varint(1),
+                accelerometer = s.vector(2),
+                gyroscope = s.vector(3),
+                magnetometer = s.vector(4),
+                orientation = if (s.has(5)) Wire.parse(s.bytes(5)).let { q -> Rotation(q.float(1), q.float(2), q.float(3), q.float(4)) } else null,
+                band = s.varint(6) == 2L,
+            )
+        }
+    }
+
+    private fun Wire.Fields.vector(fn: Int): Vector? =
+        if (has(fn)) Wire.parse(bytes(fn)).let { v -> Vector(v.float(1), v.float(2), v.float(3)) } else null
+}

@@ -6,7 +6,6 @@ import android.util.Base64
 import android.webkit.CookieManager
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.protocol.SVC_LEASE
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -20,23 +19,16 @@ import com.macedonga.visor.core.settings.encodeProto
 import com.macedonga.visor.core.settings.parseProto
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** A web app on the glasses: its partner_app_settings key, title, page and icon. */
 data class WebApp(val key: String, val name: String, val url: String, val icon: String = "")
@@ -49,6 +41,7 @@ class WebApps @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: Provider<GlassesConnection>,
     private val settings: Provider<GlassesSettings>,
+    private val scans: WebBleScans,
     private val log: EventLog,
 ) : Responder {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -58,16 +51,23 @@ class WebApps @Inject constructor(
     private val lock = Any()
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
-        if (message.payload.isEmpty() && message.info.flags.isClosed) return
+        if (message.info.flags.isClosed) {
+            scans.stop(message.info.channelId)
+            if (message.payload.isEmpty()) return
+        }
         val reply = DataXConnection.mirror(message.info.channelId)
         val f = runCatching { Wire.parse(message.payload) }.getOrNull() ?: return
         when (message.info.messageType) {
             MT_MANAGE -> connection.send(reply, manage(f), messageType = MT_MANAGE_RESPONSE)
             MT_GET_COOKIES -> connection.send(reply, cookies(f), messageType = MT_SET_COOKIES)
-            // Visor scans for nothing: the page gets an answer with no devices.
-            MT_BLE_SCAN_START -> connection.send(reply, Wire.fieldBytes(1, f.bytes(1)), messageType = MT_BLE_SCAN_RESPONSE)
+            WebBleScans.MT_START -> scans.start(connection, message.info.channelId, message.payload)
+            WebBleScans.MT_STOP -> scans.stop(message.info.channelId)
             else -> log.add("Web apps: type ${message.info.messageType} not served")
         }
+    }
+
+    override suspend fun closed(channelId: Int, connection: DataXConnection) {
+        scans.stop(channelId)
     }
 
     /** Add a page, from the Display's CREATE or the Add sheet, with Meta's [manifest] (base64) for a catalogue app. */
@@ -124,32 +124,6 @@ class WebApps @Inject constructor(
         val sent = settings.get().write(SETTING, Base64.encodeToString(encodeProto(fields), Base64.NO_WRAP))
         if (!sent) log.add("Web apps: the list did not go to the glasses")
         return sent
-    }
-
-    /** Open [app] on the glasses: a lease on the browser's service (svc56, feature 19), then OPEN on svc55074. */
-    suspend fun open(app: WebApp): Boolean {
-        val glasses = connection.get()
-        if (glasses.state.value.link != LinkState.READY) return false
-        coroutineScope {
-            val bound = async(start = CoroutineStart.UNDISPATCHED) {
-                withTimeoutOrNull(BOUND_MS) {
-                    glasses.serviceData.first {
-                        it.serviceId == SVC_LEASE && it.messageType == MT_LIFECYCLE &&
-                            runCatching { Wire.parse(it.payload).varint(2) }.getOrNull() == STATE_BOUND
-                    }
-                }
-            }
-            glasses.submit { it.sendOnService(SVC_LEASE, MT_LEASE, Wire.fieldVarint(1, FEATURE_WEB_APP)) }
-            if (bound.await() == null) log.add("Web apps: the browser's service did not report bound; sending OPEN anyway")
-        }
-        delay(REGISTER_MS)
-        val request = Wire.fieldString(1, UUID.randomUUID().toString()) +
-            Wire.fieldVarint(2, ACTION_OPEN) +
-            Wire.fieldString(3, app.name) +
-            Wire.fieldString(4, app.url)
-        glasses.submit { mux -> mux.send(mux.openChannel(SVC), request, messageType = MT_MANAGE, serviceId = SVC) }
-        log.add("Web apps: OPEN sent for ${app.name}")
-        return true
     }
 
     private fun manage(f: Wire.Fields): ByteArray {
@@ -234,16 +208,10 @@ class WebApps @Inject constructor(
 
     companion object {
         const val SVC = 55074
-        private const val MT_LEASE = 1
-        private const val MT_LIFECYCLE = 3
-        private const val STATE_BOUND = 1L
-        private const val FEATURE_WEB_APP = 19L
         private const val MT_MANAGE = 15
         private const val MT_MANAGE_RESPONSE = 16
         private const val MT_GET_COOKIES = 11
         private const val MT_SET_COOKIES = 9
-        private const val MT_BLE_SCAN_START = 17
-        private const val MT_BLE_SCAN_RESPONSE = 20
         private const val ACTION_CREATE = 1L
         private const val ACTION_DELETE = 2L
         private const val ACTION_LIST = 3L
@@ -255,7 +223,5 @@ class WebApps @Inject constructor(
         private const val DEVELOPER_MODE = "developer_mode"
         private const val DISPLAY_CONFIGS = 3
         private const val MAX_APPS = 20
-        private const val BOUND_MS = 3_000L
-        private const val REGISTER_MS = 1_500L
     }
 }

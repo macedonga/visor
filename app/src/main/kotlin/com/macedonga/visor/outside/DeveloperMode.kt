@@ -24,6 +24,7 @@ import com.macedonga.visor.core.media.MediaImport
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.outside.DeveloperIntents as I
+import com.macedonga.visor.kit.protocol.Scope
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -51,9 +52,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 const val ROBUSTA = "wearables_robusta.demo_enabled"
 
 /**
- * Developer mode: other apps work the glasses' camera and import through [DeveloperIntents] and hear of each capture.
- * The glasses take a photo for the phone only with Meta's Robusta demo switch on, so the mode turns it on and, when
- * it ends, off. Voice photos need the same switch, so it stays on while either wants it.
+ * Developer mode: other apps work the glasses' camera and import through [DeveloperIntents] and hear of each capture,
+ * and the VDK's adb socket opens. The glasses take a photo for the phone only with Meta's Robusta demo switch on, so
+ * the mode turns it on and, when it ends, off. Voice photos and VDK apps holding the camera scope need the same
+ * switch, so it stays on while any of them wants it.
  */
 @Singleton
 class DeveloperMode @Inject constructor(
@@ -64,6 +66,9 @@ class DeveloperMode @Inject constructor(
     private val shutter: Shutter,
     private val log: EventLog,
     private val assistant: AssistantConfigStore,
+    private val kitGrants: KitGrants,
+    private val networkClients: NetworkClients,
+    private val webApps: KitWebApps,
 ) {
     private val prefs = context.getSharedPreferences("developer", Context.MODE_PRIVATE)
     private val _on = MutableStateFlow(prefs.getBoolean(ON, false))
@@ -198,7 +203,12 @@ class DeveloperMode @Inject constructor(
             val ready = connection.state.map { it.link == LinkState.READY }.distinctUntilChanged()
                 .onEach { if (it) upAt = SystemClock.elapsedRealtime() }
             val photos = assistant.config.map { it.voicePhotos }.distinctUntilChanged()
-            combine(ready, on, photos) { ready, on, photos -> (on || photos).takeIf { ready } }.collectLatest { on ->
+            // Apps, computers and web apps alike: a phone-asked photo needs the switch for each of them.
+            val kitCamera = combine(kitGrants.all, networkClients.all, webApps.grants) { apps, clients, web ->
+                apps.keys.any { Scope.CAMERA in kitGrants.scopesOf(it) } || clients.any { Scope.CAMERA in it.scopes } ||
+                    web.values.any { Scope.CAMERA in it }
+            }.distinctUntilChanged()
+            combine(ready, on, photos, kitCamera) { ready, on, photos, kit -> (on || photos || kit).takeIf { ready } }.collectLatest { on ->
                 on ?: return@collectLatest
                 // A link just up settles first; the configuration comes in a bug report.
                 delay(upAt + SETTLE_MS - SystemClock.elapsedRealtime())

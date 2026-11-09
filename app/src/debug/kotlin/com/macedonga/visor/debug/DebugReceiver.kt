@@ -1,10 +1,10 @@
 package com.macedonga.visor.debug
 
-import android.bluetooth.le.ScanSettings
-import android.bluetooth.le.ScanResult
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.BluetoothManager
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,6 +18,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Base64
 import android.util.Log
+import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.connection.ClassicBond
 import com.macedonga.visor.connection.GlassesService
@@ -38,11 +39,13 @@ import com.macedonga.visor.core.connection.CaptionsMode
 import com.macedonga.visor.core.connection.CaptionsPhase
 import com.macedonga.visor.core.connection.DISPLAY_STATUS_TYPES
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.connection.PrompterLook
 import com.macedonga.visor.core.connection.PrompterPhase
 import com.macedonga.visor.core.connection.SVC_STATUS
 import com.macedonga.visor.core.connection.Teleprompter
 import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.look.GlassesLook
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.Albums
@@ -59,13 +62,32 @@ import com.macedonga.visor.core.media.SessionApp
 import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.media.StreamReceiver
 import com.macedonga.visor.core.media.requestAsset
+import com.macedonga.visor.core.protocol.Dat
 import com.macedonga.visor.core.settings.GlassesContact
 import com.macedonga.visor.core.settings.GlassesSettings
+import com.macedonga.visor.core.settings.PERMISSIONS_NAMESPACE
 import com.macedonga.visor.core.settings.contactObject
 import com.macedonga.visor.core.settings.contactsNamespace
+import com.macedonga.visor.core.settings.permissionObject
+import com.macedonga.visor.dat.BriefingCards
+import com.macedonga.visor.dat.DatLayout
+import com.macedonga.visor.dat.ToolkitStore
 import com.macedonga.visor.display.CaptionPacks
 import com.macedonga.visor.gallery.PhoneLibrary
 import com.macedonga.visor.home.PairSeen
+import com.macedonga.visor.kit.protocol.Layout
+import com.macedonga.visor.kit.protocol.BriefingCard
+import com.macedonga.visor.kit.protocol.LayoutAlign
+import com.macedonga.visor.kit.protocol.LayoutColor
+import com.macedonga.visor.kit.protocol.LayoutCorners
+import com.macedonga.visor.kit.protocol.LayoutIconName
+import com.macedonga.visor.kit.protocol.LayoutStyle
+import com.macedonga.visor.kit.protocol.Scope
+import com.macedonga.visor.kit.protocol.change
+import com.macedonga.visor.kit.protocol.field
+import com.macedonga.visor.kit.protocol.header
+import com.macedonga.visor.kit.protocol.progress
+import com.macedonga.visor.kit.protocol.stat
 import com.macedonga.visor.language.LanguageInstaller
 import com.macedonga.visor.language.restartGlassesAssistant
 import com.macedonga.visor.log.EventLog
@@ -73,10 +95,13 @@ import com.macedonga.visor.login.MetaLogin
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.PhoneContacts
 import com.macedonga.visor.outside.DeveloperMode
+import com.macedonga.visor.outside.GlassesMotion
+import com.macedonga.visor.outside.NetworkClients
 import com.macedonga.visor.pairs.KnownPair
 import com.macedonga.visor.pairs.Looks
 import com.macedonga.visor.pairs.Pairs
 import com.macedonga.visor.phone.PhoneActions
+import com.macedonga.visor.setup.Provisioner
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.StageDebug
 import dagger.hilt.android.AndroidEntryPoint
@@ -106,6 +131,8 @@ import org.json.JSONObject
 class DebugReceiver : BroadcastReceiver() {
 
     @Inject lateinit var connection: GlassesConnection
+    @Inject lateinit var provisioner: Provisioner
+    @Inject lateinit var identities: IdentityStore
     @Inject lateinit var live: LiveStream
     @Inject lateinit var stream: StreamReceiver
     @Inject lateinit var media: MediaImport
@@ -133,9 +160,14 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var wifiLink: WifiLink
     @Inject lateinit var hearing: Hearing
     @Inject lateinit var bandPair: BandPair
+    @Inject lateinit var bandLink: BandLink
     @Inject lateinit var classicBond: ClassicBond
     @Inject lateinit var albums: Albums
     @Inject lateinit var library: PhoneLibrary
+    @Inject lateinit var toolkit: ToolkitStore
+    @Inject lateinit var networkClients: NetworkClients
+    @Inject lateinit var glassesMotion: GlassesMotion
+    @Inject lateinit var briefing: BriefingCards
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action?.substringAfterLast('.').orEmpty()
@@ -155,6 +187,67 @@ class DebugReceiver : BroadcastReceiver() {
             "THREADS" -> resultData = texts.describeThreads(intent.getIntExtra("count", 15))
             // A second pair on the home, a black Skyler, never connected; --ez on false takes it away.
             "DEMO_PAIR" -> resultData = demoPair(intent.getBooleanExtra("on", true))
+            // Changes the owner of the connected pair again, reusing the owner key, as setup does; the steps go to the log.
+            "PROVISION" -> resultData = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
+                ?.let { provisioner.start(it); "started on $it; follow LOG" } ?: "no pair over Bluetooth"
+            "PROVISION_STATUS" -> resultData = provisioner.status.value.toString()
+            // Visor's own app link to the Display (AppLinkProbe): --es pem <base64 PEM of the app key> --ei version N
+            // --es salt <hex>; then APP_MOTION [--ei rate], APP_LAYOUT, APP_STOP. Steps go to LOG as "AppLink:".
+            // Without a pem: Visor's toolkit key and the manifest it installed on this pair.
+            "APP_LINK" -> resultData = if (!intent.hasExtra("pem")) {
+                val address = (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address
+                val pair = connection.state.value.info?.serial?.let(toolkit::pair)
+                if (address == null || pair == null) "no pair over Bluetooth, or no toolkit setup on it" else {
+                    val (key, public) = toolkit.appKey()
+                    AppLinkProbe.start(context, address, key, public, pair.version, pair.salt, 0, 0, intent.getBooleanExtra("dam", true), log)
+                }
+            } else (connection.state.value.target?.link as? GlassesLink.Bluetooth)?.address?.let { address ->
+                AppLinkProbe.start(
+                    context, address, Base64.decode(intent.getStringExtra("pem").orEmpty(), Base64.DEFAULT),
+                    intent.getIntExtra("version", 0).toLong(), intent.getStringExtra("salt").orEmpty().hexToByteArray(),
+                    intent.getIntExtra("tag", 0), intent.getIntExtra("sign", 0), intent.getBooleanExtra("dam", true), log,
+                )
+            } ?: "no pair over Bluetooth"
+            "APP_MOTION" -> resultData = AppLinkProbe.capability(Dat.IMU, Dat.motionStart(intent.getIntExtra("rate", 10)))
+            "APP_LAYOUT" -> resultData = AppLinkProbe.capability(
+                Dat.DISPLAY,
+                Dat.displayContent(
+                    DatLayout.payload(
+                        Layout {
+                            padding = 24
+                            gap = 16
+                            row {
+                                gap = 12
+                                crossAlign = LayoutAlign.CENTER
+                                icon(LayoutIconName.SMART_GLASSES)
+                                text("Visor") { style = LayoutStyle.HEADING }
+                            }
+                            text("This layout came from Visor, through Meta's toolkit app.")
+                            buttons { button("ok", "OK") { icon = LayoutIconName.CHECKMARK; primary = true } }
+                        },
+                    ),
+                ),
+            )
+            "APP_STOP" -> resultData = AppLinkProbe.stop()
+            // The glasses' motion from their data collection daemon (svc1027), no toolkit app: --ei rate, --es channels a,b.
+            "MIRANDA" -> resultData = MirandaProbe.start(
+                connection, intent.getIntExtra("rate", 10),
+                intent.getStringExtra("channels")?.split(',')?.filter { it.isNotBlank() } ?: MirandaProbe.CANDIDATES, log,
+                intent.getStringExtra("sensors").orEmpty(),
+            )
+            "MIRANDA_STOP" -> resultData = MirandaProbe.stop(connection, log)
+            // The glasses say --es text in their own voice, through the data collection daemon's speech.
+            "SAY" -> answerLater { runCatching { glassesMotion.say(intent.getStringExtra("text") ?: "Hello from Visor."); "said" }.getOrElse { "failed: ${it.message}" } }
+            // Grants a phone app the glasses' permissions over RLDrive, as the Meta app does: --es pkg (Visor by default)
+            // --es perms DEV_MODE,IMU (short names); then lists what the namespace holds.
+            "GRANT" -> answerLater {
+                val app = intent.getStringExtra("pkg") ?: context.packageName
+                val grants = intent.getStringExtra("perms").orEmpty().split(',').filter { it.isNotBlank() }
+                    .map { permissionObject(app, "android.permission.${it.trim()}", "ALWAYS") }
+                settings.readNamespace(PERMISSIONS_NAMESPACE, grants)?.joinToString("\n") { "${it.uri} ${it.type} ${it.data}" } ?: "the glasses did not answer"
+            }
+            // Each pair's receipt key, the key its constellation manifest names it by: public, so it may be printed.
+            "DEVICE_KEYS" -> resultData = identities.all().joinToString("\n") { "${it.serial} ${it.devicePublicKey?.toHexString() ?: "none"}" }
             "CONNECT" -> resultData = runCatching { GlassesService.start(context); "connecting" }.getOrElse { "could not start the service: $it" }
             "DISCONNECT" -> {
                 GlassesService.disconnect(context)
@@ -570,6 +663,11 @@ class DebugReceiver : BroadcastReceiver() {
                 resultData = "started; BAND_PAIR_STATUS for how it ended, LOG for the steps"
             }
             "BAND_PAIR_STATUS" -> resultData = bandPair.status.value.toString()
+            // Shares the band with the Display through the phone's relay (--ez on false stops); LOG has the relay's steps.
+            "BAND_SHARE" -> {
+                bandLink.share(intent.getBooleanExtra("on", true))
+                resultData = "shared=${bandLink.shared.value} band=${bandLink.state.value.link}"
+            }
             // The strongest BLE advertisers heard in --ei ms (10 s by default), each with its manufacturer data by company id.
             "BLE_SCAN" -> answerLater { bleScan(context, intent.getIntExtra("ms", 10_000).toLong()) }
             // A Display's classic bond for calls: CLASSIC_PROBE only reads. CLASSIC_REBOND and CLASSIC_UNDO unpair the glasses
@@ -660,6 +758,50 @@ class DebugReceiver : BroadcastReceiver() {
                 "released"
             }
             // --es id
+            // A network client with a webhook, as Advanced > Network access adds one: --es name, --es scopes a,b,
+            // --es webhook URL, --es topics a,b. Answers its token. NET_CLIENT_REMOVE --es name takes it away.
+            "NET_CLIENT" -> resultData = networkClients.add(
+                intent.getStringExtra("name") ?: "debug",
+                intent.getStringExtra("scopes").orEmpty().split(',').filter { it.isNotBlank() }.map(::Scope).toSet(),
+                intent.getStringExtra("webhook"),
+                intent.getStringExtra("topics").orEmpty().split(',').filter { it.isNotBlank() },
+            )
+            // An app card on the Briefing: --es id, --es name, --es title, --es text, --es detail; CARD_REMOVE --es id.
+            "CARD" -> {
+                val title = intent.getStringExtra("title") ?: "Visor"
+                val text = intent.getStringExtra("text") ?: "A card of Visor's own."
+                val layout = Layout {
+                    gap = 8
+                    row {
+                        gap = 12
+                        crossAlign = LayoutAlign.CENTER
+                        icon(LayoutIconName.BELL)
+                        text(title) { style = LayoutStyle.HEADING }
+                    }
+                    text(text)
+                }
+                val detail = intent.getStringExtra("detail")?.let { more ->
+                    Layout {
+                        gap = 12
+                        text(title) { style = LayoutStyle.HEADING }
+                        text(text)
+                        more.split('|').forEach { text(it) { style = LayoutStyle.META } }
+                    }
+                }
+                briefing.set("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test", intent.getStringExtra("name") ?: "Visor test", "bell", layout, detail)
+                resultData = "set; the Briefing shows it when it asks again"
+            }
+            // A card that shows every card feature: CARD_SHOWCASE.
+            "CARD_SHOWCASE" -> {
+                val card = showcase()
+                briefing.set("com.macedonga.visor.debug", card.id, card.name, card.icon.id, card.layout, card.detail)
+                resultData = "set; the Briefing shows it when it asks again"
+            }
+            "CARD_REMOVE" -> resultData = briefing.remove("com.macedonga.visor.debug", intent.getStringExtra("id") ?: "test").toString()
+            "NET_CLIENT_REMOVE" -> {
+                networkClients.remove(intent.getStringExtra("name") ?: "debug")
+                resultData = "removed"
+            }
             "MCP_REMOVE" -> {
                 mcp.store.remove(intent.getStringExtra("id").orEmpty())
                 resultData = "removed"
@@ -747,5 +889,85 @@ class DebugReceiver : BroadcastReceiver() {
         // Meta's own picture of a black Skyler, as its asset service hands it out.
         const val DEMO_PICTURE = "https://scontent.xx.fbcdn.net/mci_ab/uap/asset_manager/name_revision/?ab_b=e&ab_page=AssetManagerNameAndRevision" +
             "&ab_entry=RBM2-Skyler-ShinyBlack-Clear-Concord&set=mwa_device_image_assets&revision=1837680503843762&density=3&mode=dark"
+    }
+
+    // The card an app would write with the VDK's builder and blocks.
+    private fun showcase() = BriefingCard("showcase", "Lake weather", LayoutIconName.CLOUD) {
+        header(LayoutIconName.CLOUD, "Lake weather")
+        stat("18°", "Low 9°")
+        change("2° warmer than yesterday", rising = true)
+        text("Partly cloudy over the lake, clearing tonight with a light breeze from the north") { style = LayoutStyle.META; maxLines = 1 }
+        icon(LayoutIconName.WEATHER_PARTLY_CLOUDY) { size = 96; pinTop = 0; pinEnd = 0 }
+        pages {
+            page {
+                gap = 8
+                text("Brugnera") { style = LayoutStyle.META }
+                row {
+                    crossAlign = LayoutAlign.CENTER
+                    column {
+                        grow = 1.0
+                        stat("18°", "H 21°  L 9°")
+                        text("Partly cloudy")
+                    }
+                    icon(LayoutIconName.WEATHER_PARTLY_CLOUDY) { size = 112 }
+                }
+                image("https://picsum.photos/id/1036/560/240") { height = 140; corners = LayoutCorners.MEDIUM }
+            }
+            page {
+                gap = 16
+                header("Next hours")
+                row {
+                    align = LayoutAlign.SPACE_BETWEEN
+                    listOf(
+                        Triple("Now", LayoutIconName.WEATHER_PARTLY_CLOUDY, 18), Triple("15", LayoutIconName.WEATHER_SUNNY, 19),
+                        Triple("16", LayoutIconName.WEATHER_SUNNY, 18), Triple("17", LayoutIconName.WEATHER_CLOUDY, 16),
+                        Triple("18", LayoutIconName.WEATHER_NIGHT_CLEAR, 14),
+                    ).forEach { (hour, glyph, temp) ->
+                        column {
+                            gap = 8
+                            text(hour) { style = LayoutStyle.META; align = LayoutAlign.CENTER }
+                            icon(glyph) { size = 48; alignSelf = LayoutAlign.CENTER }
+                            text("$temp°") { align = LayoutAlign.CENTER }
+                        }
+                    }
+                }
+                chart(listOf(18.0, 19.0, 18.0, 16.0, 14.0, 13.0, 12.0, 12.0, 11.0, 10.0)) { height = 90 }
+            }
+            page {
+                gap = 14
+                header("This week")
+                listOf(Triple("Mon", 9, 21), Triple("Tue", 11, 23), Triple("Wed", 8, 17), Triple("Thu", 6, 14)).forEach { (day, low, high) ->
+                    row {
+                        gap = 12
+                        crossAlign = LayoutAlign.CENTER
+                        text(day) { style = LayoutStyle.META }
+                        text("$low°") { style = LayoutStyle.META }
+                        // The day's range on the week's, 5 to 25 degrees.
+                        row {
+                            grow = 1.0
+                            height = 8
+                            crossAlign = LayoutAlign.STRETCH
+                            background = LayoutColor.TRACK
+                            row { grow = (low - 5) / 20.0 }
+                            row { grow = (high - low) / 20.0; background = LayoutColor.BLUE }
+                            row { grow = (25 - high) / 20.0 }
+                        }
+                        text("$high°")
+                    }
+                }
+                chart(listOf(2.0, 0.0, 5.0, 8.0, 1.0, 0.0, 3.0)) { style = LayoutStyle.BARS; height = 60 }
+            }
+            page {
+                gap = 12
+                header(LayoutIconName.CHART_LINE, "Stocks")
+                stat("27,012.40")
+                change("+481.50 (+1.8%)", rising = true)
+                change("-12.10 (-0.4%)", rising = false)
+                field("Market cap", "$1.6T")
+                field("52W high", "$31,400.80")
+                progress(0.72)
+                buttons { button("refresh", "Refresh") { icon = LayoutIconName.TWO_ARROWS_CLOCKWISE; toast = "Refreshed" } }
+            }
+        }
     }
 }

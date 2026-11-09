@@ -17,6 +17,7 @@ import androidx.annotation.StringRes
 import com.macedonga.visor.MainActivity
 import com.macedonga.visor.R
 import com.macedonga.visor.band.BandLink
+import com.macedonga.visor.dat.ManifestSync
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.AssistantConfigStore
 import com.macedonga.visor.core.connection.GlassesConnection
@@ -120,6 +121,10 @@ class GlassesService : Service() {
     // Injected so a Display's band is linked while the service runs.
     @Inject
     lateinit var band: BandLink
+
+    // Injected so the glasses get Visor's manifest again whenever they connect holding another.
+    @Inject
+    lateinit var manifests: ManifestSync
 
     // Injected so captions started from the glasses are kept while no screen is open.
     @Inject

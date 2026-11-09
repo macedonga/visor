@@ -5,4 +5,6 @@
     <cache-path name="log" path="log/" />
     <!-- A picture sent from the glasses as an MMS, read by the phone's MMS service. -->
     <cache-path name="mms" path="mms/" />
+    <!-- A photo a VDK app took while the camera was live. -->
+    <cache-path name="kit" path="kit/" />
 </paths>

@@ -21,7 +21,8 @@ the frame style and language packs. Works on real glasses as of 2026-10-05.
 ## Working on it
 
 - `reference/lensbreak`, a snapshot of the desktop Python client, already does most of what
-  this app needs. Look there first; the protocol write-ups are on the GitHub wiki.
+  this app needs. Look there first; the protocol write-ups are in `../visor-site/src/content/protocol`
+  (visor.macedonga.com/protocol), the only copy. The wiki is retired.
 - The glasses are the test. Builds get tried on hardware, so there are no test suites.
 - Keep it small: short comments, no planning documents.
 - No backend, analytics or crash reporting.

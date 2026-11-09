@@ -73,6 +73,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.browser)
+    implementation(libs.visor.kit)
+    implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.websockets)
     implementation(libs.androidx.media)
     implementation(libs.kotlinx.coroutines.android)
 

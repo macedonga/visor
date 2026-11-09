@@ -50,6 +50,7 @@ import com.macedonga.visor.metaai.MetaAiScreen
 import com.macedonga.visor.settings.AboutScreen
 import com.macedonga.visor.settings.AccountsScreen
 import com.macedonga.visor.settings.AdvancedScreen
+import com.macedonga.visor.settings.AppsScreen
 import com.macedonga.visor.settings.AssistantSettingsScreen
 import com.macedonga.visor.settings.BackupScreen
 import com.macedonga.visor.settings.FlagsScreen
@@ -63,7 +64,6 @@ import com.macedonga.visor.settings.SettingsGroupScreen
 import com.macedonga.visor.settings.SettingsScreen
 import com.macedonga.visor.settings.TopicScreen
 import com.macedonga.visor.settings.WakeWordScreen
-import com.macedonga.visor.settings.WebAppsScreen
 import com.macedonga.visor.settings.WifiNetworksScreen
 import com.macedonga.visor.setup.OnboardingScreen
 import com.macedonga.visor.stage.LocalStage
@@ -156,6 +156,9 @@ data object GlassesKey : NavKey
 data object AdvancedKey : NavKey
 
 @Serializable
+data object AppsKey : NavKey
+
+@Serializable
 data object BackupKey : NavKey
 
 @Serializable
@@ -184,9 +187,6 @@ data object WifiNetworksKey : NavKey
 
 @Serializable
 data object AccountsKey : NavKey
-
-@Serializable
-data object WebAppsKey : NavKey
 
 /** The app's graph: the home, and every screen it opens. */
 @Composable
@@ -286,6 +286,7 @@ fun VisorNav(opens: Flow<String>, markAtLaunch: Boolean) {
                     entry<SettingsKey>(metadata = crossFade(SETTINGS_FADE_MS)) { SettingsScreen(open) }
                     entry<TopicKey> { TopicScreen(it.name, open) }
                     entry<AdvancedKey> { AdvancedScreen(open) }
+                    entry<AppsKey> { AppsScreen() }
                     entry<SettingsGroupKey> { SettingsGroupScreen(it.group) }
                     entry<GlassesKey> { GlassesPage(open) }
                     entry<BackupKey> { BackupScreen() }
@@ -297,7 +298,6 @@ fun VisorNav(opens: Flow<String>, markAtLaunch: Boolean) {
                     entry<CaptionsKey> { CaptionsScreen() }
                     entry<WifiNetworksKey> { WifiNetworksScreen() }
                     entry<AccountsKey> { AccountsScreen() }
-                    entry<WebAppsKey> { WebAppsScreen() }
                     entry<MetaAiKey> {
                         MetaAiScreen(
                             onSettings = { backStack.add(AssistantSettingsKey) },

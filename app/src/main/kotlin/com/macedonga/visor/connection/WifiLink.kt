@@ -92,10 +92,29 @@ class WifiLink @Inject constructor(
     private suspend fun moveToWifi() {
         val serial = connection.state.value.target?.serial ?: return
         val joined = sameNetwork() ?: phoneGroup() ?: return say("staying on Bluetooth")
-        say("moving the session to ${joined.address}:${joined.port}")
-        connection.moveToWifi(GlassesTarget(GlassesLink.Wifi(checkNotNull(joined.address), joined.port), serial))
+        val target = GlassesTarget(GlassesLink.Wifi(checkNotNull(joined.address), joined.port), serial)
+        say("adding ${joined.address}:${joined.port} beside Bluetooth")
+        val added = connection.addWifi(target)
+        say(added.detail)
         val gen = ++moves
+        if (added.ok) {
+            scope.launch { watchAdded(gen) }
+            return
+        }
+        say("moving the whole session to Wi-Fi instead")
+        connection.moveToWifi(target)
         scope.launch { watch(gen) }
+    }
+
+    /** Forget the lease state when the session ends while Wi-Fi carries it: it opens again on Bluetooth by itself. */
+    private suspend fun watchAdded(gen: Int) {
+        connection.state.first { it.link != LinkState.READY || !connection.onAddedWifi }
+        lock.withLock {
+            if (gen != moves) return@withLock
+            say("the session left Wi-Fi")
+            group?.remove()
+            forget()
+        }
     }
 
     /** Back on Bluetooth if the session does not come up on Wi-Fi, or when it drops there. */
@@ -129,7 +148,7 @@ class WifiLink @Inject constructor(
         moves++
         say("back to Bluetooth: $why")
         leases.clear()
-        connection.backToBluetooth()
+        if (connection.onAddedWifi) say(connection.dropWifi().detail) else connection.backToBluetooth()
         group?.remove()
         group = null
     }

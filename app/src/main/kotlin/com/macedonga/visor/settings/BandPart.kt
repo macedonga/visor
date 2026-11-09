@@ -13,6 +13,8 @@ import com.macedonga.visor.R
 import com.macedonga.visor.band.BandErrand
 import com.macedonga.visor.band.BandPair
 import com.macedonga.visor.band.BandSetup
+import com.macedonga.visor.band.ShareProblem
+import com.macedonga.visor.band.ShareState
 import com.macedonga.visor.core.session.LinkState
 import kotlinx.coroutines.launch
 
@@ -26,6 +28,8 @@ internal fun BandPart(model: SettingsViewModel) {
     val all by model.bands.all.collectAsStateWithLifecycle()
     val pair by model.connection.pair.collectAsStateWithLifecycle()
     val own by model.band.state.collectAsStateWithLifecycle()
+    val shared by model.band.shared.collectAsStateWithLifecycle()
+    val share by model.band.shareState.collectAsStateWithLifecycle()
     val ready = glasses.link == LinkState.READY
     LaunchedEffect(ready) { if (ready) model.bandPeers.refresh() }
     val device = glasses.device
@@ -97,6 +101,29 @@ internal fun BandPart(model: SettingsViewModel) {
                 },
                 busy = wristBusy,
                 problem = errandProblem(wristOutcome),
+            )
+        } else null,
+        if (owned) row {
+            ToggleRow(
+                stringResource(R.string.band_share), shared, model.band::share,
+                sub = stringResource(
+                    when (share) {
+                        ShareState.On -> R.string.band_share_on
+                        ShareState.Connecting -> R.string.band_share_connecting
+                        ShareState.Waiting -> R.string.band_share_waiting
+                        ShareState.Off, is ShareState.Stopped -> R.string.band_share_sub
+                    },
+                ),
+                busy = share == ShareState.Connecting,
+                problem = (share as? ShareState.Stopped)?.let {
+                    stringResource(
+                        when (it.problem) {
+                            ShareProblem.BAND_UNREACHABLE -> R.string.band_share_stopped_unreachable
+                            ShareProblem.DISPLAY_SILENT -> R.string.band_share_stopped_silent
+                            ShareProblem.KEPT_DROPPING -> R.string.band_share_stopped_dropping
+                        },
+                    )
+                },
             )
         } else null,
         if (owned) row {

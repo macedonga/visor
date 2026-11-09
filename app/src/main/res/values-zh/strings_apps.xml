@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apps_title">应用</string>
+    <string name="apps_sum_none">暂无</string>
+    <plurals name="apps_count">
+        <item quantity="other">%d 个应用</item>
+    </plurals>
+    <plurals name="apps_webapps_count">
+        <item quantity="other">%d 个网页应用</item>
+    </plurals>
+    <plurals name="apps_programs_count">
+        <item quantity="other">%d 个程序</item>
+    </plurals>
+    <string name="apps_on_phone">此手机上</string>
+    <string name="apps_empty_title">还没有应用使用你的眼镜</string>
+    <string name="apps_webapp_add">添加网页应用</string>
+    <string name="apps_webapp_browse">浏览 Meta 的网页应用</string>
+    <string name="apps_display">Display 上</string>
+    <string name="apps_developers">开发者</string>
+    <string name="apps_build">为你的眼镜开发</string>
+    <string name="apps_sheet_none">现在它不能做任何事。</string>
+    <string name="apps_done">完成</string>
+    <string name="search_words_apps">vdk,开发者,开发者模式,kit,网络,mcp,代理,程序,权限,访问,令牌</string>
+</resources>

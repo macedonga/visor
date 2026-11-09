@@ -12,6 +12,7 @@ import com.macedonga.visor.core.session.TrustExchange
 import com.macedonga.visor.core.session.TrustResult
 import java.math.BigInteger
 import java.security.MessageDigest
+import java.security.PrivateKey
 import java.security.Signature
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -36,20 +37,22 @@ private fun buildEnableTrust(credentials: BundleCredentials, txChallenge: ByteAr
     require(txChallenge.size == 32) {
         "the channel binding is a SHA-256 digest and must be 32 bytes, got ${txChallenge.size}"
     }
-    val signer = Signature.getInstance("NONEwithECDSA")
-    signer.initSign(credentials.appEcKey)
-    signer.update(txChallenge)
-    return enableTrustPayload(credentials.appPublicKey, signer.sign())
+    return Wire.fieldBytes(1, MessageDigest.getInstance("SHA-256").digest(credentials.appPublicKey)) +
+        Wire.fieldBytes(2, signChallenge(credentials, txChallenge)) +
+        Wire.fieldVarint(3, RESIGN_PROVISIONING_CAPABILITIES.toLong())
 }
 
-/** The message body, given a DER signature. */
-private fun enableTrustPayload(publicKey64: ByteArray, derSignature: ByteArray): ByteArray {
-    val (r, s) = decodeDerSignature(derSignature)
+/** The link's channel binding signed as the glasses check it. */
+internal fun signChallenge(credentials: BundleCredentials, challenge: ByteArray): ByteArray = signDigest(credentials.appEcKey, challenge)
+
+/** A SHA-256 [digest] signed as the glasses check signatures: NONEwithECDSA, r then low s, 64 bytes. */
+internal fun signDigest(key: PrivateKey, digest: ByteArray): ByteArray {
+    val signer = Signature.getInstance("NONEwithECDSA")
+    signer.initSign(key)
+    signer.update(digest)
+    val (r, s) = decodeDerSignature(signer.sign())
     val canonical = if (s > HALF_ORDER) SECP256R1_ORDER.subtract(s) else s
-    val raw = r.to32() + canonical.to32()
-    return Wire.fieldBytes(1, MessageDigest.getInstance("SHA-256").digest(publicKey64)) +
-        Wire.fieldBytes(2, raw) +
-        Wire.fieldVarint(3, RESIGN_PROVISIONING_CAPABILITIES.toLong())
+    return r.to32() + canonical.to32()
 }
 
 /** A DER ECDSA signature: a SEQUENCE of two INTEGERs, r then s. */

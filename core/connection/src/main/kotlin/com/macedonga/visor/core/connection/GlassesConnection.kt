@@ -10,10 +10,12 @@ import com.macedonga.visor.core.protocol.SVC_MEDIA_STREAMING_CONTROL
 import com.macedonga.visor.core.session.ConnectFailed
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXError
+import com.macedonga.visor.core.session.LinkMove
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.LinkStateChanged
 import com.macedonga.visor.core.session.ProtocolError
 import com.macedonga.visor.core.session.ServiceData
+import com.macedonga.visor.core.session.SecureLink
 import com.macedonga.visor.core.session.SessionEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +115,10 @@ class GlassesConnection(
     private var bluetooth: GlassesTarget? = null
 
     /** True while the session runs on Wi-Fi for a lease, with Bluetooth to come back to. */
-    val onWifi: Boolean get() = bluetooth != null
+    val onWifi: Boolean get() = bluetooth != null || onAddedWifi
+
+    /** True while the traffic runs on a Wi-Fi link [addWifi] brought up beside the Bluetooth one. */
+    val onAddedWifi: Boolean get() = host?.onAddedLink == true
 
     /** True from [pause] until the session opens again: the Live or a media import has the glasses on Wi-Fi of its own. */
     @Volatile
@@ -135,6 +140,19 @@ class GlassesConnection(
         if (bluetooth == null) bluetooth = current.takeIf { it.link is GlassesLink.Bluetooth } ?: return
         reopen(target)
     }
+
+    /**
+     * Bring [target], a Wi-Fi link, up beside the Bluetooth one and move the traffic onto it, as the Meta app's link
+     * manager does: every channel and every stream stays open. A failure leaves the session as it was, or starting again.
+     */
+    suspend fun addWifi(target: GlassesTarget): LinkMove = lifecycle.withLock {
+        val current = host
+        if (current == null || _state.value.link != LinkState.READY) return@withLock LinkMove(false, "the glasses are not connected")
+        current.addLink(target.link)
+    }
+
+    /** Back on Bluetooth after [addWifi], with the Wi-Fi link closed. */
+    suspend fun dropWifi(): LinkMove = lifecycle.withLock { host?.dropLink() ?: LinkMove(false, "no session") }
 
     /** Back on the Bluetooth link the session left for [moveToWifi]. */
     suspend fun backToBluetooth() {
@@ -223,6 +241,9 @@ class GlassesConnection(
 
     /** The current session's link handshake line, for the event log. */
     val handshake: String? get() = host?.handshake
+
+    /** The current session's secure link, while it has one. */
+    val link: SecureLink? get() = host?.link
 
     /** Run [work] on the session with its mux: queued until READY while it reconnects, dropped when there is no session. */
     fun submit(work: suspend (DataXConnection) -> Unit) {

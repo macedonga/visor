@@ -9,6 +9,7 @@ import com.macedonga.visor.core.connection.TransportFactory
 import com.macedonga.visor.core.identity.BundleState
 import com.macedonga.visor.core.identity.IdentityBundle
 import com.macedonga.visor.core.identity.IdentityStore
+import com.macedonga.visor.core.identity.devicePublicKey
 import com.macedonga.visor.core.identity.nowIso
 import com.macedonga.visor.core.identity.provision.ProvisionStep
 import com.macedonga.visor.core.identity.provision.WrongOwnerError
@@ -90,6 +91,7 @@ class Provisioner @Inject constructor(
                             createdAt = nowIso(),
                             provenance = "change-owner",
                             state = BundleState.UNVERIFIED,
+                            devicePublicKey = result.deviceEcPublicKey ?: devicePublicKey(result.deviceCert),
                         ),
                     )
                 }

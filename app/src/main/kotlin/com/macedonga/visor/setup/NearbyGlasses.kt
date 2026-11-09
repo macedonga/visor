@@ -15,7 +15,7 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import com.macedonga.visor.R
-import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.connection.productName
 import com.macedonga.visor.core.transport.META_LE_SERVICE
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -75,7 +75,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
                 val advert = data?.let(::advert)
                 if (advert?.product in PRODUCT_BANDS) return
                 val device = result.device
-                val name = record.deviceName ?: runCatching { device.name }.getOrNull() ?: productName(advert?.product)
+                val name = record.deviceName ?: runCatching { device.name }.getOrNull() ?: nameOf(advert?.product)
                 if (BAND_NAME.containsMatchIn(name)) return
                 val pair = NearbyPair(device.address, name, result.rssi, advert?.pairing == true, device.bondState == BluetoothDevice.BOND_BONDED)
                 synchronized(heard) { heard[device.address] = pair to SystemClock.elapsedRealtime() }
@@ -251,13 +251,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         else Advert(u(0) or (u(1) shl 8), u(2) and 1 != 0)
     }
 
-    private fun productName(product: Int?) = when {
-        product == 257 -> "Ray-Ban Stories"
-        isDisplayProduct(product) -> "Meta Ray-Ban Display"
-        product == 264 -> "Oakley Meta Vanguard"
-        product == 265 -> "Oakley Meta HSTN"
-        else -> context.getString(R.string.glasses_default_name)
-    }
+    private fun nameOf(product: Int?) = productName(product) ?: context.getString(R.string.glasses_default_name)
 
     private companion object {
         const val META_COMPANY = 0x01AB

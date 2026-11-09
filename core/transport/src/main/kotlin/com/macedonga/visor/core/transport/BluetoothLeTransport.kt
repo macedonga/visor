@@ -132,6 +132,10 @@ class BluetoothLeTransport(
 
     override suspend fun receive(): ByteArray = withContext(Dispatchers.IO) { open().receive() }
 
+    override fun handshakeDone() {
+        stream?.encrypted = true
+    }
+
     @SuppressLint("MissingPermission")
     override fun close() {
         closes.incrementAndGet()
@@ -222,6 +226,10 @@ class LeFirstTransport(
     override suspend fun send(frame: ByteArray) = (active ?: throw TransportClosedException("not connected")).send(frame)
 
     override suspend fun receive(): ByteArray = (active ?: throw TransportClosedException("not connected")).receive()
+
+    override fun handshakeDone() {
+        active?.handshakeDone()
+    }
 
     override fun close() {
         active = null

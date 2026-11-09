@@ -1,12 +1,17 @@
 package com.macedonga.visor.connection
 
+import android.content.Context
+import com.macedonga.visor.BuildConfig
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
 import com.macedonga.visor.core.session.Responder
+import com.macedonga.visor.dat.BriefingCards
+import com.macedonga.visor.dat.DatLayout
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.log.responderScope
 import com.macedonga.visor.login.MetaLogin
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPOutputStream
 import javax.inject.Inject
@@ -24,7 +29,9 @@ import org.json.JSONObject
  */
 @Singleton
 class BloksRelay @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val login: Provider<MetaLogin>,
+    private val cards: BriefingCards,
     private val requests: RequestLog,
     log: EventLog,
 ) : Responder {
@@ -39,14 +46,32 @@ class BloksRelay @Inject constructor(
     }
 
     private suspend fun serve(r: Request, q: Query, reply: Int, mux: DataXConnection) {
-        val id = requests.start("bloks://${r.appId}", RequestSource.META, r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }.orEmpty())
+        val id = requests.start("bloks://${r.appId}", RequestSource.META, type(r).orEmpty())
         if (r.appId.isEmpty() || r.appId.startsWith("com.bloks.fox_edge.")) {
             mux.send(reply, ByteArray(0), messageType = q.answer)
             requests.finish(id, "empty, as the Meta app answers", failed = false)
             return
         }
+        if (r.appId == DatLayout.CARD_CLICK) {
+            val clicked = cardClick(r)
+            val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(DONE.toByteArray()) } }.toByteArray()
+            mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
+            requests.finish(id, clicked?.let { "a click on ${it.second} for ${it.first.app}" } ?: "a click on a card no app has", failed = clicked == null)
+            return
+        }
+        val app = card(r)
+        if (app != null) {
+            val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(detail(r, app).toByteArray()) } }.toByteArray()
+            mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
+            requests.finish(id, "from ${app.app}", failed = false, bytes = gz.size.toLong())
+            return
+        }
         try {
             val bundle = fetch(r, q)
+            // Debug builds keep the Briefing's detail screens, the model for apps' own.
+            if (BuildConfig.DEBUG && r.appId.contains("Glanceables")) {
+                runCatching { context.filesDir.resolve("bloks-${r.appId.substringAfterLast('.')}${type(r)?.let { "-$it" }.orEmpty()}.json").writeText(JSONObject().put("params", JSONObject(r.params as Map<*, *>)).put("type", q.answer).put("bundle", bundle).toString()) }
+            }
             val gz = ByteArrayOutputStream().also { out -> GZIPOutputStream(out).use { it.write(bundle.toByteArray()) } }.toByteArray()
             mux.send(reply, Wire.fieldBytes(1, gz), messageType = q.answer)
             requests.finish(id, "from Meta", failed = false, bytes = gz.size.toLong())
@@ -54,6 +79,37 @@ class BloksRelay @Inject constructor(
             requests.finish(id, "failed: ${error.message}", failed = true)
             runCatching { mux.sendStatus(reply, INTERNAL_ERROR) }
         }
+    }
+
+    // The card a Briefing request is for, named by the data type its click preloaded.
+    private fun type(r: Request): String? =
+        r.params["params"]?.let { runCatching { JSONObject(it).optString("data_type") }.getOrNull() }?.takeIf { it.isNotEmpty() }
+
+    // An app's Briefing card whose detail the Briefing asks for.
+    private fun card(r: Request): BriefingCards.Card? {
+        if (!r.appId.endsWith(DETAIL_QUERY)) return null
+        return type(r)?.let(cards::byKey)?.takeIf { it.detail != null }
+    }
+
+    // A click in the detail of an app's card: {params: {server_params: {card, id}}}, passed on to the app.
+    private fun cardClick(r: Request): Pair<BriefingCards.Card, String>? {
+        val params = r.params["params"]?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+        val server = params.optJSONObject("server_params") ?: return null
+        val key = server.optString("card")
+        val element = server.optString("id").ifEmpty { return null }
+        if (!cards.click(key, element)) return null
+        return cards.byKey(key)?.let { it to element }
+    }
+
+    // The detail as Meta's server answers it: one component, its tree the app's.
+    private fun detail(r: Request, card: BriefingCards.Card): String {
+        val tree = JSONObject().put("data", JSONArray()).put("tree", JSONObject(card.detail!!))
+        val component = JSONObject().put("id", "component").put("payload", JSONObject().put("layout", JSONObject().put("bloks_payload", tree)))
+        val consumed = JSONObject()
+        r.params["params"]?.let { runCatching { JSONObject(it) }.getOrNull() }?.keys()?.forEach { consumed.put(it, it) }
+        val answer = JSONObject().put("payload", JSONObject().put("components", JSONArray().put(component)).toString())
+            .put("consumed_params", consumed).put("app_id", r.appId)
+        return JSONObject().put("component_query_responses", JSONArray().put(answer)).toString()
     }
 
     private fun fetch(r: Request, q: Query): String {
@@ -105,5 +161,15 @@ class BloksRelay @Inject constructor(
             11 to Query("CompanionBloksAsyncActionQuery", "35737516989272377596036696859", 12),
         )
         private const val INTERNAL_ERROR = 0xC004
+        private const val DETAIL_QUERY = "GlanceablesDetailQuery"
+
+        private const val TAKE_LAST = 18231
+
+        // The answer to a card click: an action that does nothing more, so the Briefing runs the click's own callback.
+        // Not seen on the glasses yet: if the Display cannot read it, the click still reached the app.
+        private val DONE = JSONObject().put(
+            "layout",
+            JSONObject().put("bloks_payload", JSONObject().put("data", JSONArray()).put("ft", JSONObject()).put("action", "\t(${TAKE_LAST.toString(36)} 1)")),
+        ).toString()
     }
 }

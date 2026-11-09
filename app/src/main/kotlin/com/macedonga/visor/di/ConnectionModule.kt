@@ -22,8 +22,10 @@ import com.macedonga.visor.connection.PhoneCalls
 import com.macedonga.visor.connection.PhoneInternet
 import com.macedonga.visor.connection.PhoneMedia
 import com.macedonga.visor.connection.PhoneMessages
+import com.macedonga.visor.connection.PhoneSensors
 import com.macedonga.visor.connection.PhoneSharing
 import com.macedonga.visor.connection.PlaceSearch
+import com.macedonga.visor.connection.UserLocation
 import com.macedonga.visor.connection.WebApps
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.AssistantConfigStore
@@ -78,6 +80,8 @@ import com.macedonga.visor.metaai.AssistantCamera
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.NotifyIcons
 import com.macedonga.visor.phone.PhoneActions
+import com.macedonga.visor.outside.KitTools
+import com.macedonga.visor.outside.KitVoices
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -166,6 +170,8 @@ object ConnectionModule {
         mapsStore: MapsStore,
         mapsConstellation: MapsConstellation,
         webApps: WebApps,
+        phoneSensors: PhoneSensors,
+        userLocation: UserLocation,
         peerAppInfo: PeerAppInfo,
     ): SessionHostFactory = RealSessionHostFactory(
         transports,
@@ -197,6 +203,8 @@ object ConnectionModule {
             MapsStore.SVC to mapsStore,
             MapsConstellation.SVC to mapsConstellation,
             WebApps.SVC to webApps,
+            PhoneSensors.SVC to phoneSensors,
+            UserLocation.SVC to userLocation,
             SVC_PEER_BUILD_INFO to peerAppInfo,
             SVC_HEARING to later(hearing),
             ServiceId.CONN_DEVICE_LEASE.value to later(lease),
@@ -262,8 +270,10 @@ object ConnectionModule {
         glassesConfig: GlassesConfig,
         phone: PhoneActions,
         camera: AssistantCamera,
+        kitVoices: KitVoices,
+        kitTools: KitTools,
     ): Assistant = Assistant(
-        context, connection, Voice(context), Brain(config, diary, hub, phone), config, airship, diary,
+        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools), config, airship, diary,
         liveSession = live.wifiSession,
         liveFrame = live::frameNow,
         camera = camera,
@@ -275,6 +285,7 @@ object ConnectionModule {
         phone = phone,
         display = { isDisplayBuild(connection.state.value.info?.build) },
         cameraAction = camera::act,
+        apps = kitVoices,
     )
 
     @Provides

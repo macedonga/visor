@@ -54,6 +54,63 @@ object Band {
         return request(seq, 4, bool + entries)
     }
 
+    /**
+     * The gestures and the wrist's motion in one StreamControlReq, so neither turns the other off. From protocol 2 the
+     * map (36) names every gesture type and the IMU types (IMU_GYRO 15, IMU_ACCEL 16, IMU_MAG 17, IMU_QUAT 18); before
+     * it the bools enableGestures 3, enableAcc 5, enableGyro 6, enableMag 7 and enableQuat 8, where one left out reads
+     * false. [motion] null leaves the IMU out, as [gestureStreams] does.
+     */
+    fun streams(seq: Int, gestures: Boolean, motion: Boolean?, protocol: Int?): ByteArray {
+        if (motion == null) return gestureStreams(seq, gestures, protocol)
+        val sendMap = protocol == null || protocol >= 2
+        val sendBool = protocol == null || protocol < 2
+        val bools = if (!sendBool) ByteArray(0) else {
+            Wire.fieldVarint(3, if (gestures) 1 else 0) +
+                MOTION_BOOLS.fold(ByteArray(0)) { out, field -> out + Wire.fieldVarint(field, if (motion) 1 else 0) }
+        }
+        val entries = if (!sendMap) ByteArray(0) else {
+            val gestureEntries = GESTURE_STREAMS.fold(ByteArray(0)) { out, type -> out + entry(type, gestures) }
+            gestureEntries + MOTION_STREAMS.fold(ByteArray(0)) { out, type -> out + entry(type, motion) } +
+                Wire.fieldVarint(35, PRIORITY_GENERIC_C50) + Wire.fieldString(37, "GenericC50")
+        }
+        return request(seq, 4, bools + entries)
+    }
+
+    private fun entry(type: Int, on: Boolean) = Wire.fieldBytes(36, Wire.fieldVarint(1, type.toLong()) + Wire.fieldVarint(2, if (on) 1 else 0))
+
+    /** One reading of the band's IMU: [values] x, y, z, and w for the orientation, in SI units. */
+    class Motion(val type: Int, val seq: Int, val timestamp: Long, val values: FloatArray)
+
+    fun isMotion(type: Int): Boolean = type in MOTION_STREAMS
+
+    /**
+     * EmgImu$RawImu{Gyro,Accel,Mag,Quat}Sample {1 seq, 2 timestamp, 3 channels}. Gyroscope and accelerometer channels are
+     * three little-endian int16, at 0.0012217305 rad/s and 0.0023928226 m/s² a step (the Meta app's defaults, its
+     * C22926C9g); the magnetometer's are int16 as the band reports them (scale 1); the orientation is four little-endian
+     * floats, x, y, z, w (EmgQuatOrientationData).
+     */
+    fun motion(type: Int, payload: ByteArray): Motion {
+        val f = Wire.parse(payload)
+        val channels = java.nio.ByteBuffer.wrap(f.bytes(3)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val values = when (type) {
+            IMU_QUAT -> FloatArray(4) { channels.getFloat() }
+            else -> {
+                val scale = when (type) {
+                    IMU_GYRO -> GYRO_RAD_S
+                    IMU_ACCEL -> ACCEL_M_S2
+                    else -> 1f
+                }
+                FloatArray(3) { channels.getShort() * scale }
+            }
+        }
+        return Motion(type, f.varint(1).toInt(), f.varint(2), values)
+    }
+
+    const val IMU_GYRO = 15
+    const val IMU_ACCEL = 16
+    const val IMU_MAG = 17
+    const val IMU_QUAT = 18
+
     /** RpcRequest {1: seq, 11: GestureAckReq {1 the gesture's seq, 2 source MWA_ANDROID, 3 topology DIRECT}}, one per gesture. */
     fun gestureAck(seq: Int, gesture: Int): ByteArray =
         request(seq, 11, Wire.fieldVarint(1, gesture.toLong()) + Wire.fieldVarint(2, SOURCE_MWA_ANDROID) + Wire.fieldVarint(3, TOPOLOGY_DIRECT))
@@ -138,6 +195,10 @@ object Band {
 
     // Every gesture stream the Meta app turns on: 60-70, 100-109, 150-156 and 200.
     private val GESTURE_STREAMS = (60..70) + (100..109) + (150..156) + 200
+    private val MOTION_STREAMS = listOf(IMU_GYRO, IMU_ACCEL, IMU_MAG, IMU_QUAT)
+    private val MOTION_BOOLS = listOf(5, 6, 7, 8)
+    private const val GYRO_RAD_S = 0.0012217305f
+    private const val ACCEL_M_S2 = 0.0023928226f
     private const val PRIORITY_GENERIC_C50 = 90L
     private const val SOURCE_MWA_ANDROID = 2L
     private const val TOPOLOGY_DIRECT = 0L

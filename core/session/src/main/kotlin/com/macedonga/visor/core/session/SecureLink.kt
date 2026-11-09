@@ -29,7 +29,10 @@ internal const val LINK_SETUP_CHANNEL = 0x8001
 /** The handshake did not complete. */
 class HandshakeException(message: String) : Exception(message)
 
-/** SecureLink: the AirShield handshake plus the per-direction frame cipher. */
+/**
+ * SecureLink: the AirShield handshake plus the per-direction frame cipher. The cipher belongs to the session, not to
+ * the transport: after a link switch both sides go on with the first link's cipher on the other link.
+ */
 class SecureLink(private val transport: Transport) {
 
     private val random = SecureRandom()
@@ -53,6 +56,17 @@ class SecureLink(private val transport: Transport) {
     /** What the glasses sent in the handshake, one line. Empty until [open] succeeds. */
     var handshake: String = ""
         private set
+
+    /** The AirShield version of the peer's RequestEncryption; 0 until [open] succeeds. */
+    var peerAirshieldVersion: Int = 0
+        private set
+
+    /**
+     * Takes the frames of relay sub-streams (ids 1 to 63) whole, header byte included: they belong to a session the
+     * peer runs with another device through this phone, which this link neither seals nor reads. Null drops them.
+     */
+    @Volatile
+    var substreams: ((ByteArray) -> Unit)? = null
 
     /** DATA frames [open] queued; [receive] unseals these first. */
     private var handshakeQueued = 0
@@ -113,6 +127,8 @@ class SecureLink(private val transport: Transport) {
                 "handshake: missing RequestEncryption / EnableEncryption from peer",
             )
         }
+        // Only DATA and COMMAND frames follow, and a COMMAND shares DataX's bit 7: a relay's commands would unframe the link.
+        transport.handshakeDone()
 
         val secret = Ecdh.computeSharedSecret(keyPair.privateKey, enable.publicKey)
 
@@ -133,6 +149,7 @@ class SecureLink(private val transport: Transport) {
         rxCrypto = FrameCrypto(rxKeys, enable.base.toInt(), quirks = enable.quirks)
         txCrypto = FrameCrypto(txKeys, mySeq.toInt(), quirks = request.quirks)
         handshake = describe(request, enable, multikey)
+        peerAirshieldVersion = request.airshieldVersion
 
         // EndLinkSetup is NOT sent here.
     }
@@ -150,9 +167,13 @@ class SecureLink(private val transport: Transport) {
             "queuedDuringHandshake=$handshakeQueued"
     }
 
-    /** Send EndLinkSetup as the first encrypted DATA frame. */
-    suspend fun finishLinkSetup() {
-        val body = EndLinkSetup.encode(asMain = 1, scopeUuid = LinkUuid.random(), leaseUuid = LinkUuid.random())
+    /** The link uuid this side's EndLinkSetup gave the link: a switch to it names it. */
+    val linkUuid: ByteArray = LinkUuid.random()
+
+    /** Send EndLinkSetup as the first encrypted DATA frame: as the main link, or as one kept ready for a switch. */
+    suspend fun finishLinkSetup(main: Boolean = true) {
+        val state = if (main) EndLinkSetup.MAIN else EndLinkSetup.READY
+        val body = EndLinkSetup.encode(state = state, streamUuid = LinkUuid.random(), linkUuid = linkUuid)
         val sdu = Header.build(
             channelId = LINK_SETUP_CHANNEL,
             dataLen = body.size,
@@ -164,25 +185,51 @@ class SecureLink(private val transport: Transport) {
 
     suspend fun send(plaintext: ByteArray) = sealAndSend(plaintext)
 
-    /** The next DATA frame's plaintext. */
-    suspend fun receive(): ByteArray {
+    /** Send a relay sub-stream frame as it is, between whole messages of this link's own stream. */
+    suspend fun sendRaw(sdu: ByteArray) {
+        txMutex.withLock { withContext(NonCancellable) { txTransport.send(sdu) } }
+    }
+
+    // Where sealed frames go: this link's transport, or another link's after a switch.
+    @Volatile
+    private var txTransport: Transport = transport
+
+    /** Send every later frame on [to], sealed under this link's cipher. */
+    fun moveTx(to: Transport) {
+        txTransport = to
+    }
+
+    /** The next frame on this link's own transport, those the handshake held back first. */
+    suspend fun nextSdu(): ByteArray = pending.removeFirstOrNull() ?: transport.receive()
+
+    /** The plaintext of [sdu] under this link's cipher, from whichever transport carried it; null for a COMMAND frame. */
+    fun open(sdu: ByteArray): ByteArray? {
         val crypto = checkNotNull(rxCrypto) { "link not open" }
-        while (true) {
-            val sdu = pending.removeFirstOrNull() ?: transport.receive()
-            val frame = Framing.unpack(sdu)
-            if (frame.type == FrameType.DATA.value) return unseal(crypto, frame.body)
-            lastCommand = frame.body.firstOrNull()?.toInt()?.and(0xFF)
+        val frame = Framing.unpack(sdu)
+        if (frame.streamId != 0) {
+            substreams?.invoke(sdu)
+            return null
         }
+        if (frame.type != FrameType.DATA.value) {
+            lastCommand = frame.body.firstOrNull()?.toInt()?.and(0xFF)
+            return null
+        }
+        return unseal(crypto, frame.streamId, frame.body)
+    }
+
+    /** The next DATA frame's plaintext on this link's own transport. */
+    suspend fun receive(): ByteArray {
+        while (true) open(nextSdu())?.let { return it }
     }
 
     /** Unseal the next DATA frame; a failed check names the frame and whether the handshake queued it. */
-    private fun unseal(crypto: FrameCrypto, body: ByteArray): ByteArray {
+    private fun unseal(crypto: FrameCrypto, stream: Int, body: ByteArray): ByteArray {
         val index = unsealed++
         try {
             return crypto.unseal(body)
         } catch (error: AuthenticationException) {
             val origin = if (index < handshakeQueued) "queued during the handshake" else "after the handshake"
-            throw AuthenticationException("${error.message} (frame $index, $origin)").apply { initCause(error) }
+            throw AuthenticationException("${error.message} (frame $index, stream $stream, $origin)").apply { initCause(error) }
         }
     }
 
@@ -217,7 +264,7 @@ class SecureLink(private val transport: Transport) {
                 do {
                     val end = minOf(plaintext.size, at + FRAME_PLAINTEXT)
                     // Framing.pack adds the 0x40 type byte: [0x40][8B tag][1B blockCount][ct].
-                    transport.send(Framing.pack(FrameType.DATA, 0, crypto.seal(plaintext.copyOfRange(at, end))))
+                    txTransport.send(Framing.pack(FrameType.DATA, 0, crypto.seal(plaintext.copyOfRange(at, end))))
                     at = end
                 } while (at < plaintext.size)
             }
