@@ -8,7 +8,6 @@
 </p>
 
 <p align="center">
-  <a href="https://visor.macedonga.com"><img src="https://img.shields.io/badge/Website-visor.macedonga.com-FFD2A1?style=for-the-badge&labelColor=161617" alt="Website: visor.macedonga.com"></a>
   <a href="https://github.com/macedonga/visor/releases/latest"><img src="https://img.shields.io/github/v/release/macedonga/visor?style=for-the-badge&label=Download&color=FFD2A1&labelColor=161617&v=1" alt="Download the latest release"></a>
   <a href="https://github.com/macedonga/visor/discussions"><img src="https://img.shields.io/badge/Discussions-ask%20and%20share-FFD2A1?style=for-the-badge&labelColor=161617" alt="Discussions"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-FFD2A1?style=for-the-badge&labelColor=161617" alt="License: AGPL-3.0"></a>
