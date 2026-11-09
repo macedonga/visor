@@ -6,7 +6,6 @@
 <resources>
     <string name="webapps_row">网页应用</string>
     <string name="webapps_add">添加</string>
-    <string name="webapps_open">打开</string>
     <string name="webapps_remove">移除</string>
     <string name="webapps_name">名称</string>
     <string name="webapps_url">地址（https）</string>
@@ -22,8 +21,6 @@
     <string name="webapps_on_glasses">已在眼镜上</string>
     <string name="webapps_catalogue_failed">无法加载应用目录</string>
     <string name="webapps_catalogue_none">这副眼镜没有可用的网页应用</string>
-    <string name="webapps_opened">已在眼镜上打开</string>
-    <string name="webapps_not_opened">眼镜未能打开</string>
     <string name="webapps_not_https">请使用 https 地址</string>
     <string name="webapps_full">最多 20 个网页应用</string>
     <string name="webapps_unreadable">无法读取眼镜上的网页应用</string>

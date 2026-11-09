@@ -6,7 +6,6 @@ import android.util.Base64
 import android.webkit.CookieManager
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
-import com.macedonga.visor.core.protocol.SVC_LEASE
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -20,23 +19,16 @@ import com.macedonga.visor.core.settings.encodeProto
 import com.macedonga.visor.core.settings.parseProto
 import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** A web app on the glasses: its partner_app_settings key, title, page and icon. */
 data class WebApp(val key: String, val name: String, val url: String, val icon: String = "")
@@ -134,32 +126,6 @@ class WebApps @Inject constructor(
         return sent
     }
 
-    /** Open [app] on the glasses: a lease on the browser's service (svc56, feature 19), then OPEN on svc55074. */
-    suspend fun open(app: WebApp): Boolean {
-        val glasses = connection.get()
-        if (glasses.state.value.link != LinkState.READY) return false
-        coroutineScope {
-            val bound = async(start = CoroutineStart.UNDISPATCHED) {
-                withTimeoutOrNull(BOUND_MS) {
-                    glasses.serviceData.first {
-                        it.serviceId == SVC_LEASE && it.messageType == MT_LIFECYCLE &&
-                            runCatching { Wire.parse(it.payload).varint(2) }.getOrNull() == STATE_BOUND
-                    }
-                }
-            }
-            glasses.submit { it.sendOnService(SVC_LEASE, MT_LEASE, Wire.fieldVarint(1, FEATURE_WEB_APP)) }
-            if (bound.await() == null) log.add("Web apps: the browser's service did not report bound; sending OPEN anyway")
-        }
-        delay(REGISTER_MS)
-        val request = Wire.fieldString(1, UUID.randomUUID().toString()) +
-            Wire.fieldVarint(2, ACTION_OPEN) +
-            Wire.fieldString(3, app.name) +
-            Wire.fieldString(4, app.url)
-        glasses.submit { mux -> mux.send(mux.openChannel(SVC), request, messageType = MT_MANAGE, serviceId = SVC) }
-        log.add("Web apps: OPEN sent for ${app.name}")
-        return true
-    }
-
     private fun manage(f: Wire.Fields): ByteArray {
         val id = f.bytes(1)
         fun answer(error: String? = null, apps: List<WebApp> = emptyList()): ByteArray =
@@ -242,10 +208,6 @@ class WebApps @Inject constructor(
 
     companion object {
         const val SVC = 55074
-        private const val MT_LEASE = 1
-        private const val MT_LIFECYCLE = 3
-        private const val STATE_BOUND = 1L
-        private const val FEATURE_WEB_APP = 19L
         private const val MT_MANAGE = 15
         private const val MT_MANAGE_RESPONSE = 16
         private const val MT_GET_COOKIES = 11
@@ -261,7 +223,5 @@ class WebApps @Inject constructor(
         private const val DEVELOPER_MODE = "developer_mode"
         private const val DISPLAY_CONFIGS = 3
         private const val MAX_APPS = 20
-        private const val BOUND_MS = 3_000L
-        private const val REGISTER_MS = 1_500L
     }
 }

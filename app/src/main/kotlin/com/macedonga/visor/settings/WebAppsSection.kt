@@ -26,7 +26,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -202,17 +201,11 @@ class WebAppsModel @Inject constructor(
         AddResult.NOT_CONNECTED -> R.string.connect_first
         AddResult.UNREADABLE -> R.string.webapps_unreadable
     }
-
-    fun open(app: WebApp) {
-        viewModelScope.launch {
-            _note.value = if (webApps.open(app)) R.string.webapps_opened else R.string.webapps_not_opened
-        }
-    }
 }
 
 /**
- * The Display's web apps on the Apps page, as the glasses list them: each one's access, opening it on the glasses,
- * adding one, and their tools for the assistant.
+ * The Display's web apps on the Apps page, as the glasses list them: each one's access, adding one, and their
+ * tools for the assistant.
  */
 @Composable
 fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
@@ -227,15 +220,6 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
     var browsing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<WebApp?>(null) }
     var selected by remember { mutableStateOf<WebApp?>(null) }
-    val host = LocalHost.current
-    val opened = stringResource(R.string.webapps_opened)
-    LaunchedEffect(note) {
-        if (note == R.string.webapps_opened) {
-            host.notice.show(opened)
-            model.clearNote()
-        }
-    }
-
     Column {
         SectionLabel(stringResource(R.string.apps_display))
         Rows(apps) { app ->
@@ -247,7 +231,7 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
                 else -> null
             }
             val where = Uri.parse(app.url).host ?: app.url
-            WebAppRow(app, listOfNotNull(where, summary).joinToString(" · "), ready, onClick = { selected = app }, onOpen = { model.open(app) })
+            WebAppRow(app, listOfNotNull(where, summary).joinToString(" · "), onClick = { selected = app })
         }
         if (apps.isNotEmpty()) Spacer(Modifier.height(12.dp))
         Rows(
@@ -264,7 +248,7 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
                 }, onCard = true, enabled = ready)
             },
         )
-        note?.takeIf { it != R.string.webapps_opened && !browsing }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
+        note?.takeIf { !browsing }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
         Spacer(Modifier.height(12.dp))
         ToolsRow(model, ready)
     }
@@ -304,7 +288,7 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
                     }
                 }
             }
-            note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
+            note?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
         }
     }
     if (adding) {
@@ -328,9 +312,9 @@ fun WebAppsSection(model: WebAppsModel = hiltViewModel()) {
     }
 }
 
-/** A web app on the glasses: a globe where a phone app has its icon, its address and what it holds, and Open. */
+/** A web app on the glasses: a globe where a phone app has its icon, its address and what it holds. */
 @Composable
-private fun WebAppRow(app: WebApp, sub: String, ready: Boolean, onClick: () -> Unit, onOpen: () -> Unit) {
+private fun WebAppRow(app: WebApp, sub: String, onClick: () -> Unit) {
     val colors = Visor.colors
     Row(
         Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
@@ -344,7 +328,7 @@ private fun WebAppRow(app: WebApp, sub: String, ready: Boolean, onClick: () -> U
             Text(app.name, style = Visor.type.body, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(sub, style = Visor.type.label, color = colors.textSecondary, maxLines = lineLimit(2), overflow = TextOverflow.Ellipsis)
         }
-        ActionPill(stringResource(R.string.webapps_open), onOpen, Modifier.padding(start = 12.dp), quiet = true, enabled = ready)
+        Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = colors.textTertiary)
     }
 }
 

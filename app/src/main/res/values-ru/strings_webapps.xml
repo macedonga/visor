@@ -2,7 +2,6 @@
 <resources>
     <string name="webapps_row">Веб-приложения</string>
     <string name="webapps_add">Добавить</string>
-    <string name="webapps_open">Открыть</string>
     <string name="webapps_remove">Удалить</string>
     <string name="webapps_name">Название</string>
     <string name="webapps_url">Адрес (https)</string>
@@ -18,8 +17,6 @@
     <string name="webapps_on_glasses">На очках</string>
     <string name="webapps_catalogue_failed">Не удалось загрузить каталог</string>
     <string name="webapps_catalogue_none">Нет веб-приложений для этих очков</string>
-    <string name="webapps_opened">Открыто на очках</string>
-    <string name="webapps_not_opened">Очки не открыли его</string>
     <string name="webapps_not_https">Нужен адрес https</string>
     <string name="webapps_full">Не больше 20 веб-приложений</string>
     <string name="webapps_unreadable">Не удалось прочитать веб-приложения очков</string>
