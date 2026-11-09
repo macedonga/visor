@@ -414,6 +414,10 @@ class Assistant(
         val calls = ConcurrentHashMap<String, CompletableDeferred<String>>()
         val handovers = ConcurrentHashMap<String, CompletableDeferred<Pair<Boolean, String>>>()
         val callIds = AtomicInteger(1)
+
+        // The glasses' tool descriptions from tools/list, by name, and when to ask again after no answer.
+        val described = ConcurrentHashMap<String, ToolDescription>()
+        @Volatile var describeAgainAt = 0L
         // The Display's interactions for questions typed in the app, to the app's turn for each.
         val typedOf = ConcurrentHashMap<String, String>()
         // Each start interaction's MMAI_ONFRAME_KILLSWITCH (field 41), for the photo log.
@@ -1166,7 +1170,27 @@ class Assistant(
     private fun toolbox(l: Link, m: Map<Int, Any?>): GlassesToolbox? {
         if (!display()) return null
         val advertised = (m[54] as? List<*>).orEmpty().flatMap { server -> (server.asStruct()[2] as? List<*>).orEmpty().map { it.asText() } }
-        return glassesToolbox(advertised) { full, input -> glassesCall(l, full, input) }
+        return glassesToolbox(advertised, { full, input -> glassesCall(l, full, input) }, { names -> describeTools(l, names) })
+    }
+
+    /**
+     * The glasses' own descriptions of [names] (MCP tools/list over ev311), for tools Visor does not know, such as a
+     * web app's: asked once a link and kept, and not again for a minute after an ask they did not answer.
+     */
+    private suspend fun describeTools(l: Link, names: List<String>): Map<String, ToolDescription> {
+        fun known() = names.mapNotNull { n -> (l.described[n] ?: l.described[n.substringAfterLast('.')])?.let { n to it } }.toMap()
+        if (names.all { n -> l.described.containsKey(n) || l.described.containsKey(n.substringAfterLast('.')) }) return known()
+        if (System.currentTimeMillis() < l.describeAgainAt) return known()
+        val json = mcp(l, "tools/list", JSONObject(), DESCRIBE_WAIT_MS)
+        val found = json?.let(::toolDescriptions).orEmpty()
+        if (found.isEmpty()) {
+            l.describeAgainAt = System.currentTimeMillis() + DESCRIBE_RETRY_MS
+            say("The glasses did not describe their tools ${names.joinToString()}")
+        } else {
+            l.described.putAll(found)
+            say("The glasses described ${found.size} tools")
+        }
+        return known()
     }
 
     // --- replying ------------------------------------------------------------
@@ -1209,17 +1233,22 @@ class Assistant(
      * while the turn is open, which is while the model is asked.
      */
     private suspend fun glassesCall(l: Link, full: String, input: JSONObject): ToolResult {
-        val m0 = l.m0 ?: return ToolResult("the glasses are not connected", true)
+        if (l.m0 == null) return ToolResult("the glasses are not connected", true)
+        val json = mcp(l, "tools/call", JSONObject().put("name", full).put("arguments", input), MCP_WAIT_MS)
+        say(if (json == null) "The glasses did not answer $full" else "The glasses answered $full")
+        return json?.let(::glassesResult) ?: ToolResult("no answer from the glasses", true)
+    }
+
+    // One JSON-RPC request to the glasses' MCP runtime (ev311), and its answer (ev312) with the same id, or null.
+    private suspend fun mcp(l: Link, method: String, params: JSONObject, waitMs: Long): String? {
+        val m0 = l.m0 ?: return null
         val id = l.callIds.getAndIncrement().toString()
         val reply = CompletableDeferred<String>()
         l.calls[id] = reply
         try {
-            val params = JSONObject().put("name", full).put("arguments", input)
-            val request = JSONObject().put("jsonrpc", "2.0").put("id", id.toInt()).put("method", "tools/call").put("params", params)
+            val request = JSONObject().put("jsonrpc", "2.0").put("id", id.toInt()).put("method", method).put("params", params)
             sendNetEvent(l, m0, netEvent(EV_MCP_REQUEST, ThriftWriter().str(1, request.toString()).done()))
-            val json = withTimeoutOrNull(MCP_WAIT_MS) { reply.await() }
-            say(if (json == null) "The glasses did not answer $full" else "The glasses answered $full")
-            return json?.let(::glassesResult) ?: ToolResult("no answer from the glasses", true)
+            return withTimeoutOrNull(waitMs) { reply.await() }
         } finally {
             l.calls.remove(id)
         }
@@ -1874,6 +1903,9 @@ class Assistant(
         const val CLOUD_SPEECH_WAIT_MS = 20_000L
         const val PHOTO_MAX_BYTES = 20_000_000L
         const val MCP_WAIT_MS = 8_000L
+        // A turn waits this long at most for the glasses to describe tools it has not seen.
+        const val DESCRIBE_WAIT_MS = 1_500L
+        const val DESCRIBE_RETRY_MS = 60_000L
         const val INTENT_WAIT_MS = 5_000L
         // How long a question typed in the app waits for the Display to start it, then to ask it.
         const val TYPED_WAIT_MS = 5_000L

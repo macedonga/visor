@@ -156,7 +156,7 @@ class Brain(private val store: AssistantConfigStore, private val diary: Diary, p
         } catch (_: Exception) {
             Toolbox(emptyList(), "")
         }
-        val turn = Turn(box, image, glasses, canEnd, capturePhoto, cameraAction, appTools.tools())
+        val turn = Turn(box, image, glasses?.described(), canEnd, capturePhoto, cameraAction, appTools.tools())
         val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +

@@ -17,6 +17,8 @@
     <string name="webapps_saving_send">Salvataggio sugli occhiali…</string>
     <string name="webapps_summary_bluetooth">Bluetooth</string>
     <string name="webapps_summary_visor">Visor: %1$s</string>
+    <string name="webapps_tools">Strumenti delle web app per l\'assistente</string>
+    <string name="webapps_tools_sub">Una web app aperta sugli occhiali può dare all\'assistente degli strumenti da usare, come aggiungere qualcosa alla sua lista. Cambiarlo scrive la configurazione degli occhiali.</string>
     <string name="webapps_browse">Sfoglia</string>
     <string name="webapps_on_glasses">Sugli occhiali</string>
     <string name="webapps_catalogue_failed">Impossibile caricare il catalogo</string>

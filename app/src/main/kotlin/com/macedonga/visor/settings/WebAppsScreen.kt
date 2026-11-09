@@ -28,6 +28,7 @@ import com.macedonga.visor.R
 import com.macedonga.visor.connection.AddResult
 import com.macedonga.visor.connection.WebApp
 import com.macedonga.visor.connection.WebAppBluetooth
+import com.macedonga.visor.connection.WebAppTools
 import com.macedonga.visor.kit.protocol.Scope
 import com.macedonga.visor.outside.KitConsentActivity
 import com.macedonga.visor.outside.KitWebApps
@@ -63,7 +64,29 @@ class WebAppsModel @Inject constructor(
     private val login: MetaLogin,
     private val bluetooth: WebAppBluetooth,
     private val kit: KitWebApps,
+    private val tools: WebAppTools,
 ) : ViewModel() {
+    /** Whether web apps' tools reach the assistant; null before the glasses' configuration was read. */
+    val toolsOn: StateFlow<Boolean?> = tools.on.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val _toolsSaving = MutableStateFlow(false)
+    val toolsSaving: StateFlow<Boolean> = _toolsSaving.asStateFlow()
+    private val _toolsProblem = MutableStateFlow<String?>(null)
+    val toolsProblem: StateFlow<String?> = _toolsProblem.asStateFlow()
+
+    fun setTools(on: Boolean) {
+        if (_toolsSaving.value) return
+        _toolsSaving.value = true
+        _toolsProblem.value = null
+        viewModelScope.launch {
+            try {
+                _toolsProblem.value = tools.set(on)
+            } finally {
+                _toolsSaving.value = false
+            }
+        }
+    }
+
     val apps: StateFlow<List<WebApp>> = webApps.apps
 
     /** The VDK scopes each web app's origin holds. */
@@ -291,6 +314,27 @@ fun WebAppsScreen(model: WebAppsModel = hiltViewModel()) {
                 )
                 note?.takeIf { it != R.string.webapps_opened }?.let { Footnote(stringResource(it), color = Visor.colors.signal) }
                 if (apps.isEmpty()) Footnote(stringResource(R.string.webapps_none))
+            }
+        }
+        item(key = "tools") {
+            val on by model.toolsOn.collectAsStateWithLifecycle()
+            val saving by model.toolsSaving.collectAsStateWithLifecycle()
+            val busy by model.configBusy.collectAsStateWithLifecycle()
+            val problem by model.toolsProblem.collectAsStateWithLifecycle()
+            Column(Modifier.padding(top = 14.dp)) {
+                Rows({
+                    ToggleRow(
+                        stringResource(R.string.webapps_tools), on == true, model::setTools,
+                        sub = when {
+                            saving && busy == ConfigBusy.READING -> stringResource(R.string.webapps_saving_read)
+                            saving -> stringResource(R.string.webapps_saving_send)
+                            else -> stringResource(R.string.webapps_tools_sub)
+                        },
+                        busy = saving,
+                        locked = !ready || saving,
+                        problem = problem?.let { stringResource(R.string.webapps_bluetooth_failed, it) },
+                    )
+                })
             }
         }
     }

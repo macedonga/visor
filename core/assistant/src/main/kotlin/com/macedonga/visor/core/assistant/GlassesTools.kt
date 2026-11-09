@@ -9,11 +9,34 @@ import org.json.JSONObject
  * out as ev311 tools/call and comes back on ev312, with ev387 only acknowledging it. Names and help are Visor's own.
  */
 
-/** One of the glasses' tools as the model sees it: the short name it calls, the glasses' full name, help and schema. */
-class GlassesTool(val short: String, val full: String, val help: String, val schema: JSONObject)
+/**
+ * One of the glasses' tools as the model sees it: the short name it calls, the glasses' full name, help and schema.
+ * [generic] when Visor knows nothing of it, such as a web app's WebMCP tool.
+ */
+class GlassesTool(val short: String, val full: String, val help: String, val schema: JSONObject, val generic: Boolean = false)
+
+/** A tool's help and input schema as the glasses describe it, on MCP tools/list. */
+class ToolDescription(val help: String, val schema: JSONObject)
 
 /** The glasses' tools for one turn, and the call that runs one of them. */
-class GlassesToolbox(val tools: List<GlassesTool>, val call: suspend (full: String, input: JSONObject) -> ToolResult)
+class GlassesToolbox(
+    val tools: List<GlassesTool>,
+    val call: suspend (full: String, input: JSONObject) -> ToolResult,
+    private val describe: (suspend (List<String>) -> Map<String, ToolDescription>)? = null,
+) {
+    /**
+     * These tools, with the glasses' own help and schema for those Visor knows nothing about, when the glasses give
+     * them; otherwise as they are, so a turn never waits on a description that does not come.
+     */
+    suspend fun described(): GlassesToolbox {
+        val unknown = tools.filter { it.generic }.map { it.full }
+        val describe = describe ?: return this
+        if (unknown.isEmpty()) return this
+        val found = runCatching { describe(unknown) }.getOrDefault(emptyMap())
+        if (found.isEmpty()) return this
+        return GlassesToolbox(tools.map { t -> found[t.full]?.let { d -> GlassesTool(t.short, t.full, d.help, d.schema) } ?: t }, call)
+    }
+}
 
 private class Known(val help: String, val props: Map<String, String> = emptyMap(), val required: List<String> = emptyList())
 
@@ -60,7 +83,11 @@ private val KNOWN: Map<String, Known> = mapOf(
  * The glasses' tools named in [advertised] (the full names from ev57 field 54), with short names the model can send.
  * Null when the glasses advertise none.
  */
-internal fun glassesToolbox(advertised: List<String>, call: suspend (String, JSONObject) -> ToolResult): GlassesToolbox? {
+internal fun glassesToolbox(
+    advertised: List<String>,
+    call: suspend (String, JSONObject) -> ToolResult,
+    describe: (suspend (List<String>) -> Map<String, ToolDescription>)? = null,
+): GlassesToolbox? {
     if (advertised.isEmpty()) return null
     val tools = mutableListOf<GlassesTool>()
     for (full in advertised.distinct()) {
@@ -69,12 +96,31 @@ internal fun glassesToolbox(advertised: List<String>, call: suspend (String, JSO
         val short = if (tools.any { it.short == base }) "${base}_${tools.size}" else base
         val known = KNOWN[method]
         tools += if (known == null) {
-            GlassesTool(short, full, "The glasses' own tool $method. Pass the arguments it takes.", JSONObject().put("type", "object"))
+            GlassesTool(short, full, "The glasses' own tool $method. Pass the arguments it takes.", JSONObject().put("type", "object"), generic = true)
         } else {
             GlassesTool(short, full, known.help, schema(known))
         }
     }
-    return GlassesToolbox(tools, call)
+    return GlassesToolbox(tools, call, describe)
+}
+
+/**
+ * A tools/list answer: each tool's description and input schema, by the name the glasses gave, and by its last part
+ * too, as field 54 may name it in full.
+ */
+internal fun toolDescriptions(json: String): Map<String, ToolDescription> {
+    val tools = runCatching { JSONObject(json).optJSONObject("result")?.optJSONArray("tools") }.getOrNull() ?: return emptyMap()
+    val out = HashMap<String, ToolDescription>()
+    for (i in 0 until tools.length()) {
+        val t = tools.optJSONObject(i) ?: continue
+        val name = t.optString("name").ifEmpty { continue }
+        val help = t.optString("description").ifEmpty { t.optString("title") }.ifEmpty { "The glasses' tool $name." }
+        val schema = t.optJSONObject("inputSchema") ?: JSONObject().put("type", "object")
+        val d = ToolDescription(help, schema)
+        out[name] = d
+        out.putIfAbsent(name.substringAfterLast('.'), d)
+    }
+    return out
 }
 
 private fun schema(known: Known): JSONObject {

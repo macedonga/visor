@@ -21,6 +21,8 @@
     <string name="webapps_saving_send">正在保存到眼镜…</string>
     <string name="webapps_summary_bluetooth">蓝牙</string>
     <string name="webapps_summary_visor">Visor：%1$s</string>
+    <string name="webapps_tools">网页应用为助手提供的工具</string>
+    <string name="webapps_tools_sub">在眼镜上打开的网页应用可以为你的助手提供工具，例如添加到它自己的列表。更改会写入眼镜的配置。</string>
     <string name="webapps_browse">浏览</string>
     <string name="webapps_on_glasses">已在眼镜上</string>
     <string name="webapps_catalogue_failed">无法加载应用目录</string>

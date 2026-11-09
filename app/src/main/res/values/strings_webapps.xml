@@ -17,6 +17,8 @@
     <string name="webapps_saving_send">Saving to the glasses…</string>
     <string name="webapps_summary_bluetooth">Bluetooth</string>
     <string name="webapps_summary_visor">Visor: %1$s</string>
+    <string name="webapps_tools">Web app tools for your assistant</string>
+    <string name="webapps_tools_sub">A web app open on the glasses can give your assistant tools to use, such as adding to its own list. Changing it writes the glasses\' configuration.</string>
     <string name="webapps_browse">Browse</string>
     <string name="webapps_on_glasses">On the glasses</string>
     <string name="webapps_catalogue_failed">Could not load the catalogue</string>

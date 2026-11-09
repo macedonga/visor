@@ -45,6 +45,7 @@ class WebAppBluetooth @Inject constructor(
         if ((origin in _allowed.value) == on) return null
         val next = if (on) _allowed.value + origin else _allowed.value - origin
         if (!config.readOnce(READ_MS) {}) return "the glasses' configuration could not be read"
+        if (PARAM !in config.state.value.params) return "these glasses' software does not let web apps scan"
         val why = config.send(mapOf(PARAM to JSONArray(next.sorted()).toString()))
         if (why == null) {
             prefs.edit().putStringSet(KEY, next).apply()

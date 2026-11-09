@@ -17,6 +17,8 @@
     <string name="webapps_saving_send">Сохранение на очках…</string>
     <string name="webapps_summary_bluetooth">Bluetooth</string>
     <string name="webapps_summary_visor">Visor: %1$s</string>
+    <string name="webapps_tools">Инструменты веб-приложений для ассистента</string>
+    <string name="webapps_tools_sub">Веб-приложение, открытое на очках, может дать ассистенту свои инструменты, например добавить что-то в свой список. Изменение записывает конфигурацию очков.</string>
     <string name="webapps_browse">Каталог</string>
     <string name="webapps_on_glasses">На очках</string>
     <string name="webapps_catalogue_failed">Не удалось загрузить каталог</string>
