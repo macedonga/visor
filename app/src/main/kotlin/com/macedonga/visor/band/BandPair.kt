@@ -50,7 +50,7 @@ class BandPair @Inject constructor(
 
     enum class Reason { NOT_CONNECTED, NO_BAND, NO_ANSWER, BAND_REFUSED, WRONG_OWNER, UNSUPPORTED, REFUSED, FAILED }
 
-    private class Stop(val reason: Reason, val detail: String = "") : Exception(detail)
+    private class Stop(val reason: Reason, val detail: String = "", val unreached: Boolean = false) : Exception(detail)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Mutex()
@@ -91,7 +91,22 @@ class BandPair @Inject constructor(
     private suspend fun run() {
         if (connection.state.value.link != LinkState.READY) throw Stop(Reason.NOT_CONNECTED)
         val glasses = connection.pair.value ?: throw Stop(Reason.NOT_CONNECTED)
-        if (bands.forGlasses(glasses) == null) setUp()
+        val fresh = bands.forGlasses(glasses) == null
+        if (fresh) setUp()
+        try {
+            pairWith(glasses)
+        } catch (stop: Stop) {
+            // A band set up here before that never comes up has likely forgotten this phone (paired elsewhere, or
+            // reset): it is set up again, as a new band is, and asked once more.
+            if (fresh || !stop.unreached) throw stop
+            log.add("Band pairing: the band did not come up; setting it up again")
+            setUp()
+            pairWith(glasses)
+        }
+        peers.refresh()
+    }
+
+    private suspend fun pairWith(glasses: String) {
         val band = bands.forGlasses(glasses) ?: throw Stop(Reason.FAILED, "no band set up")
         // The key the Display's lease hints name; the PAIR hint must name it too.
         val key = band.publicKey?.let(::rawPublicKey) ?: throw Stop(Reason.FAILED, "no band key")
@@ -117,11 +132,10 @@ class BandPair @Inject constructor(
                 coroutineContext.cancelChildren()
             }
         }
-        peers.refresh()
     }
 
     private suspend fun steps(display: BtPeer.PairingInfo, hint: ByteArray, fromDisplay: Channel<SessionEvent>, fromBand: Channel<SessionEvent>) {
-        if (!link.startPairing()) throw Stop(Reason.NO_ANSWER, "band")
+        if (!link.startPairing()) throw Stop(Reason.NO_ANSWER, "band", unreached = true)
         var band = bandInfo(fromBand)
         val session = UUID.randomUUID()
         val known = band.lists(display.identity) && display.lists(band.identity)
