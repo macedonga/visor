@@ -51,7 +51,9 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is, phone_status gives the phone's battery and sound mode, calendar reads the wearer's events."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. " +
+        "recent_calls says who called, find_phone rings the phone, location says where the wearer is, phone_status gives " +
+        "the phone's battery and sound mode, calendar reads the wearer's events."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
