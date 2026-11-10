@@ -80,19 +80,23 @@ class PhonePosition @Inject constructor(@ApplicationContext private val context:
     fun current(): LatLng? = fix()?.let { LatLng(it.latitude, it.longitude) }
 
     /** A fix taken now, for when none is known yet; null without one in [timeoutMs]. */
+    suspend fun fresh(timeoutMs: Long = FRESH_MS): LatLng? = freshFix(timeoutMs)?.let { LatLng(it.latitude, it.longitude) }
+
+    /** [fresh], with its accuracy and time. */
     @SuppressLint("MissingPermission")
-    suspend fun fresh(timeoutMs: Long = FRESH_MS): LatLng? {
+    suspend fun freshFix(timeoutMs: Long = FRESH_MS): Location? {
         if (manager == null || !granted()) return null
         return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val cancel = CancellationSignal()
                 cont.invokeOnCancellation { cancel.cancel() }
-                manager.getCurrentLocation(provider(manager), cancel, context.mainExecutor) { fix ->
-                    cont.resume(fix?.let { LatLng(it.latitude, it.longitude) })
-                }
+                manager.getCurrentLocation(provider(manager), cancel, context.mainExecutor) { fix -> cont.resume(fix) }
             }
         }
     }
+
+    /** Location is on in the phone's settings. */
+    fun enabled(): Boolean = manager?.isLocationEnabled == true
 
     private fun granted(): Boolean =
         listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)

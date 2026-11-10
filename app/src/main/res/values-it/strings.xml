@@ -707,7 +707,7 @@
     <string name="access_call_control">Effettua e rispondi alle chiamate</string>
     <string name="access_call_control_why">Così gli occhiali e Meta AI possono effettuare e rispondere alle chiamate su questo telefono.</string>
     <string name="access_location">Posizione</string>
-    <string name="access_location_why">Per annotare dove gli occhiali hanno fatto ogni foto.</string>
+    <string name="access_location_why">Per annotare dove gli occhiali hanno fatto ogni foto, e perché Meta AI possa rispondere a domande su dove ti trovi.</string>
     <string name="access_location_always">Posizione, sempre</string>
     <string name="access_location_always_why">Così il luogo viene annotato anche con Visor chiusa. Scegli “Consenti sempre”.</string>
     <string name="access_wifi">Wi-Fi nelle vicinanze</string>

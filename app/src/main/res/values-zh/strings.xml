@@ -684,7 +684,7 @@
     <string name="access_call_control">拨打电话和接听来电</string>
     <string name="access_call_control_why">让眼镜和 Meta AI 能用这台手机拨打电话和接听来电。</string>
     <string name="access_location">位置信息</string>
-    <string name="access_location_why">用于记录每张照片的拍摄地点。</string>
+    <string name="access_location_why">用于记录每张照片的拍摄地点，也让 Meta AI 能回答关于你所在位置的问题。</string>
     <string name="access_location_always">始终允许位置信息</string>
     <string name="access_location_always_why">这样即使关闭 Visor 也会记录地点。请选择“始终允许”。</string>
     <string name="access_wifi">附近的 Wi-Fi</string>

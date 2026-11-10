@@ -30,6 +30,9 @@ interface Handset {
 
     /** Rings the phone so the wearer can find it, or stops it when [stop]. */
     suspend fun findPhone(stop: Boolean): HandsetDone
+
+    /** Where the phone is: its address and coordinates. */
+    suspend fun location(): HandsetDone
 }
 
 /**
@@ -42,7 +45,7 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -96,6 +99,12 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
             "Ring the wearer's phone loudly, even on silent, so they can find it. It stops by itself when the phone's screen turns on.",
             schema("stop" to prop("boolean", "True to stop the ringing.")),
         ),
+        Triple(
+            "location",
+            "Where the wearer is now, from the phone: the street address and coordinates. Use it for questions about " +
+                "here, such as where am I, the weather here, or what is near.",
+            schema(),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -115,6 +124,7 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
             }
         }
         "messages" -> messages(input.optString("from").trim()) to null
+        "location" -> handset.location().let { ToolResult(it.text, it.failed) to null }
         "find_phone" -> {
             val stop = input.optBoolean("stop")
             val done = handset.findPhone(stop)
