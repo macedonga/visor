@@ -214,8 +214,12 @@ class Toolkit @Inject constructor(
     private suspend fun installToolkitApp(serial: String, release: String) {
         val install = AppInstall(connection, airship)
         if ("installed=true" in install.query(TOOLKIT_APP)) return
-        val offer = withContext(Dispatchers.IO) { fetchEntitlements(login.source.get(), serial, release) }.firstOrNull { it.packageName == TOOLKIT_APP }
-            ?: throw KitException(ErrorCode.UNSUPPORTED, "Meta's store has no toolkit app for these glasses on this account.", reason = "no_toolkit_app")
+        val held = withContext(Dispatchers.IO) { fetchEntitlements(login.source.get(), serial, release) }
+        val offer = held.firstOrNull { it.packageName == TOOLKIT_APP }
+        if (offer == null) {
+            log.add("Toolkit: the store lists ${held.size} apps for these glasses on release \"$release\": ${held.joinToString { "${it.name} (${it.packageName})" }}")
+            throw KitException(ErrorCode.UNSUPPORTED, "Meta's store has no toolkit app for these glasses on this account.", reason = "no_toolkit_app")
+        }
         val apk = File(context.cacheDir, "toolkit/${offer.packageName}-${offer.versionCode}.apk")
         download(offer.downloadUrl, offer.sha256, apk)
         step(ToolkitStep.APP, null)
