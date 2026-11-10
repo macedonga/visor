@@ -33,6 +33,9 @@ interface Handset {
 
     /** Where the phone is: its address and coordinates. */
     suspend fun location(): HandsetDone
+
+    /** The phone's battery, connection and sound: ringing, vibrate or silent, and Do not disturb. */
+    fun status(): HandsetDone
 }
 
 /**
@@ -45,7 +48,7 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is, phone_status gives the phone's battery and sound mode."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -105,6 +108,11 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
                 "here, such as where am I, the weather here, or what is near.",
             schema(),
         ),
+        Triple(
+            "phone_status",
+            "The phone's own battery and charging, its internet connection, and whether it rings, vibrates or is silent, with Do not disturb.",
+            schema(),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -125,6 +133,7 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
         }
         "messages" -> messages(input.optString("from").trim()) to null
         "location" -> handset.location().let { ToolResult(it.text, it.failed) to null }
+        "phone_status" -> handset.status().let { ToolResult(it.text, it.failed) to null }
         "find_phone" -> {
             val stop = input.optBoolean("stop")
             val done = handset.findPhone(stop)

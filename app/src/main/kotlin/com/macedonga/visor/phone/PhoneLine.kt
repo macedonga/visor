@@ -2,7 +2,12 @@ package com.macedonga.visor.phone
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.NotificationManager
 import android.content.Context
+import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.BatteryManager
 import android.location.Address
 import android.location.Geocoder
 import android.location.Location
@@ -136,6 +141,28 @@ class PhoneLine @Inject constructor(
         val where = "%.5f, %.5f, within %d m".format(Locale.ROOT, fix.latitude, fix.longitude, fix.accuracy.toInt()) +
             if (minutes > 0) ", $minutes min ago" else ""
         return HandsetDone(if (place != null) "$place ($where)." else "No address is known for it ($where).")
+    }
+
+    override fun status(): HandsetDone {
+        val battery = context.getSystemService(BatteryManager::class.java)
+        val level = battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+        val charging = battery?.isCharging == true
+        val net = context.getSystemService(ConnectivityManager::class.java)?.let { it.getNetworkCapabilities(it.activeNetwork) }
+        val online = when {
+            net == null || !net.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> "no internet"
+            net.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "on Wi-Fi"
+            net.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "on mobile data"
+            else -> "online"
+        }
+        val sound = when (context.getSystemService(AudioManager::class.java)?.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "on vibrate"
+            else -> "ringing"
+        }
+        val quiet = context.getSystemService(NotificationManager::class.java)?.currentInterruptionFilter
+            ?.let { it != NotificationManager.INTERRUPTION_FILTER_ALL && it != NotificationManager.INTERRUPTION_FILTER_UNKNOWN } == true
+        val power = if (level == null) "battery unknown" else "battery $level%${if (charging) ", charging" else ""}"
+        return HandsetDone("The phone: $power, $online, $sound${if (quiet) ", Do not disturb on" else ""}.")
     }
 
     /** The street address of [fix], in the phone's language, when the phone's geocoder knows it. */
