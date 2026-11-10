@@ -593,14 +593,18 @@ class DebugReceiver : BroadcastReceiver() {
                 heard.joinToString("\n").ifEmpty { "nothing" }
             }
             // --es doc <client_doc_id> --es name <friendly name> --es vars <json>: one query on Meta's ar GraphQL, as the
-            // user; the answer's first 4000 characters.
+            // user; the answer's first 4000 characters, or with --es save <file> all of it in files/debug/<file>.
             "GRAPHQL" -> answerLater {
                 val text = login.graphql(
                     intent.getStringExtra("name").orEmpty(),
                     intent.getStringExtra("doc").orEmpty(),
                     intent.getStringExtra("vars64")?.let { String(Base64.decode(it, 0)) } ?: intent.getStringExtra("vars") ?: "{}",
                 )
-                if (!intent.getBooleanExtra("shape", false)) text.take(4000) else {
+                val save = intent.getStringExtra("save")?.takeIf { it.matches(Regex("[A-Za-z0-9_.-]+")) }
+                if (save != null) {
+                    File(context.filesDir, "debug").apply { mkdirs() }.resolve(save).writeText(text)
+                    "saved ${text.length} characters to files/debug/$save"
+                } else if (!intent.getBooleanExtra("shape", false)) text.take(4000) else {
                     // Every path with its type, a string's length and start: the structure without the bulk.
                     val out = StringBuilder()
                     fun walk(path: String, v: Any?) {
