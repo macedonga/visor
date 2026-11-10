@@ -8,6 +8,9 @@ import com.macedonga.visor.core.session.Responder
 import com.macedonga.visor.log.EventLog
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** svc150, conn_device_lease: OK when the Display names a band set up here by its key hint, BadRequest otherwise. */
 @Singleton
@@ -15,14 +18,17 @@ class DeviceLease @Inject constructor(
     private val bands: Bands,
     private val log: EventLog,
 ) : Responder {
-    @Volatile private var holding = false
+    private val _holder = MutableStateFlow<String?>(null)
+
+    /** The serial of the band the Display holds a lease on, null while it holds none. */
+    val holder: StateFlow<String?> = _holder.asStateFlow()
 
     override suspend fun respond(message: DataXMessage, connection: DataXConnection) {
         val info = message.info
         val reply = DataXConnection.mirror(info.channelId)
         if (info.flags.isClosed && message.payload.isEmpty()) {
-            if (holding) log.add("Band lease: the Display let go")
-            holding = false
+            if (_holder.value != null) log.add("Band lease: the Display let go")
+            _holder.value = null
             return
         }
         if (info.messageType != NotifyLease.MESSAGE_TYPE) {
@@ -39,6 +45,6 @@ class DeviceLease @Inject constructor(
         }
         connection.sendStatus(reply, NotifyLease.OK)
         log.add("Band lease: the Display holds ${band.serial} (type ${lease.type})")
-        if (!lease.relay) holding = true
+        if (!lease.relay) _holder.value = band.serial
     }
 }

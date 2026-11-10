@@ -9,19 +9,12 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import com.macedonga.visor.R
-import com.macedonga.visor.band.BandLink
-import com.macedonga.visor.band.Bands
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.GlassesLink
-import com.macedonga.visor.core.connection.productId
-import com.macedonga.visor.core.identity.ConstellationManifest
-import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.appstore.fetchEntitlements
 import com.macedonga.visor.core.identity.appstore.grantEntitlement
-import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.AppInstall
-import com.macedonga.visor.core.protocol.Ecdh
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.PERMISSIONS_NAMESPACE
@@ -31,14 +24,12 @@ import com.macedonga.visor.kit.protocol.ErrorCode
 import com.macedonga.visor.kit.protocol.KitInternal
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.login.MetaLogin
-import com.macedonga.visor.setup.Provisioner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import java.security.PrivateKey
-import java.security.SecureRandom
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
@@ -82,11 +73,7 @@ class Toolkit @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: GlassesConnection,
     private val store: ToolkitStore,
-    private val identities: IdentityStore,
-    private val provisioner: Provisioner,
-    private val bands: Bands,
-    private val bandLink: BandLink,
-    private val manifests: ManifestSync,
+    private val manifests: Manifests,
     private val settings: GlassesSettings,
     private val login: MetaLogin,
     private val airship: AirshipReceiver,
@@ -107,7 +94,7 @@ class Toolkit @Inject constructor(
         }
         val (appKey, appPublic) = store.appKey()
         val current = store.pair(info.serial)
-        if (current != null && current.granted && current.format == MANIFEST_FORMAT && devices(info.serial, address, info.build).map { it.publicKey.toHexString() }.toSet() == current.devices) {
+        if (current != null && current.granted && current.format == MANIFEST_FORMAT && manifests.devices(info.serial, address, info.build).map { it.publicKey.toHexString() }.toSet() == current.devices) {
             return ToolkitReady(address, appKey, appPublic, current.version, current.salt)
         }
         // Asked once; after that the setup only shows how far it has come.
@@ -119,7 +106,7 @@ class Toolkit @Inject constructor(
         }
         store.allowed = true
         try {
-            val pair = run(info.serial, address, info.build, info.wearablesRelease, appPublic, current)
+            val pair = run(info.serial, address, info.build, info.wearablesRelease)
             _progress.value = ToolkitProgress.Ready
             notification(null)
             ToolkitReady(address, appKey, appPublic, pair.version, pair.salt)
@@ -156,60 +143,20 @@ class Toolkit @Inject constructor(
         context.startActivity(Intent(context, ToolkitActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    private suspend fun run(serial: String, address: String, build: String, release: String, appPublic: ByteArray, before: ToolkitPair?): ToolkitPair {
+    private suspend fun run(serial: String, address: String, build: String, release: String): ToolkitPair {
         step(ToolkitStep.KEY)
-        if (identities.load(serial)?.devicePublicKey == null) receiptKey(address, serial)
+        manifests.receiptKey(address, serial)
 
         step(ToolkitStep.APP)
         installToolkitApp(serial, release)
 
         step(ToolkitStep.MANIFEST)
-        val devices = devices(serial, address, build)
-        val authority = before?.let { ToolkitStore.pkcs8(it.authority) to it.authorityPublic }
-            ?: Ecdh.generateEphemeral().let { it.privateKey to it.publicKey64 }
-        val group = before?.groupId ?: ByteArray(16).also(SecureRandom()::nextBytes)
-        val installed = manifests.version() ?: throw KitException(ErrorCode.FAILED, "The glasses did not say which manifest they hold.")
-        val version = installed.version + 1
-        val manifest = ConstellationManifest.build(authority.first, authority.second, devices, listOf(ConstellationManifest.App(appPublic, context.packageName)), version, group)
-        // The band first: a band left out of a new manifest refuses the Display (0xc004), while a Display behind the
-        // band takes the band's newer manifest from it, signed by the same authority.
-        if (bands.all.value.any { it.glasses == serial }) {
-            val held = runCatching { bandLink.installManifest(authority.second, manifest) }.getOrNull()
-            if (held != version) throw KitException(ErrorCode.FAILED, "The band did not take Visor's manifest (it holds version $held).")
-        }
-        val now = manifests.install(authority.second, manifest)
-        if (now?.version != version) throw KitException(ErrorCode.FAILED, "The glasses did not take Visor's manifest (they hold version ${now?.version}).")
-        val pair = ToolkitPair(authority.first.encoded, authority.second, version, now.salt, group, devices.map { it.publicKey.toHexString() }.toSet(), granted = false, manifest = manifest)
-        store.save(serial, pair)
-        log.add("Toolkit: manifest $version installed on $serial with ${devices.size} devices")
+        val pair = manifests.install(serial, address, build)
 
         step(ToolkitStep.PERMISSIONS)
         val grants = GRANTS.map { permissionObject(context.packageName, "android.permission.$it", "ALWAYS") }
         settings.readNamespace(PERMISSIONS_NAMESPACE, grants) ?: throw KitException(ErrorCode.FAILED, "The glasses did not take the toolkit's permissions.")
         return pair.copy(granted = true).also { store.save(serial, it) }
-    }
-
-    /** The glasses, and each band Visor set up with them, as the manifest lists them by their receipt keys. */
-    private fun devices(serial: String, address: String, build: String): List<ConstellationManifest.Device> {
-        val key = identities.load(serial)?.devicePublicKey ?: return emptyList()
-        val product = productId(build) ?: throw KitException(ErrorCode.UNSUPPORTED, "Visor does not know these glasses' model.", reason = "unknown_model")
-        val glasses = ConstellationManifest.Device(key, ConstellationManifest.vendorData(product), address, address)
-        val withBands = bands.all.value.filter { it.glasses == serial }.mapNotNull { band ->
-            val bandKey = band.publicKey?.let(::rawPublicKey) ?: return@mapNotNull null
-            ConstellationManifest.Device(bandKey, ConstellationManifest.vendorData(BAND_PRODUCT), "", band.address)
-        }
-        return listOf(glasses) + withBands
-    }
-
-    // The receipt key comes with a change of owner: the same owner key again, about a second.
-    private suspend fun receiptKey(address: String, serial: String) {
-        provisioner.start(address)
-        val end = withTimeoutOrNull(PROVISION_MS) { provisioner.status.first { it is Provisioner.Status.Done || it is Provisioner.Status.Failed } }
-        if (end !is Provisioner.Status.Done || identities.load(serial)?.devicePublicKey == null) {
-            throw KitException(ErrorCode.FAILED, "Visor could not read the glasses' key from Meta.")
-        }
-        withTimeoutOrNull(RECONNECT_MS) { connection.state.first { it.link == LinkState.READY } }
-            ?: throw KitException(ErrorCode.NOT_CONNECTED, "The glasses did not come back after their key was read.")
     }
 
     private suspend fun installToolkitApp(serial: String, release: String) {
@@ -305,12 +252,9 @@ class Toolkit @Inject constructor(
         const val TOOLKIT_APP = "com.meta.wearable.dat.developer"
         // Its store item, the same for every model ("DevMode DWA").
         private const val TOOLKIT_APP_ID = "959779766592476"
-        private const val BAND_PRODUCT = 1537
         private const val CHANNEL = "toolkit"
         private const val NOTIFICATION_ID = 7009
         private const val ASK_MS = 120_000L
-        private const val PROVISION_MS = 60_000L
-        private const val RECONNECT_MS = 60_000L
 
         /** The glasses' permissions the toolkit app checks for Visor's package. */
         private val GRANTS = listOf("DEV_MODE", "IMU", "DISPLAY", "INPUTS")

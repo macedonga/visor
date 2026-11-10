@@ -188,6 +188,8 @@ fun pairWords(status: BandPair.Status): String? = when (status) {
     is BandPair.Status.Running -> stringResource(
         when (status.step) {
             BandPair.Step.SETUP -> R.string.band_pair_setting_up
+            BandPair.Step.MANIFEST -> R.string.band_pair_manifest
+            BandPair.Step.WEAR -> R.string.band_pair_wear
             BandPair.Step.BAND -> R.string.band_pair_reaching
             BandPair.Step.PAIRING -> R.string.band_pair_pairing
             BandPair.Step.CONNECTING -> R.string.band_pair_connecting

@@ -1,13 +1,17 @@
 package com.macedonga.visor.band
 
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesLink
 import com.macedonga.visor.core.identity.keyHint
 import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.protocol.BtPeer
+import com.macedonga.visor.core.protocol.CamControl
 import com.macedonga.visor.core.session.DataXError
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.ServiceData
 import com.macedonga.visor.core.session.SessionEvent
+import com.macedonga.visor.dat.Manifests
+import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.log.EventLog
 import java.util.Locale
 import java.util.UUID
@@ -21,15 +25,21 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Pairs the Neural Band with a Display set up here, over svc41109 on both links; [BandSetup] runs first when it has no band. */
+/**
+ * Pairs the Neural Band with a Display set up here; [BandSetup] runs first when it has no band. As the Meta app pairs
+ * the two at AirShield 0x11: both on Visor's manifest, and the Display reaches the band itself while worn. Over
+ * svc41109 on both links when the Display does not.
+ */
 @Singleton
 class BandPair @Inject constructor(
     private val connection: GlassesConnection,
@@ -37,6 +47,8 @@ class BandPair @Inject constructor(
     private val link: BandLink,
     private val peers: BandPeers,
     private val setup: BandSetup,
+    private val manifests: Manifests,
+    private val lease: DeviceLease,
     private val log: EventLog,
 ) {
     sealed interface Status {
@@ -46,7 +58,7 @@ class BandPair @Inject constructor(
         data class Failed(val reason: Reason) : Status
     }
 
-    enum class Step { SETUP, BAND, PAIRING, CONNECTING }
+    enum class Step { SETUP, MANIFEST, WEAR, BAND, PAIRING, CONNECTING }
 
     enum class Reason { NOT_CONNECTED, NO_BAND, NO_ANSWER, BAND_REFUSED, WRONG_OWNER, UNSUPPORTED, REFUSED, FAILED }
 
@@ -93,17 +105,78 @@ class BandPair @Inject constructor(
         val glasses = connection.pair.value ?: throw Stop(Reason.NOT_CONNECTED)
         val fresh = bands.forGlasses(glasses) == null
         if (fresh) setUp()
+        var setUpNow = fresh
+        var linked = viaManifest(glasses)
+        // A band set up here before that does not answer, and that the Display does not list either, has likely
+        // forgotten this phone (paired elsewhere, or reset): it is set up again, as a new band is.
+        if (linked == Linked.BAND_AWAY && !setUpNow && peers.refresh()?.peers?.isEmpty() == true) {
+            log.add("Band pairing: the band did not answer; setting it up again")
+            setUp()
+            setUpNow = true
+            linked = viaManifest(glasses)
+        }
+        if (linked == Linked.YES) {
+            peers.refresh()
+            return
+        }
+        log.add("Band pairing: the glasses did not reach the band; pairing over svc41109")
         try {
             pairWith(glasses)
         } catch (stop: Stop) {
             // A band set up here before that never comes up has likely forgotten this phone (paired elsewhere, or
             // reset): it is set up again, as a new band is, and asked once more.
-            if (fresh || !stop.unreached) throw stop
+            if (setUpNow || !stop.unreached) throw stop
             log.add("Band pairing: the band did not come up; setting it up again")
             setUp()
             pairWith(glasses)
         }
         peers.refresh()
+    }
+
+    private enum class Linked { YES, NO, BAND_AWAY }
+
+    /**
+     * Visor's manifest with the glasses and the band on both, the rule the Meta app sends when a band moves to a pair
+     * of glasses, then a wait for the glasses to hold the band: a lease they ask for, or the band connected in their
+     * own list. They reach it only while worn.
+     */
+    private suspend fun viaManifest(glasses: String): Linked {
+        val band = bands.forGlasses(glasses) ?: return Linked.NO
+        val key = band.publicKey?.let(::rawPublicKey) ?: return Linked.NO
+        val state = connection.state.value
+        val address = (state.target?.link as? GlassesLink.Bluetooth)?.address ?: return Linked.NO
+        val build = state.info?.build ?: return Linked.NO
+        // Connected to the Display already: linked, and taking it away to install the manifest again could only lose it.
+        if (peers.refresh()?.peers?.any { it.connected } == true) {
+            log.add("Band pairing: the glasses already hold the band")
+            return Linked.YES
+        }
+        _status.value = Status.Running(Step.MANIFEST)
+        try {
+            manifests.receiptKey(address, glasses)
+            manifests.install(glasses, address, build)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            log.add("Band pairing: the manifest did not go in: ${error.message}")
+            return if ((error as? KitException)?.reason == Manifests.BAND_AWAY) Linked.BAND_AWAY else Linked.NO
+        }
+        _status.value = Status.Running(Step.WEAR)
+        return coroutineScope {
+            val leased = launch(start = CoroutineStart.UNDISPATCHED) { lease.holder.drop(1).first { it == band.serial } }
+            if (!toDisplay(CamControl.OVERRIDE_RULE, CamControl.bandRule(keyHint(key)), service = CamControl.SERVICE)) {
+                leased.cancel()
+                return@coroutineScope Linked.NO
+            }
+            log.add("Band pairing: the band is on the glasses' manifest; waiting for them to reach it")
+            val held = withTimeoutOrNull(LINK_MS) {
+                while (!leased.isCompleted && peers.refresh()?.peers?.any { it.connected } != true) delay(POLL_MS)
+                true
+            } == true
+            leased.cancel()
+            log.add(if (held) "Band pairing: the glasses hold the band" else "Band pairing: the glasses did not reach the band in ${LINK_MS / 1000} s")
+            if (held) Linked.YES else Linked.NO
+        }
     }
 
     private suspend fun pairWith(glasses: String) {
@@ -234,9 +307,9 @@ class BandPair @Inject constructor(
         }
     }
 
-    private fun toDisplay(type: Int, payload: ByteArray): Boolean {
+    private fun toDisplay(type: Int, payload: ByteArray, service: Int = BtPeer.SERVICE): Boolean {
         if (connection.state.value.link != LinkState.READY) return false
-        connection.submit { it.sendOnService(BtPeer.SERVICE, type, payload) }
+        connection.submit { it.sendOnService(service, type, payload) }
         return true
     }
 
@@ -248,6 +321,9 @@ class BandPair @Inject constructor(
     private companion object {
         const val ANSWER_MS = 8_000L
         const val BOND_MS = 60_000L
+        // Long enough to put the glasses on; the Display scans for the band once it is worn.
+        const val LINK_MS = 90_000L
+        const val POLL_MS = 3_000L
         const val DATAX_OK = 0
     }
 }

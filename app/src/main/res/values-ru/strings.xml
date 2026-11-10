@@ -1182,6 +1182,8 @@
     <string name="band_pair_reaching">Подключаемся к браслету…</string>
     <string name="band_pair_pairing">Сопряжение…</string>
     <string name="band_pair_connecting">Подключение…</string>
+    <string name="band_pair_manifest">Добавляем браслет в очки…</string>
+    <string name="band_pair_wear">Наденьте очки, чтобы закончить…</string>
     <string name="band_pair_fail_no_band">Браслет не найден</string>
     <string name="band_pair_fail_no_answer">Нет ответа</string>
     <string name="band_pair_fail_wrong_owner">Браслет принадлежит другому аккаунту Meta</string>

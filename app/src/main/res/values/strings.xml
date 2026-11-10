@@ -1145,6 +1145,8 @@
     <string name="band_pair_reaching">Reaching the band…</string>
     <string name="band_pair_pairing">Pairing…</string>
     <string name="band_pair_connecting">Connecting…</string>
+    <string name="band_pair_manifest">Adding the band to the glasses…</string>
+    <string name="band_pair_wear">Put the glasses on to finish…</string>
     <string name="band_pair_fail_no_band">No band found</string>
     <string name="band_pair_fail_no_answer">No answer</string>
     <string name="band_pair_fail_wrong_owner">The band belongs to another Meta account</string>

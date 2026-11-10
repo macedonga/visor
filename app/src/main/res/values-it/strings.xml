@@ -1138,6 +1138,8 @@
     <string name="band_pair_reaching">Collegamento al bracciale…</string>
     <string name="band_pair_pairing">Accoppiamento…</string>
     <string name="band_pair_connecting">Connessione…</string>
+    <string name="band_pair_manifest">Aggiunta del bracciale agli occhiali…</string>
+    <string name="band_pair_wear">Indossa gli occhiali per finire…</string>
     <string name="band_pair_fail_no_band">Nessun bracciale trovato</string>
     <string name="band_pair_fail_no_answer">Nessuna risposta</string>
     <string name="band_pair_fail_wrong_owner">Il bracciale appartiene a un altro account Meta</string>

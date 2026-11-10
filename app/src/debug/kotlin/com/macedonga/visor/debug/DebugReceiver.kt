@@ -20,6 +20,9 @@ import android.util.Base64
 import android.util.Log
 import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.BandPair
+import com.macedonga.visor.band.BandPeers
+import com.macedonga.visor.band.Bands
+import com.macedonga.visor.band.DeviceLease
 import com.macedonga.visor.connection.ClassicBond
 import com.macedonga.visor.connection.GlassesService
 import com.macedonga.visor.connection.InternetSwitch
@@ -161,6 +164,9 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var hearing: Hearing
     @Inject lateinit var bandPair: BandPair
     @Inject lateinit var bandLink: BandLink
+    @Inject lateinit var bandPeers: BandPeers
+    @Inject lateinit var bands: Bands
+    @Inject lateinit var deviceLease: DeviceLease
     @Inject lateinit var classicBond: ClassicBond
     @Inject lateinit var albums: Albums
     @Inject lateinit var library: PhoneLibrary
@@ -667,6 +673,21 @@ class DebugReceiver : BroadcastReceiver() {
                 resultData = "started; BAND_PAIR_STATUS for how it ended, LOG for the steps"
             }
             "BAND_PAIR_STATUS" -> resultData = bandPair.status.value.toString()
+            // Whether the Display takes the band back on its own: it lets go, gets the band rule (--ez rule false skips it), and
+            // is watched for --ei s seconds (120); the band is handed back when it was not taken. Steps in LOG.
+            "BAND_CAM_TEST" -> {
+                scope.launch {
+                    runCatching {
+                        BandCamProbe.run(connection, bands, bandPeers, deviceLease, log, intent.getIntExtra("s", 120) * 1000L, intent.getBooleanExtra("rule", true))
+                    }.onFailure { log.add("CAM probe: failed: ${it.message}") }
+                }
+                resultData = "started; LOG for the steps"
+            }
+            // The bands the Display lists on svc41109, each with whether it is connected, and the band its lease names.
+            "BAND_PEERS" -> answerLater {
+                val info = bandPeers.refresh()
+                "lease=${deviceLease.holder.value} listed=" + (info?.peers?.joinToString { "${it.identity.toHexString()} connected=${it.connected}" } ?: "no answer")
+            }
             // Shares the band with the Display through the phone's relay (--ez on false stops); LOG has the relay's steps.
             "BAND_SHARE" -> {
                 bandLink.share(intent.getBooleanExtra("on", true))

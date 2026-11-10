@@ -539,7 +539,8 @@ class BandLink @Inject constructor(
 
     /**
      * Hands the band back to the Display after a borrow: the one it let go of, or, when the borrow began before the
-     * Display could be asked, the band it lists but does not hold. The Display does not reach for a band it let go of.
+     * Display could be asked, the band it lists but does not hold. Since firmware 7202 the Display takes a band it let
+     * go of back within seconds by itself; the CONNECT covers older firmware.
      */
     private suspend fun giveBack() {
         if (connection.state.value.link != LinkState.READY) {

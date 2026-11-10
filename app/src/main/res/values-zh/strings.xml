@@ -1096,6 +1096,8 @@
     <string name="band_pair_reaching">正在搜索手环…</string>
     <string name="band_pair_pairing">正在配对…</string>
     <string name="band_pair_connecting">正在连接…</string>
+    <string name="band_pair_manifest">正在将手环添加到眼镜…</string>
+    <string name="band_pair_wear">戴上眼镜以完成…</string>
     <string name="band_pair_fail_no_band">未找到手环</string>
     <string name="band_pair_fail_no_answer">无响应</string>
     <string name="band_pair_fail_wrong_owner">该手环属于另一个 Meta 账户</string>
