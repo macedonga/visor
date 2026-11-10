@@ -344,6 +344,7 @@
     <string name="meta_ai_on_glasses">Выполнено на очках</string>
     <string name="meta_ai_too_late">Слишком поздно для очков</string>
     <string name="meta_ai_phone">Телефон</string>
+    <string name="meta_ai_call">Звонок: %1$s</string>
     <string name="meta_ai_live_ai">Live AI</string>
     <string name="meta_ai_live_length">Live AI · %1$d мин</string>
     <string name="meta_ai_continues">Продолжение · %1$s</string>
@@ -725,13 +726,13 @@
     <string name="access_mic">Микрофон</string>
     <string name="access_mic_why">Для уточняющих вопросов и Live AI.</string>
     <string name="access_contacts">Контакты</string>
-    <string name="access_contacts_why">Чтобы очки могли сказать, от кого сообщение.</string>
+    <string name="access_contacts_why">Чтобы очки могли сказать, от кого сообщение, а Meta AI мог позвонить или написать тем, кого вы назовёте.</string>
     <string name="access_sms">SMS</string>
     <string name="access_sms_why">Чтобы очки могли показывать ваши SMS и отправлять их.</string>
     <string name="access_calls">Журнал звонков</string>
     <string name="access_calls_why">Чтобы очки могли показывать ваши недавние звонки.</string>
     <string name="access_call_control">Звонить и отвечать на звонки</string>
-    <string name="access_call_control_why">Чтобы очки могли звонить и отвечать на звонки с этого телефона.</string>
+    <string name="access_call_control_why">Чтобы очки и Meta AI могли звонить и отвечать на звонки с этого телефона.</string>
     <string name="access_location">Местоположение</string>
     <string name="access_location_why">Чтобы отмечать, где очки сделали каждое фото.</string>
     <string name="access_location_always">Местоположение всегда</string>

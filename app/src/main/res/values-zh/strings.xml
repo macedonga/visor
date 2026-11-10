@@ -324,6 +324,7 @@
     <string name="meta_ai_on_glasses">已在眼镜上完成</string>
     <string name="meta_ai_too_late">太迟了，眼镜已错过</string>
     <string name="meta_ai_phone">手机</string>
+    <string name="meta_ai_call">呼叫%1$s</string>
     <string name="meta_ai_live_ai">实时 AI</string>
     <string name="meta_ai_live_length">实时 AI · %1$d 分钟</string>
     <string name="meta_ai_continues">继续 · %1$s</string>
@@ -672,13 +673,13 @@
     <string name="access_mic">麦克风</string>
     <string name="access_mic_why">用于追问和 Live AI。</string>
     <string name="access_contacts">通讯录</string>
-    <string name="access_contacts_why">用于让眼镜播报消息的发送者。</string>
+    <string name="access_contacts_why">用于让眼镜播报消息的发送者，也让 Meta AI 能给你说出的联系人打电话或发短信。</string>
     <string name="access_sms">短信</string>
     <string name="access_sms_why">让眼镜能显示你的短信，并代你发送。</string>
     <string name="access_calls">通话记录</string>
     <string name="access_calls_why">让眼镜能显示你的最近通话。</string>
     <string name="access_call_control">拨打电话和接听来电</string>
-    <string name="access_call_control_why">让眼镜能用这台手机拨打电话和接听来电。</string>
+    <string name="access_call_control_why">让眼镜和 Meta AI 能用这台手机拨打电话和接听来电。</string>
     <string name="access_location">位置信息</string>
     <string name="access_location_why">用于记录每张照片的拍摄地点。</string>
     <string name="access_location_always">始终允许位置信息</string>

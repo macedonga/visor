@@ -105,12 +105,13 @@ enum class CameraAction(val tool: String, val title: String, val help: String, v
     ),
 }
 
-/** The model behind the assistant. The conversation comes with each question, from the diary; tools from [hub] and [phone]. */
+/** The model behind the assistant. The conversation comes with each question, from the diary; tools from [hub], [phone] and [handset]. */
 class Brain(
     private val store: AssistantConfigStore, private val diary: Diary, private val hub: McpHub, phone: Phone, private val appTools: AppTools,
-    private val chatGpt: ChatGptPlan,
+    private val chatGpt: ChatGptPlan, handset: Handset,
 ) {
     private val phoneTools = PhoneTools(phone)
+    private val handsetTools = HandsetTools(handset)
 
     private fun config() = store.config.value
 
@@ -160,7 +161,7 @@ class Brain(
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
             memoryPrompt() +
-            phoneTools.prompt +
+            phoneTools.prompt + handsetTools.prompt +
             (if (canEnd) END_PROMPT else "") +
             turn.box.prompt +
             (if ((image != null || capturePhoto != null) && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
@@ -278,7 +279,7 @@ class Brain(
         if (name == "forget") {
             return if (diary.forget(input.optString("id")) != null) ToolResult("forgotten", false) else ToolResult("no such fact", true)
         }
-        phoneTools.run(name, input)?.let { (result, action) ->
+        (phoneTools.run(name, input) ?: handsetTools.run(name, input))?.let { (result, action) ->
             action?.let(turn.actions::add)
             return result
         }
@@ -310,6 +311,7 @@ class Brain(
         if (turn.capturePhoto != null) add(Triple(PHOTO_TOOL, PHOTO_HELP, NO_INPUT))
         if (turn.cameraAction != null) cameraTools(c).forEach { add(Triple(it.tool, it.help, NO_INPUT)) }
         addAll(phoneTools.tools)
+        addAll(handsetTools.tools)
         turn.box.tools.forEach { add(Triple(it.name, it.help(), it.tool.schema)) }
         turn.glasses?.tools?.forEach { add(Triple(it.short, it.help, it.schema)) }
         // Apps' tools come last, and one named like a tool above stays out: the call would reach the other.

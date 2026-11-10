@@ -10,7 +10,10 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
+import android.provider.CallLog
 import android.provider.ContactsContract
+import android.telecom.PhoneAccount
+import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import com.macedonga.visor.core.protocol.Wire
@@ -84,18 +87,42 @@ class PhoneCallControl @Inject constructor(
         send("calls://outgoing/$provider", reply, mux, MT_OUTGOING_CALL_RESPONSE, body, error ?: "call started", failed = result != RESULT_OK)
     }
 
+    /** A cellular call to [number], as the glasses' own requests place it: null when it started, else why not. */
+    fun call(number: String): String? = placeCall(number).second
+
+    /** A WhatsApp call to the contact that owns [number]: null when it started, else why not. */
+    fun whatsAppCall(number: String): String? = startWhatsApp(number).second
+
     /** Telecom takes the call; the call itself rides HFP to the glasses. */
     @SuppressLint("MissingPermission") // checked with allows(), and a refusal is caught
     private fun placeCall(number: String): Pair<Long, String?> {
         if (!context.allows(Manifest.permission.CALL_PHONE)) return ERROR_PERMISSION to "Call permission is not allowed in Visor"
         if (number.isBlank()) return RESULT_UNKNOWN to "No number to call"
         return try {
-            requireNotNull(context.getSystemService(TelecomManager::class.java)).placeCall(Uri.fromParts("tel", number, null), Bundle())
+            val telecom = requireNotNull(context.getSystemService(TelecomManager::class.java))
+            val extras = Bundle().apply { simFor(telecom)?.let { putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, it) } }
+            telecom.placeCall(Uri.fromParts("tel", number, null), extras)
             RESULT_OK to null
         } catch (e: Exception) {
             RESULT_UNKNOWN to (e.message ?: e.toString())
         }
     }
+
+    /**
+     * With two SIMs and none set for calls, the phone asks on its screen, which the wearer may not see: the SIM of the
+     * last call made goes instead. Null to leave it to the phone.
+     */
+    @SuppressLint("MissingPermission") // checked with allows()
+    private fun simFor(telecom: TelecomManager): PhoneAccountHandle? = runCatching {
+        if (!context.allows(Manifest.permission.READ_PHONE_STATE) || !context.allows(Manifest.permission.READ_CALL_LOG)) return null
+        if (telecom.getDefaultOutgoingPhoneAccount(PhoneAccount.SCHEME_TEL) != null) return null
+        val sims = telecom.callCapablePhoneAccounts.takeIf { it.size > 1 } ?: return null
+        val last = context.contentResolver.query(
+            CallLog.Calls.CONTENT_URI, arrayOf(CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME, CallLog.Calls.PHONE_ACCOUNT_ID),
+            "${CallLog.Calls.TYPE} = ${CallLog.Calls.OUTGOING_TYPE}", null, "${CallLog.Calls.DATE} DESC",
+        )?.use { if (it.moveToFirst()) it.getString(0) to it.getString(1) else null } ?: return null
+        sims.firstOrNull { it.componentName.flattenToString() == last.first && it.id == last.second }
+    }.getOrNull()
 
     /** Android has no call API for WhatsApp, so this opens the contact's WhatsApp call row, which starts the call. */
     private fun startWhatsApp(number: String): Pair<Long, String?> {

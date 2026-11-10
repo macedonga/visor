@@ -81,6 +81,7 @@ import com.macedonga.visor.metaai.AssistantCamera
 import com.macedonga.visor.notify.GlassesNotification
 import com.macedonga.visor.notify.NotifyIcons
 import com.macedonga.visor.phone.PhoneActions
+import com.macedonga.visor.phone.PhoneLine
 import com.macedonga.visor.outside.KitTools
 import com.macedonga.visor.outside.KitVoices
 import dagger.Module
@@ -278,8 +279,9 @@ object ConnectionModule {
         kitVoices: KitVoices,
         kitTools: KitTools,
         chatGpt: ChatGptPlan,
+        line: PhoneLine,
     ): Assistant = Assistant(
-        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools, chatGpt), config, airship, diary,
+        context, connection, Voice(context), Brain(config, diary, hub, phone, kitTools, chatGpt, line), config, airship, diary,
         liveSession = live.wifiSession,
         liveFrame = live::frameNow,
         camera = camera,
