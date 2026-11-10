@@ -60,6 +60,8 @@ private class Turn(
 ) {
     val remembered = ArrayList<String>()
     val actions = ArrayList<ToolAction>()
+    // Apps' tools by the name the model sees, which [Brain.specs] gives them.
+    val appNames = HashMap<String, AppTool>()
     var ends = false
     var cameraRequested = false
     // A tool ran: asking again would run it twice.
@@ -290,7 +292,7 @@ class Brain(
             action?.let(turn.actions::add)
             return result
         }
-        val app = turn.apps.find { it.name == name } ?: return ToolResult("unknown tool", true)
+        val app = turn.appNames[name] ?: return ToolResult("unknown tool", true)
         val result = app.run(input)
         turn.actions += ToolAction(app.app, app.name, !result.isError)
         return result
@@ -314,9 +316,13 @@ class Brain(
         addAll(handsetTools.tools)
         turn.box.tools.forEach { add(Triple(it.name, it.help(), it.tool.schema)) }
         turn.glasses?.tools?.forEach { add(Triple(it.short, it.help, it.schema)) }
-        // Apps' tools come last, and one named like a tool above stays out: the call would reach the other.
+        // Apps' tools come last; one named like a tool above gets a "_" more, as two apps' tools do.
         val taken = mapTo(HashSet()) { it.first }
-        turn.apps.filter { it.name !in taken }.forEach { add(Triple(it.name, it.help, it.schema)) }
+        turn.apps.forEach { app ->
+            val name = generateSequence(app.name) { it + "_" }.first(taken::add)
+            turn.appNames[name] = app
+            add(Triple(name, app.help, app.schema))
+        }
     }
 
     private suspend fun claude(
