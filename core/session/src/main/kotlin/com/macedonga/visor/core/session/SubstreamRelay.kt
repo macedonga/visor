@@ -72,7 +72,13 @@ class SubstreamRelay(
                 _state.value = RelayState.Opening
                 // The other side's close of the last round may still be queued.
                 while (lost.tryReceive().isSuccess) Unit
-                open()
+                // A link that closed under the relay ends it, as a loss does; its owner opens a new one.
+                if (!open()) {
+                    closeBoth()
+                    log("Relay: a link closed while the sub-streams opened")
+                    _state.value = RelayState.Failed(silent = false)
+                    return@launch
+                }
                 // Both devices start their link at once, so silence means they will not.
                 if (!firstTraffic(lost)) {
                     closeBoth()
@@ -102,11 +108,11 @@ class SubstreamRelay(
         return job
     }
 
-    private suspend fun open() {
+    // False when either link would not take the command.
+    private suspend fun open(): Boolean {
         val code = if (advertising) StreamCommand.OPEN_TO_ADVERTISE else StreamCommand.OPEN
         log("Relay: opening sub-stream $STREAM on both links (${code.name}; AirShield ${hex(central.peerAirshieldVersion)} and ${hex(peripheral.peerAirshieldVersion)})")
-        a.link.sendRaw(command(code))
-        b.link.sendRaw(command(code))
+        return runCatching { a.link.sendRaw(command(code)) }.isSuccess && runCatching { b.link.sendRaw(command(code)) }.isSuccess
     }
 
     // True once both sides sent something across in time; false on silence or a side that closed first.

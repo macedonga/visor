@@ -207,7 +207,12 @@ class BandLink @Inject constructor(
                     relay.state.collect { s ->
                         when (s) {
                             RelayState.Opening -> _share.value = ShareState.Connecting
-                            RelayState.Up -> _share.value = ShareState.On
+                            RelayState.Up -> {
+                                _share.value = ShareState.On
+                                // As the Meta app does: told RELAY, the Display stops reaching for its band directly,
+                                // which every few minutes took the band off the phone.
+                                preferLink(BtPeer.LINK_RELAY)
+                            }
                             is RelayState.Failed -> stopSharing(if (s.silent) ShareProblem.DISPLAY_SILENT else ShareProblem.KEPT_DROPPING)
                         }
                     }
@@ -249,8 +254,16 @@ class BandLink @Inject constructor(
     }
 
     private fun setSharing(on: Boolean) {
+        if (!on && sharing.value) preferLink(BtPeer.LINK_DIRECT)
         prefs.edit().putBoolean(SHARE_KEY, on).apply()
         sharing.value = on
+    }
+
+    // svc41109 SET_PREFERRED_LINK for the band the Display let go of.
+    private fun preferLink(link: Int) {
+        val (identity, hint) = lent ?: return
+        if (connection.state.value.link != LinkState.READY) return
+        connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.SET_PREFERRED_LINK, BtPeer.setPreferredLink(link, identity, hint)) }
     }
 
     /** Holds the band for [block], which needs it for minutes, then gives it back. */

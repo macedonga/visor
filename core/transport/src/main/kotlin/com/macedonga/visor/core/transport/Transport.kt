@@ -25,10 +25,6 @@ interface Transport {
 class TransportClosedException(message: String, cause: Throwable? = null) :
     IOException(message, cause)
 
-/** A leading byte that belongs to neither framing on this link. */
-class TransportUnframeableException(val leadingByte: Int) :
-    IOException("unframeable leading byte 0x%02x".format(leadingByte))
-
 /** Why a link would not open. */
 enum class ConnectFailure {
     /** No Bluetooth on this phone at all. */
