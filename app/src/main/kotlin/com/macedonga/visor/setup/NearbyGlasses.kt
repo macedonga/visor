@@ -17,6 +17,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
@@ -282,10 +283,15 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
                 any.complete(Unit)
             }
         }
-        // Filtered on the band's service: Android pauses unfiltered scans while the screen is off, and the band takes a
-        // connection only at the address it advertises, not at the one it was bonded under.
-        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(META_LE_SERVICE)).build()
-        scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        // The band takes a connection only at the address it advertises. Android pauses unfiltered scans while the screen
+        // is off, so then the scan is filtered on the band's service, which a held or free band advertises; with the
+        // screen on it stays open, as a band in pairing mode was found before.
+        val filters = if (context.getSystemService(PowerManager::class.java)?.isInteractive == false) {
+            listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(META_LE_SERVICE)).build())
+        } else {
+            null
+        }
+        scanner.startScan(filters, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
         try {
             if (first) withTimeoutOrNull(millis) { any.await() } else delay(millis)
         } finally {

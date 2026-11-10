@@ -33,6 +33,8 @@ the frame style and language packs. Works on real glasses as of 2026-10-05.
   Otherwise the glasses tear the channel down silently.
 - Only the opening frame carries service id and message type. Continuations report 0 and are padded.
 - The channel registry keys on the originator bit (high bit of the channel id).
+- A key hint's salt says its own length: the high nibble of its first byte is the length minus one (3 for four
+  bytes). With a random first byte the Display matches no key, and svc151 answers error 2.
 - Framing is `4 + length`, not `header_len + length`.
 - Trust is signed with `NONEwithECDSA` over a prehashed digest, coordinates fixed at 32 bytes,
   `s` low-half. Any mistake shows up as `0x1043 INVALID_APP_IDENTITY`.
