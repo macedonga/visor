@@ -712,6 +712,8 @@
     <string name="access_call_control_why">So the glasses and Meta AI can place and answer calls on this phone.</string>
     <string name="access_location">Location</string>
     <string name="access_location_why">To note where the glasses took each photo, and so Meta AI can answer questions about where you are.</string>
+    <string name="access_calendar">Calendar</string>
+    <string name="access_calendar_why">So Meta AI can tell you what is on your calendar.</string>
     <string name="access_location_always">Location, all the time</string>
     <string name="access_location_always_why">So the place is noted even with Visor closed. Choose “Allow all the time”.</string>
     <string name="access_wifi">Nearby Wi-Fi</string>

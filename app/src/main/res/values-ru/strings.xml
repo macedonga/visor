@@ -738,6 +738,8 @@
     <string name="access_call_control_why">Чтобы очки и Meta AI могли звонить и отвечать на звонки с этого телефона.</string>
     <string name="access_location">Местоположение</string>
     <string name="access_location_why">Чтобы отмечать, где очки сделали каждое фото, и чтобы Meta AI мог отвечать на вопросы о том, где вы.</string>
+    <string name="access_calendar">Календарь</string>
+    <string name="access_calendar_why">Чтобы Meta AI мог сказать, что у вас в календаре.</string>
     <string name="access_location_always">Местоположение всегда</string>
     <string name="access_location_always_why">Чтобы место отмечалось и при закрытом Visor. Выберите «Разрешить всегда».</string>
     <string name="access_wifi">Wi-Fi поблизости</string>

@@ -3,6 +3,7 @@ package com.macedonga.visor.phone
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.NotificationManager
+import android.content.ContentUris
 import android.content.Context
 import android.media.AudioManager
 import android.net.ConnectivityManager
@@ -12,6 +13,9 @@ import android.location.Address
 import android.location.Geocoder
 import android.location.Location
 import android.os.Build
+import android.provider.CalendarContract.Attendees
+import android.provider.CalendarContract.Events
+import android.provider.CalendarContract.Instances
 import android.provider.CallLog
 import android.telecom.TelecomManager
 import com.macedonga.visor.connection.PhoneCallControl
@@ -25,6 +29,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import javax.inject.Inject
@@ -165,6 +170,46 @@ class PhoneLine @Inject constructor(
         return HandsetDone("The phone: $power, $online, $sound${if (quiet) ", Do not disturb on" else ""}.")
     }
 
+    override suspend fun calendar(from: Int, days: Int): HandsetDone = withContext(Dispatchers.IO) {
+        if (!context.allows(Manifest.permission.READ_CALENDAR)) {
+            return@withContext HandsetDone("Visor may not read the calendar. Tell the wearer to allow Calendar in Visor, Settings > Phone access.", failed = true)
+        }
+        val zone = ZoneId.systemDefault()
+        val first = LocalDate.now().plusDays(from.toLong())
+        val start = first.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = first.plusDays(days.toLong()).atStartOfDay(zone).toInstant().toEpochMilli()
+        val uri = Instances.CONTENT_URI.buildUpon().also { ContentUris.appendId(it, start); ContentUris.appendId(it, end) }.build()
+        val events = runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(Instances.TITLE, Instances.BEGIN, Instances.END, Instances.ALL_DAY, Instances.EVENT_LOCATION),
+                "${Instances.VISIBLE} = 1 AND (${Instances.STATUS} IS NULL OR ${Instances.STATUS} != ${Events.STATUS_CANCELED})" +
+                    " AND (${Instances.SELF_ATTENDEE_STATUS} IS NULL OR ${Instances.SELF_ATTENDEE_STATUS} != ${Attendees.ATTENDEE_STATUS_DECLINED})",
+                null, "${Instances.BEGIN} ASC",
+            )?.use { c ->
+                buildList {
+                    while (size < MAX_EVENTS && c.moveToNext()) {
+                        val title = c.getString(0)?.takeIf { it.isNotBlank() } ?: "(no title)"
+                        val allDay = c.getInt(3) != 0
+                        // An all-day event is stored at midnight UTC.
+                        val at = Instant.ofEpochMilli(c.getLong(1)).atZone(if (allDay) ZoneOffset.UTC else zone)
+                        val until = Instant.ofEpochMilli(c.getLong(2)).atZone(zone)
+                        val day = at.format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH))
+                        val time = if (allDay) "all day" else at.format(HOUR) + "-" + until.format(HOUR)
+                        val place = c.getString(4)?.takeIf { it.isNotBlank() }?.let { " at $it" }.orEmpty()
+                        add("$day, $time: $title$place")
+                    }
+                }
+            }.orEmpty()
+        }.getOrElse { return@withContext HandsetDone("The calendar could not be read: ${it.message}.", failed = true) }
+        val span = when {
+            days == 1 && from == 0 -> "today"
+            days == 1 && from == 1 -> "tomorrow"
+            else -> "those days"
+        }
+        HandsetDone(events.joinToString("\n").ifEmpty { "Nothing on the calendar $span." })
+    }
+
     /** The street address of [fix], in the phone's language, when the phone's geocoder knows it. */
     private suspend fun address(fix: Location): String? {
         if (!Geocoder.isPresent()) return null
@@ -193,6 +238,8 @@ class PhoneLine @Inject constructor(
         const val FIX_MS = 8_000L
         const val STALE_MS = 15 * 60_000L
         const val GEOCODE_MS = 5_000L
+        const val MAX_EVENTS = 25
+        val HOUR: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH)
 
         /** "today 14:02", "yesterday 9:30" or "Mon 9 Nov 14:02", as the model reads a time. */
         fun clock(time: Long): String {

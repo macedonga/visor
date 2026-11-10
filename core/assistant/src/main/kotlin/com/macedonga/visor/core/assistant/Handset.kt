@@ -36,6 +36,9 @@ interface Handset {
 
     /** The phone's battery, connection and sound: ringing, vibrate or silent, and Do not disturb. */
     fun status(): HandsetDone
+
+    /** The events on the phone's calendars for [days] days from [from] days after today (0 today, 1 tomorrow). */
+    suspend fun calendar(from: Int, days: Int): HandsetDone
 }
 
 /**
@@ -48,7 +51,7 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is, phone_status gives the phone's battery and sound mode."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone, location says where the wearer is, phone_status gives the phone's battery and sound mode, calendar reads the wearer's events."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -113,6 +116,14 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
             "The phone's own battery and charging, its internet connection, and whether it rings, vibrates or is silent, with Do not disturb.",
             schema(),
         ),
+        Triple(
+            "calendar",
+            "The events on the wearer's calendars, in time order, for today or the days they ask about.",
+            schema(
+                "from" to prop("integer", "The first day, in days from today: 0 today, 1 tomorrow. 0 when the wearer did not say."),
+                "days" to prop("integer", "How many days, 1 to 14. 1 when the wearer did not say."),
+            ),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -134,6 +145,9 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
         "messages" -> messages(input.optString("from").trim()) to null
         "location" -> handset.location().let { ToolResult(it.text, it.failed) to null }
         "phone_status" -> handset.status().let { ToolResult(it.text, it.failed) to null }
+        "calendar" -> handset.calendar(input.optInt("from", 0).coerceIn(-7, 365), input.optInt("days", 1).coerceIn(1, 14)).let {
+            ToolResult(it.text, it.failed) to null
+        }
         "find_phone" -> {
             val stop = input.optBoolean("stop")
             val done = handset.findPhone(stop)
