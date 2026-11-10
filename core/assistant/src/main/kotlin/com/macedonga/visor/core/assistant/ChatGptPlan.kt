@@ -32,6 +32,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -212,7 +213,7 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
         store.update { it.copy(chatGpt = "") }
     }
 
-    /** The models the plan offers, newest first. */
+    /** The models the plan offers to this account, in the plan's order. */
     suspend fun models(): List<ModelInfo> = withContext(Dispatchers.IO) {
         val http = URL("$OPENAI_API/models").openConnection() as HttpURLConnection
         try {
@@ -221,11 +222,16 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
             http.setRequestProperty("Authorization", "Bearer ${token()}")
             val code = http.responseCode
             val text = (if (code in 200..299) http.inputStream else http.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
-            if (code !in 200..299) throw ModelsError(refused = code == 401 || code == 403, message = problem(code, text))
-            (JSONObject(text).optJSONArray("data")?.objects().orEmpty())
-                .filter { it.optString("visibility", "list") == "list" }
-                .map { ModelInfo(it.getString("id"), it.getString("id"), it.optLong("created")) }
-                .sortedByDescending { it.created }
+            if (code !in 200..299) {
+                note("the model list answered $code: ${text.take(200)}")
+                throw ModelsError(refused = code == 401 || code == 403, message = problem(code, text))
+            }
+            // {"models": [{slug, display_name, visibility}]}: the ones to show are "list", in the server's order.
+            val models = JSONObject(text).optJSONArray("models")?.objects().orEmpty()
+                .filter { it.optString("visibility") == "list" && it.optString("slug").isNotBlank() }
+                .map { ModelInfo(it.getString("slug"), it.optString("display_name").ifBlank { it.getString("slug") }, 0) }
+            if (models.isEmpty()) note("the model list named no models: ${text.take(300)}")
+            models
         } finally {
             http.disconnect()
         }
@@ -339,11 +345,18 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
                 failed(code, runCatching { JSONObject(text) }.getOrNull())
             }
             var done: JSONObject? = null
+            val items = JSONArray()
+            val deltas = StringBuilder()
+            val seen = linkedMapOf<String, Int>()
             http.inputStream.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     if (!line.startsWith("data:")) continue
                     val event = runCatching { JSONObject(line.removePrefix("data:").trim()) }.getOrNull() ?: continue
-                    when (event.optString("type")) {
+                    val type = event.optString("type")
+                    seen[type] = (seen[type] ?: 0) + 1
+                    when (type) {
+                        "response.output_item.done" -> event.optJSONObject("item")?.let(items::put)
+                        "response.output_text.delta" -> deltas.append(event.optString("delta"))
                         "response.completed", "response.incomplete" -> {
                             done = event.getJSONObject("response")
                             break
@@ -354,8 +367,23 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
                     }
                 }
             }
+            val answer = done ?: error("the answer stopped before it was complete")
+            // OpenAI's own client reads the answer from the stream, not from the last event: the items, else the text.
+            if ((answer.optJSONArray("output")?.length() ?: 0) == 0) {
+                when {
+                    items.length() > 0 -> answer.put("output", items)
+                    deltas.isNotEmpty() -> answer.put(
+                        "output",
+                        JSONArray().put(
+                            JSONObject().put("type", "message").put("role", "assistant")
+                                .put("content", JSONArray().put(JSONObject().put("type", "output_text").put("text", deltas.toString()))),
+                        ),
+                    )
+                    else -> note("an answer came back with no output (${answer.optString("status")}; events ${seen.entries.joinToString { "${it.key} x${it.value}" }})")
+                }
+            }
             _limited.value = false
-            call.resume(code to (done ?: error("the answer stopped before it was complete")))
+            call.resume(code to answer)
         } catch (error: Exception) {
             call.resumeWithException(error)
         } finally {

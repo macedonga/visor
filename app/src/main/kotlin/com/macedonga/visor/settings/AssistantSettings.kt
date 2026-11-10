@@ -118,7 +118,7 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
         delay(350)
         check = try {
             val models = listModels(config, model.chatGpt)
-            // The plan lists only models it answers with: the newest is the one to start from.
+            // The plan lists only models it answers with, in its own order: the first is the one to start from.
             if (config.provider == Provider.CHATGPT && config.model.isBlank()) {
                 models.firstOrNull()?.let { m -> model.store.update { it.copy(model = m.id) } }
             }
