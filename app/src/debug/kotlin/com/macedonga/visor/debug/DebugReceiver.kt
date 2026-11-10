@@ -104,6 +104,7 @@ import com.macedonga.visor.pairs.KnownPair
 import com.macedonga.visor.pairs.Looks
 import com.macedonga.visor.pairs.Pairs
 import com.macedonga.visor.phone.PhoneActions
+import com.macedonga.visor.phone.PhoneLine
 import com.macedonga.visor.setup.Provisioner
 import com.macedonga.visor.stage.Mood
 import com.macedonga.visor.stage.StageDebug
@@ -150,6 +151,7 @@ class DebugReceiver : BroadcastReceiver() {
     @Inject lateinit var pairs: Pairs
     @Inject lateinit var looks: Looks
     @Inject lateinit var phone: PhoneActions
+    @Inject lateinit var line: PhoneLine
     @Inject lateinit var prompter: Teleprompter
     @Inject lateinit var captions: Captions
     @Inject lateinit var languages: LanguageInstaller
@@ -731,6 +733,31 @@ class DebugReceiver : BroadcastReceiver() {
             } else {
                 classicBond.start(if (action == "CLASSIC_REBOND") ClassicBond.Action.REBOND else ClassicBond.Action.UNDO)
                 "started; LOG for the steps"
+            }
+            // The assistant's phone tools, without the model: --es do call|text|calls|ring|unring|location|status|calendar|chats,
+            // with --es who --es kind --ez whatsapp, --es text, --ei count --ez missed, --ei from --ei days. chats gives only
+            // each conversation's app, size and reply; --ez full true adds the words.
+            "HANDSET" -> answerLater {
+                val who = intent.getStringExtra("who").orEmpty()
+                val kind = intent.getStringExtra("kind").orEmpty()
+                when (intent.getStringExtra("do")) {
+                    "call" -> line.call(who, kind, intent.getBooleanExtra("whatsapp", false)).toString()
+                    "text" -> line.text(who, kind, intent.getStringExtra("text").orEmpty()).toString()
+                    "calls" -> line.recentCalls(intent.getIntExtra("count", 5), intent.getBooleanExtra("missed", false)).toString()
+                    "ring" -> line.findPhone(false).toString()
+                    "unring" -> line.findPhone(true).toString()
+                    "location" -> line.location().toString()
+                    "calendar" -> line.calendar(intent.getIntExtra("from", 0), intent.getIntExtra("days", 1)).toString()
+                    "chats" -> assistant.messaging?.chats()?.let { chats ->
+                        if (intent.getBooleanExtra("full", false)) chats.joinToString("\n")
+                        else chats.joinToString("\n") { "${it.conversation.app} lines=${it.lines.size} group=${it.group} reply=${it.canReply}" }.ifEmpty { "none" }
+                    } ?: "no notification listener"
+                    "reply" -> assistant.messaging?.let { m ->
+                        val chat = m.chats().firstOrNull { it.conversation.sender.contains(who, ignoreCase = true) } ?: return@let "no chat with $who"
+                        m.reply(chat.conversation, intent.getStringExtra("text").orEmpty()) ?: "replied"
+                    } ?: "no notification listener"
+                    else -> line.status().toString()
+                }
             }
             // --es do directions --es to --es mode | play --es q --es app | media --es c pause|resume|next|... | now.
             "PHONE" -> answerLater {
