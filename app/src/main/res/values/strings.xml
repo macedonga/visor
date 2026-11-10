@@ -620,7 +620,7 @@
     <string name="ai_chatgpt_plan_text">Eligible usage in this app uses your ChatGPT plan. Manage usage in your ChatGPT settings.</string>
     <string name="ai_chatgpt_got_it">Got it</string>
     <string name="ai_chatgpt_declined">Sign-in cancelled</string>
-    <string name="ai_chatgpt_not_eligible">Needs a ChatGPT Plus or Pro plan</string>
+    <string name="ai_chatgpt_not_eligible">OpenAI does not let Visor use this account\'s ChatGPT plan. Sign in again and pick your personal account, not a work or team one, or use an OpenAI API key.</string>
     <string name="ai_chatgpt_expired">Signed out: sign in again</string>
     <string name="ai_chatgpt_failed">Sign-in failed: %1$s</string>
     <string name="ai_web_unavailable">This model can\'t search the web</string>

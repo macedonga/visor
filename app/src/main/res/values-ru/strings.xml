@@ -642,7 +642,7 @@
     <string name="ai_chatgpt_plan_text">Допустимое использование в этом приложении расходует ваш план ChatGPT. Управляйте использованием в настройках ChatGPT.</string>
     <string name="ai_chatgpt_got_it">Понятно</string>
     <string name="ai_chatgpt_declined">Вход отменён</string>
-    <string name="ai_chatgpt_not_eligible">Нужен план ChatGPT Plus или Pro</string>
+    <string name="ai_chatgpt_not_eligible">OpenAI не разрешает Visor использовать план ChatGPT этого аккаунта. Войдите снова и выберите личный аккаунт, а не рабочий или командный, или используйте ключ API OpenAI.</string>
     <string name="ai_chatgpt_expired">Вы вышли: войдите снова</string>
     <string name="ai_chatgpt_failed">Не удалось войти: %1$s</string>
     <string name="ai_web_unavailable">Эта модель не умеет искать в интернете</string>

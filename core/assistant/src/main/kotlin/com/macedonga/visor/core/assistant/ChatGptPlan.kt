@@ -162,7 +162,7 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
             val granted = t.optString("scope").ifEmpty { uri.getQueryParameter("scope").orEmpty() }
             if (USE_SCOPE !in granted.split(' ', '+')) {
                 note("signed in, but the plan was not granted (scope: $granted)")
-                _signIn.value = SignIn.Failed(Why.NOT_ELIGIBLE)
+                notEligible()
                 return
             }
             val claims = idClaims(t.optString("id_token"))
@@ -203,6 +203,18 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
         flow?.cancel()
         flow = null
         _signIn.value = SignIn.Idle
+    }
+
+    /**
+     * OpenAI will not share this account's plan. The app's registration keeps the workspace picked when it was made,
+     * so it goes too: the next sign-in registers again and the person can pick their personal account.
+     */
+    private fun notEligible() {
+        prefs.edit().remove(ACCESS).remove(REFRESH).remove(EXPIRES).remove(ID_TOKEN).remove(CLIENT).apply()
+        _limited.value = false
+        store.update { it.copy(chatGpt = "") }
+        note("the plan is not shared with Visor; signed out, and the next sign-in registers the app again")
+        _signIn.value = SignIn.Failed(Why.NOT_ELIGIBLE)
     }
 
     /** Forgets the tokens; the app's registration stays, so signing in again is one consent. */
@@ -401,7 +413,10 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
             _limited.value = true
             error("the model answered 429: ChatGPT usage limit reached")
         }
-        if (code == NOT_ELIGIBLE) _signIn.value = SignIn.Failed(Why.NOT_ELIGIBLE)
+        if (code == NOT_ELIGIBLE) {
+            notEligible()
+            error("ChatGPT does not share this account's plan with Visor. Sign in again in Meta AI settings and pick your personal account, or use an API key")
+        }
         val words = err?.optString("message").orEmpty().ifEmpty { json?.optString("detail").orEmpty() }.ifEmpty { code }
         // A capability the plan does not offer, such as a tool, is refused as a server refuses a field.
         val shown = if (code == UNSUPPORTED) 400 else status
