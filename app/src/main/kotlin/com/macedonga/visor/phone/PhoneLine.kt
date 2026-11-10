@@ -29,6 +29,7 @@ class PhoneLine @Inject constructor(
     private val contacts: ContactFinder,
     private val calls: PhoneCallControl,
     private val messages: PhoneMessages,
+    private val ringer: PhoneRinger,
     private val log: EventLog,
 ) : Handset {
 
@@ -97,6 +98,15 @@ class PhoneLine @Inject constructor(
             }.orEmpty()
         }.getOrElse { return@withContext HandsetDone("The call history could not be read: ${it.message}.", failed = true) }
         HandsetDone(lines.joinToString("\n").ifEmpty { if (missed) "No missed calls." else "The call history is empty." })
+    }
+
+    override suspend fun findPhone(stop: Boolean): HandsetDone {
+        if (stop) return HandsetDone(if (ringer.stop()) "The phone stopped ringing." else "The phone was not ringing.")
+        val (started, why) = ringer.ring()
+        if (!started) return HandsetDone("The phone is ringing already.")
+        log.add("Phone: ringing so the wearer can find it")
+        val seconds = PhoneRinger.RING_MS / 1000
+        return HandsetDone("The phone rings for $seconds seconds, or until its screen turns on${why?.let { "; $it" }.orEmpty()}.")
     }
 
     @SuppressLint("MissingPermission") // checked with allows()

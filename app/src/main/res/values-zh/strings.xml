@@ -327,6 +327,7 @@
     <string name="meta_ai_call">呼叫%1$s</string>
     <string name="meta_ai_text">给%1$s发短信</string>
     <string name="meta_ai_reply">回复%1$s</string>
+    <string name="meta_ai_find_phone">让手机响铃</string>
     <string name="meta_ai_live_ai">实时 AI</string>
     <string name="meta_ai_live_length">实时 AI · %1$d 分钟</string>
     <string name="meta_ai_continues">继续 · %1$s</string>

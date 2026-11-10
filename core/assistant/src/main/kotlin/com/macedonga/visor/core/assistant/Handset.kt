@@ -27,6 +27,9 @@ interface Handset {
 
     /** The last [count] calls in the phone's call log, newest first; only missed ones when [missed]. */
     suspend fun recentCalls(count: Int, missed: Boolean): HandsetDone
+
+    /** Rings the phone so the wearer can find it, or stops it when [stop]. */
+    suspend fun findPhone(stop: Boolean): HandsetDone
 }
 
 /**
@@ -39,7 +42,7 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one. recent_calls says who called, find_phone rings the phone."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -88,6 +91,11 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
                 "missed" to prop("boolean", "True for missed calls only."),
             ),
         ),
+        Triple(
+            "find_phone",
+            "Ring the wearer's phone loudly, even on silent, so they can find it. It stops by itself when the phone's screen turns on.",
+            schema("stop" to prop("boolean", "True to stop the ringing.")),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -107,6 +115,11 @@ internal class HandsetTools(private val handset: Handset, private val messaging:
             }
         }
         "messages" -> messages(input.optString("from").trim()) to null
+        "find_phone" -> {
+            val stop = input.optBoolean("stop")
+            val done = handset.findPhone(stop)
+            ToolResult(done.text, done.failed) to if (stop) null else ToolAction("", "Ring the phone", !done.failed, kind = "find_phone")
+        }
         "recent_calls" -> handset.recentCalls(input.optInt("count", 5).coerceIn(1, 20), input.optBoolean("missed")).let {
             ToolResult(it.text, it.failed) to null
         }

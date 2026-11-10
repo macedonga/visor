@@ -334,6 +334,7 @@
     <string name="meta_ai_call">Call %1$s</string>
     <string name="meta_ai_text">Text %1$s</string>
     <string name="meta_ai_reply">Reply to %1$s</string>
+    <string name="meta_ai_find_phone">Ring the phone</string>
     <string name="meta_ai_live_ai">Live AI</string>
     <string name="meta_ai_live_length">Live AI · %1$d min</string>
     <string name="meta_ai_continues">Continues · %1$s</string>

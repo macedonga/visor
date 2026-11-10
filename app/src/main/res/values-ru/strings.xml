@@ -347,6 +347,7 @@
     <string name="meta_ai_call">Звонок: %1$s</string>
     <string name="meta_ai_text">SMS: %1$s</string>
     <string name="meta_ai_reply">Ответ: %1$s</string>
+    <string name="meta_ai_find_phone">Звонок на телефон</string>
     <string name="meta_ai_live_ai">Live AI</string>
     <string name="meta_ai_live_length">Live AI · %1$d мин</string>
     <string name="meta_ai_continues">Продолжение · %1$s</string>

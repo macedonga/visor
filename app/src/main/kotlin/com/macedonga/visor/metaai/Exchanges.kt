@@ -292,6 +292,7 @@ private fun ToolAction.words(): Pair<String, String> {
         kind == "call" -> stringResource(R.string.meta_ai_call, subject)
         kind == "send_text" -> stringResource(R.string.meta_ai_text, subject)
         kind == "reply_message" -> stringResource(R.string.meta_ai_reply, subject)
+        kind == "find_phone" -> stringResource(R.string.meta_ai_find_phone)
         control != null -> stringResource(
             when (control) {
                 MediaControl.PAUSE -> R.string.meta_ai_pause
