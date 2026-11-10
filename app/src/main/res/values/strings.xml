@@ -706,7 +706,7 @@
     <string name="access_sms">Text messages</string>
     <string name="access_sms_why">So the glasses can show your texts and send one, and Meta AI can text for you.</string>
     <string name="access_calls">Call history</string>
-    <string name="access_calls_why">So the glasses can show your recent calls.</string>
+    <string name="access_calls_why">So the glasses can show your recent calls, and Meta AI can tell you who called.</string>
     <string name="access_call_control">Place and answer calls</string>
     <string name="access_call_control_why">So the glasses and Meta AI can place and answer calls on this phone.</string>
     <string name="access_location">Location</string>

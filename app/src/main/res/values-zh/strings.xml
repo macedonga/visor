@@ -679,7 +679,7 @@
     <string name="access_sms">短信</string>
     <string name="access_sms_why">让眼镜能显示你的短信，并代你发送；Meta AI 也能替你发短信。</string>
     <string name="access_calls">通话记录</string>
-    <string name="access_calls_why">让眼镜能显示你的最近通话。</string>
+    <string name="access_calls_why">让眼镜能显示你的最近通话，也让 Meta AI 能告诉你谁打来过。</string>
     <string name="access_call_control">拨打电话和接听来电</string>
     <string name="access_call_control_why">让眼镜和 Meta AI 能用这台手机拨打电话和接听来电。</string>
     <string name="access_location">位置信息</string>

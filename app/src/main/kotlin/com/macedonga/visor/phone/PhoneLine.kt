@@ -3,6 +3,7 @@ package com.macedonga.visor.phone
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.provider.CallLog
 import android.telecom.TelecomManager
 import com.macedonga.visor.connection.PhoneCallControl
 import com.macedonga.visor.connection.PhoneMessages
@@ -11,6 +12,11 @@ import com.macedonga.visor.core.assistant.HandsetDone
 import com.macedonga.visor.log.EventLog
 import com.macedonga.visor.ui.allows
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -59,7 +65,56 @@ class PhoneLine @Inject constructor(
         else HandsetDone("Sent to ${number.label}: \"$message\".", subject = number.name)
     }
 
+    override suspend fun recentCalls(count: Int, missed: Boolean): HandsetDone = withContext(Dispatchers.IO) {
+        if (!context.allows(Manifest.permission.READ_CALL_LOG)) {
+            return@withContext HandsetDone(
+                "Visor may not read the call history. Tell the wearer to allow Call history in Visor, Settings > Phone access.", failed = true,
+            )
+        }
+        val lines = runCatching {
+            context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls.CACHED_NAME, CallLog.Calls.NUMBER, CallLog.Calls.TYPE, CallLog.Calls.DATE, CallLog.Calls.DURATION),
+                if (missed) "${CallLog.Calls.TYPE} = ${CallLog.Calls.MISSED_TYPE}" else null, null, "${CallLog.Calls.DATE} DESC",
+            )?.use { c ->
+                buildList {
+                    while (size < count && c.moveToNext()) {
+                        val name = c.getString(0)?.takeIf { it.isNotBlank() }
+                        val number = c.getString(1)?.takeIf { it.isNotBlank() } ?: "a hidden number"
+                        val who = if (name != null) "$name ($number)" else number
+                        val what = when (c.getInt(2)) {
+                            CallLog.Calls.MISSED_TYPE -> "missed call from $who"
+                            CallLog.Calls.OUTGOING_TYPE -> "call to $who"
+                            CallLog.Calls.REJECTED_TYPE -> "declined call from $who"
+                            CallLog.Calls.BLOCKED_TYPE -> "blocked call from $who"
+                            CallLog.Calls.VOICEMAIL_TYPE -> "voicemail from $who"
+                            else -> "call from $who"
+                        }
+                        val minutes = c.getLong(4) / 60
+                        add("$what, ${clock(c.getLong(3))}${if (minutes > 0) ", $minutes min" else ""}")
+                    }
+                }
+            }.orEmpty()
+        }.getOrElse { return@withContext HandsetDone("The call history could not be read: ${it.message}.", failed = true) }
+        HandsetDone(lines.joinToString("\n").ifEmpty { if (missed) "No missed calls." else "The call history is empty." })
+    }
+
     @SuppressLint("MissingPermission") // checked with allows()
     private fun inCall(): Boolean = context.allows(Manifest.permission.READ_PHONE_STATE) &&
         runCatching { context.getSystemService(TelecomManager::class.java)?.isInCall == true }.getOrDefault(false)
+
+    private companion object {
+        /** "today 14:02", "yesterday 9:30" or "Mon 9 Nov 14:02", as the model reads a time. */
+        fun clock(time: Long): String {
+            val at = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
+            val day = at.toLocalDate()
+            val today = LocalDate.now()
+            val hour = at.format(DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH))
+            return when (day) {
+                today -> "today $hour"
+                today.minusDays(1) -> "yesterday $hour"
+                else -> at.format(DateTimeFormatter.ofPattern("EEE d MMM HH:mm", Locale.ENGLISH))
+            }
+        }
+    }
 }

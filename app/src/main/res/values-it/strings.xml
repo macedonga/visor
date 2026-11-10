@@ -702,7 +702,7 @@
     <string name="access_sms">SMS</string>
     <string name="access_sms_why">Così gli occhiali possono mostrare i tuoi SMS e inviarne uno, e Meta AI può scrivere per te.</string>
     <string name="access_calls">Registro chiamate</string>
-    <string name="access_calls_why">Così gli occhiali possono mostrare le tue chiamate recenti.</string>
+    <string name="access_calls_why">Così gli occhiali possono mostrare le tue chiamate recenti, e Meta AI può dirti chi ha chiamato.</string>
     <string name="access_call_control">Effettua e rispondi alle chiamate</string>
     <string name="access_call_control_why">Così gli occhiali e Meta AI possono effettuare e rispondere alle chiamate su questo telefono.</string>
     <string name="access_location">Posizione</string>
