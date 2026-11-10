@@ -17,6 +17,7 @@ import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.identity.ConstellationManifest
 import com.macedonga.visor.core.identity.IdentityStore
 import com.macedonga.visor.core.identity.appstore.fetchEntitlements
+import com.macedonga.visor.core.identity.appstore.grantEntitlement
 import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.media.AirshipReceiver
 import com.macedonga.visor.core.media.AppInstall
@@ -214,7 +215,13 @@ class Toolkit @Inject constructor(
     private suspend fun installToolkitApp(serial: String, release: String) {
         val install = AppInstall(connection, airship)
         if ("installed=true" in install.query(TOOLKIT_APP)) return
-        val held = withContext(Dispatchers.IO) { fetchEntitlements(login.source.get(), serial, release) }
+        // The store lists the toolkit app only once the account holds it; the Meta app grants it on its first install.
+        var held = withContext(Dispatchers.IO) { fetchEntitlements(login.source.get(), serial, release) }
+        if (held.none { it.packageName == TOOLKIT_APP }) {
+            val granted = withContext(Dispatchers.IO) { runCatching { grantEntitlement(login.source.get(), TOOLKIT_APP_ID) } }
+            log.add("Toolkit: asked Meta for the toolkit app: ${granted.getOrElse { "failed, ${it.message}" } ?: "no package named"}")
+            held = withContext(Dispatchers.IO) { fetchEntitlements(login.source.get(), serial, release) }
+        }
         val offer = held.firstOrNull { it.packageName == TOOLKIT_APP }
         if (offer == null) {
             log.add("Toolkit: the store lists ${held.size} apps for these glasses on release \"$release\": ${held.joinToString { "${it.name} (${it.packageName})" }}")
@@ -296,6 +303,8 @@ class Toolkit @Inject constructor(
 
     companion object {
         const val TOOLKIT_APP = "com.meta.wearable.dat.developer"
+        // Its store item, the same for every model ("DevMode DWA").
+        private const val TOOLKIT_APP_ID = "959779766592476"
         private const val BAND_PRODUCT = 1537
         private const val CHANNEL = "toolkit"
         private const val NOTIFICATION_ID = 7009

@@ -26,6 +26,16 @@ data class Entitlement(
 )
 
 private const val BINARY_DOC = "31207897482983152130374864073"
+private const val GRANT_DOC = "281359618216026307092023647224"
+
+/**
+ * GrantAppEntitlementMutation: adds the store app [appId] to the account, as the Meta app does before it installs
+ * one. The package the entitlement names, or null when Meta named none.
+ */
+fun grantEntitlement(token: Token, appId: String): String? {
+    val (_, json) = graphPost(token, "GrantAppEntitlementMutation", GRANT_DOC, buildJsonObject { put("app", appId) })
+    return json.path("data", "xar_grant_app_entitlement", "entitlement")?.nonBlank("package_name")
+}
 
 /**
  * WearablesAppStoreEntitlementBinaryQuery: the glasses apps the account holds for [serial] running [osVersion], the
