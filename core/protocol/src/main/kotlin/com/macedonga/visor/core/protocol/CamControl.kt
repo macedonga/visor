@@ -8,18 +8,25 @@ object CamControl {
     const val SERVICE = 151
     const val OVERRIDE_RULE = 1
 
-    private const val FAMILY_SMART_GLASSES = 1L
+    // Scope state.
+    const val SCOPE_DISCONNECTED = 1
+    const val SCOPE_LOW = 2
+
+    const val SCOPE_RELAY = 5
+
+    // Device family.
+    const val FAMILY_SMART_GLASSES = 1
+    const val FAMILY_AR_GLASSES = 2
     private const val FAMILY_INPUT = 6L
-    private const val SCOPE_LOW = 2L
 
     /**
-     * CamOverrideRule {1 these glasses, on body; 2 the input device whose key hint is [peerHint]; 3 a LOW lease}, its
-     * rule type TEMPORARY (0) left out: the rule the Meta app sends when a band is moved to a pair of glasses.
+     * CamOverrideRule {1 these glasses, on body; 2 the input device whose key hint is [peerHint]; 3 [scope]}, its rule
+     * type TEMPORARY (0) left out. With LOW it is the rule the Meta app sends when a band is moved to a pair of glasses.
      */
-    fun bandRule(peerHint: ByteArray): ByteArray {
-        val glasses = family(FAMILY_SMART_GLASSES) + Wire.fieldVarint(6, 1)
+    fun bandRule(peerHint: ByteArray, scope: Int = SCOPE_LOW, onBody: Boolean = true, glassesFamily: Int = FAMILY_SMART_GLASSES): ByteArray {
+        val glasses = family(glassesFamily.toLong()) + (if (onBody) Wire.fieldVarint(6, 1) else ByteArray(0))
         val band = family(FAMILY_INPUT) + Wire.fieldBytes(8, peerHint)
-        return Wire.fieldBytes(1, glasses) + Wire.fieldBytes(2, band) + Wire.fieldVarint(3, SCOPE_LOW)
+        return Wire.fieldBytes(1, glasses) + Wire.fieldBytes(2, band) + Wire.fieldVarint(3, scope.toLong())
     }
 
     // DeviceMatch field 1, a packed repeated enum.

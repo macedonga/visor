@@ -26,26 +26,39 @@ fun rawPublicKey(encoded: ByteArray): ByteArray? = when {
 
 internal fun point64(key: ECPublicKey): ByteArray = key.w.affineX.to32() + key.w.affineY.to32()
 
-/** Whether [hint], a 4-byte salt then SHA256(SHA256(key) ‖ salt)[:8], names [publicKey]. */
+/**
+ * Whether [hint] names [publicKey], as AirShield's HintMatcher reads it: a salt as long as the high nibble of its first
+ * byte plus one (none when that byte is below 0x10), then the start of SHA256(SHA256(key) ‖ salt).
+ */
 fun keyHintMatches(hint: ByteArray, publicKey: ByteArray): Boolean {
-    if (hint.size != 12 || publicKey.size != 64) return false
-    return hintHash(publicKey, hint.copyOfRange(0, 4)).contentEquals(hint.copyOfRange(4, 12))
+    if (hint.isEmpty() || publicKey.size != 64) return false
+    val first = hint[0].toInt() and 0xFF
+    val saltSize = if (first > 0x0F) (first shr 4) + 1 else 0
+    val rest = hint.size - saltSize
+    if (rest <= 0 || rest > 32) return false
+    return hintDigest(publicKey, hint.copyOfRange(0, saltSize)).copyOfRange(0, rest).contentEquals(hint.copyOfRange(saltSize, hint.size))
 }
 
-/** A key hint for [publicKey], 64 raw bytes, with a fresh salt: what [keyHintMatches] checks. */
+/**
+ * A 12-byte key hint for [publicKey], 64 raw bytes: a fresh 4-byte salt, its first byte's high nibble 3 so the Display
+ * reads its length, then the first 8 bytes of SHA256(SHA256(key) ‖ salt). A salt with any other nibble matches nothing.
+ */
 fun keyHint(publicKey: ByteArray): ByteArray {
     require(publicKey.size == 64) { "a key hint needs the 64-byte key, got ${publicKey.size}" }
     val salt = ByteArray(4).also { SecureRandom().nextBytes(it) }
+    salt[0] = (0x30 or (salt[0].toInt() and 0x0F)).toByte()
     return salt + hintHash(publicKey, salt)
 }
 
 /** SHA256(SHA256(key) ‖ salt)[:8]: a key hint's hash, and the key tag a constellation manifest names a peer by. */
-internal fun hintHash(publicKey: ByteArray, salt: ByteArray): ByteArray {
+internal fun hintHash(publicKey: ByteArray, salt: ByteArray): ByteArray = hintDigest(publicKey, salt).copyOfRange(0, 8)
+
+private fun hintDigest(publicKey: ByteArray, salt: ByteArray): ByteArray {
     val sha = MessageDigest.getInstance("SHA-256")
     val inner = sha.digest(publicKey)
     sha.update(inner)
     sha.update(salt)
-    return sha.digest().copyOfRange(0, 8)
+    return sha.digest()
 }
 
 /** 32 bytes, big endian, left padded. */

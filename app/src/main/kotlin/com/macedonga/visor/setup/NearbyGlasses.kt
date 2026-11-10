@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
@@ -15,6 +16,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.ParcelUuid
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
@@ -266,9 +268,9 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
 
     /**
      * The band heard nearby, one in pairing mode first. With [first], the first band heard, at once: a band the Display
-     * has just let go of is the only one advertising.
+     * has just let go of is the only one advertising. [millis] caps the scan.
      */
-    suspend fun bandNearby(first: Boolean): String? {
+    suspend fun bandNearby(first: Boolean, millis: Long = BAND_SCAN_MS): String? {
         val scanner = adapter?.takeIf { it.isEnabled }?.bluetoothLeScanner ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
         val heard = HashMap<String, Pair<Boolean, Int>>()
         val any = CompletableDeferred<Unit>()
@@ -280,9 +282,12 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
                 any.complete(Unit)
             }
         }
-        scanner.startScan(null, ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
+        // Filtered on the band's service: Android pauses unfiltered scans while the screen is off, and the band takes a
+        // connection only at the address it advertises, not at the one it was bonded under.
+        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(META_LE_SERVICE)).build()
+        scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), callback)
         try {
-            if (first) withTimeoutOrNull(BAND_SCAN_MS) { any.await() } else delay(BAND_SCAN_MS)
+            if (first) withTimeoutOrNull(millis) { any.await() } else delay(millis)
         } finally {
             runCatching { scanner.stopScan(callback) }
         }

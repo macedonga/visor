@@ -13,6 +13,7 @@ import com.macedonga.visor.core.identity.nowIso
 import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.protocol.Band
 import com.macedonga.visor.core.protocol.BtPeer
+import com.macedonga.visor.core.protocol.CamControl
 import com.macedonga.visor.core.protocol.ServiceId
 import com.macedonga.visor.core.session.DataXError
 import com.macedonga.visor.core.session.GlassesSession
@@ -165,6 +166,22 @@ class BandLink @Inject constructor(
             combine(connection.running, connection.pair, bands.all, wanted, held) { running, pair, all, want, hold ->
                 pair?.let { p -> all.firstOrNull { it.glasses == p } }?.takeIf { running && hold && want }
             }.distinctUntilChanged().collect { band -> gate.withLock { switchTo(band) } }
+        }
+        // The Display links its band by a built-in rule that Meta's MobileConfig switches on (cam_sg_to_input); a Display
+        // that never had Meta's config links it only by a rule from the phone, a temporary one, gone when the Display
+        // restarts. So once a connection, a Display not holding the band a while after it came up gets the band rule.
+        // Not while it holds the band: a new rule makes it drop the band and link it again.
+        scope.launch {
+            connection.state.map { if (it.link == LinkState.READY) it.info?.serial else null }.distinctUntilChanged().collectLatest { serial ->
+                val band = serial?.let { s -> bands.all.value.firstOrNull { it.glasses == s } } ?: return@collectLatest
+                delay(RULE_CHECK_MS)
+                if (session != null) return@collectLatest
+                val listed = peers.refresh()?.peers ?: return@collectLatest
+                if (listed.any { it.connected }) return@collectLatest
+                val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return@collectLatest
+                log.add("Band: the Display does not hold the band; sending it the band rule")
+                connection.submit { it.sendOnService(CamControl.SERVICE, CamControl.OVERRIDE_RULE, CamControl.bandRule(hint)) }
+            }
         }
         // While shared, the Display's link and the band's are joined whenever both are up. A band out of reach, or a
         // relay the two never use, ends the sharing, so the Display gets its band back rather than none.
@@ -470,7 +487,8 @@ class BandLink @Inject constructor(
         // the band is heard and reached, as the Meta app does. Pairing finds the band in pairing mode on its own.
         val address = if (pairing.value) band.address else {
             takeFromDisplay(band)
-            runCatching { nearby.bandNearby(first = true) }.getOrNull() ?: band.address
+            // The band is reached at the address it advertises; the Display waits about 20 s before it takes it back.
+            runCatching { nearby.bandNearby(first = true, millis = HEAR_MS) }.getOrNull() ?: band.address
         }
         val identity = IdentityBundle(key, address, band.serial, nowIso(), "band", BundleState.VERIFIED)
         val opened = GlassesSession(
@@ -525,6 +543,9 @@ class BandLink @Inject constructor(
         val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return log.add("Band: no key to name the band to the Display")
         lent = held.identity to hint
         if (!held.connected) return log.add("Band: the Display does not hold the band now")
+        // Since firmware 7202 the Display takes a band it let go of back within a second. A RELAY rule first makes it
+        // wait about 20 s for a way through the phone, time enough to reach the band; the hand-back undoes it.
+        connection.submit { it.sendOnService(CamControl.SERVICE, CamControl.OVERRIDE_RULE, CamControl.bandRule(hint, CamControl.SCOPE_RELAY)) }
         log.add("Band: asking the Display to let go of the band")
         val released = withTimeoutOrNull(RELEASE_MS) {
             connection.serviceData
@@ -539,8 +560,8 @@ class BandLink @Inject constructor(
 
     /**
      * Hands the band back to the Display after a borrow: the one it let go of, or, when the borrow began before the
-     * Display could be asked, the band it lists but does not hold. Since firmware 7202 the Display takes a band it let
-     * go of back within seconds by itself; the CONNECT covers older firmware.
+     * Display could be asked, the band it lists but does not hold: a LOW rule in place of the borrow's RELAY one, as the
+     * Meta app moves a band to glasses, and CONNECT for firmware before 7202.
      */
     private suspend fun giveBack() {
         if (connection.state.value.link != LinkState.READY) {
@@ -551,6 +572,7 @@ class BandLink @Inject constructor(
         val (identity, hint) = lent ?: listedBand() ?: return
         lent = null
         log.add("Band: handing the band back to the Display")
+        connection.submit { it.sendOnService(CamControl.SERVICE, CamControl.OVERRIDE_RULE, CamControl.bandRule(hint)) }
         connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.CONNECT, BtPeer.connect(identity, hint)) }
     }
 
@@ -626,6 +648,9 @@ class BandLink @Inject constructor(
         val MANIFEST_SERVICES = listOf(102, ConstellationManifest.SERVICE)
         const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L
+        const val HEAR_MS = 8_000L
+        // Long enough for a Display that links its band itself to have done it.
+        const val RULE_CHECK_MS = 30_000L
         const val POLL_MS = 5 * 60_000L
         const val INFO_WAIT_MS = 1_500L
         // The Display letting go (up to 10 s), hearing the band (15 s), then the link.

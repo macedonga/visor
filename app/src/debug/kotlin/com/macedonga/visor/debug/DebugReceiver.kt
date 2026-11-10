@@ -683,6 +683,34 @@ class DebugReceiver : BroadcastReceiver() {
                 }
                 resultData = "started; LOG for the steps"
             }
+            // Whether SET_PREFERRED_LINK RELAY keeps the Display off the band after a DISCONNECT, then DIRECT gives it back;
+            // --ei s seconds a watch (30). Steps and every svc41109 message in LOG.
+            "BAND_TOPOLOGY_TEST" -> {
+                scope.launch {
+                    runCatching { BandCamProbe.topology(connection, bands, bandPeers, log, intent.getIntExtra("s", 30) * 1000L) }
+                        .onFailure { log.add("Topology probe: failed: ${it.message}") }
+                }
+                resultData = "started; LOG for the steps"
+            }
+            // Whether a band rule with --ei scope (1, disconnected) keeps the Display off the band, then LOW gives it back;
+            // --ei s seconds a watch (30). Steps and the Display's svc151 and svc41109 messages in LOG.
+            "BAND_RULE_TEST" -> {
+                scope.launch {
+                    runCatching { BandCamProbe.rule(connection, bands, bandPeers, log, intent.getIntExtra("scope", 1), intent.getIntExtra("s", 30) * 1000L, intent.getBooleanExtra("body", true), intent.getIntExtra("family", 1), intent.getBooleanExtra("disconnect", false)) }
+                        .onFailure { log.add("Rule probe: failed: ${it.message}") }
+                }
+                resultData = "started; LOG for the steps"
+            }
+            // Whether the band takes the phone while the Display holds it (BandLink's pairing hold, no DISCONNECT). LOG.
+            "BAND_DIRECT_TEST" -> {
+                scope.launch { runCatching { BandCamProbe.direct(bandLink, bandPeers, log) }.onFailure { log.add("Direct probe: failed: ${it.message}") } }
+                resultData = "started; LOG for the steps"
+            }
+            // Buzzes the band: a borrow from the Display, the buzz, the hand-back. It outlasts a broadcast; LOG has the steps.
+            "BAND_BUZZ" -> {
+                scope.launch { log.add("Debug: buzz ${runCatching { bandLink.vibrate() }.getOrElse { "failed: ${it.message}" }}") }
+                resultData = "started; LOG for the steps"
+            }
             // The bands the Display lists on svc41109, each with whether it is connected, and the band its lease names.
             "BAND_PEERS" -> answerLater {
                 val info = bandPeers.refresh()
