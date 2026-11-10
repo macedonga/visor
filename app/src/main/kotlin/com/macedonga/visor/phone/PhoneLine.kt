@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.telecom.TelecomManager
 import com.macedonga.visor.connection.PhoneCallControl
+import com.macedonga.visor.connection.PhoneMessages
 import com.macedonga.visor.core.assistant.Handset
 import com.macedonga.visor.core.assistant.HandsetDone
 import com.macedonga.visor.log.EventLog
@@ -21,6 +22,7 @@ class PhoneLine @Inject constructor(
     @ApplicationContext private val context: Context,
     private val contacts: ContactFinder,
     private val calls: PhoneCallControl,
+    private val messages: PhoneMessages,
     private val log: EventLog,
 ) : Handset {
 
@@ -39,6 +41,22 @@ class PhoneLine @Inject constructor(
         log.add("Phone: ${if (why == null) "calling" else "could not call"} ${number.label}${if (whatsApp) " on WhatsApp" else ""}${why?.let { ": $it" }.orEmpty()}")
         if (why != null) HandsetDone("The call to ${number.label} did not start: $why.", failed = true, subject = number.name)
         else HandsetDone("Calling ${number.label}${if (whatsApp) " on WhatsApp" else ""}. Say only that, in a few words.", subject = number.name)
+    }
+
+    override suspend fun text(who: String, kind: String, message: String): HandsetDone = withContext(Dispatchers.IO) {
+        if (!context.allows(Manifest.permission.SEND_SMS)) {
+            return@withContext HandsetDone(
+                "Visor may not send texts. Tell the wearer to allow Text messages in Visor, Settings > Phone access.", failed = true,
+            )
+        }
+        val number = when (val pick = contacts.pick(who, kind)) {
+            is Pick.Not -> return@withContext HandsetDone(pick.text, failed = !pick.ask, asked = pick.ask)
+            is Pick.One -> pick.number
+        }
+        val why = messages.text(number.number, message)
+        log.add("Phone: ${if (why == null) "texted" else "could not text"} ${number.label}${why?.let { ": $it" }.orEmpty()}")
+        if (why != null) HandsetDone("The text to ${number.label} did not go: $why.", failed = true, subject = number.name)
+        else HandsetDone("Sent to ${number.label}: \"$message\".", subject = number.name)
     }
 
     @SuppressLint("MissingPermission") // checked with allows()

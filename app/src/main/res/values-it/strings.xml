@@ -331,6 +331,7 @@
     <string name="meta_ai_too_late">Troppo tardi per gli occhiali</string>
     <string name="meta_ai_phone">Telefono</string>
     <string name="meta_ai_call">Chiama %1$s</string>
+    <string name="meta_ai_text">Scrivi a %1$s</string>
     <string name="meta_ai_live_ai">Live AI</string>
     <string name="meta_ai_live_length">Live AI · %1$d min</string>
     <string name="meta_ai_continues">Continua · %1$s</string>
@@ -698,7 +699,7 @@
     <string name="access_contacts">Contatti</string>
     <string name="access_contacts_why">Così gli occhiali possono dire da chi arriva un messaggio, e Meta AI può chiamare o scrivere alle persone che nomini.</string>
     <string name="access_sms">SMS</string>
-    <string name="access_sms_why">Così gli occhiali possono mostrare i tuoi SMS e inviarne uno.</string>
+    <string name="access_sms_why">Così gli occhiali possono mostrare i tuoi SMS e inviarne uno, e Meta AI può scrivere per te.</string>
     <string name="access_calls">Registro chiamate</string>
     <string name="access_calls_why">Così gli occhiali possono mostrare le tue chiamate recenti.</string>
     <string name="access_call_control">Effettua e rispondi alle chiamate</string>

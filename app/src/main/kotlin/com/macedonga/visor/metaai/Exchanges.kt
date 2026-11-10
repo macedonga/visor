@@ -290,6 +290,7 @@ private fun ToolAction.words(): Pair<String, String> {
         kind == "directions" -> stringResource(R.string.phone_directions, subject)
         kind == "play_media" -> if (subject.isEmpty()) stringResource(R.string.gallery_play) else stringResource(R.string.phone_play, subject)
         kind == "call" -> stringResource(R.string.meta_ai_call, subject)
+        kind == "send_text" -> stringResource(R.string.meta_ai_text, subject)
         control != null -> stringResource(
             when (control) {
                 MediaControl.PAUSE -> R.string.meta_ai_pause

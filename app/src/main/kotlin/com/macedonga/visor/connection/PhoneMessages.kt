@@ -224,6 +224,23 @@ class PhoneMessages @Inject constructor(
         requests.finish(id, error ?: "sent", failed = error != null, bytes = text.encodeToByteArray().size.toLong())
     }
 
+    /**
+     * A text to [number] that the assistant sends: through the Messages app when that conversation's notification is
+     * up, as RCS when it is one, else as SMS. Null when it went, else why not.
+     */
+    suspend fun text(number: String, text: String): String? {
+        val thread = runCatching { Telephony.Threads.getOrCreateThreadId(context, number).toString() }.getOrNull()
+        val viaApp = thread != null && replies.has(thread)
+        val id = requests.start("${if (viaApp) "messages" else "sms"}://send/$number", RequestSource.SMS)
+        val error = when {
+            viaApp -> replies.reply(context, thread, text)
+            !context.allows(Manifest.permission.SEND_SMS) -> "SMS not allowed in Visor"
+            else -> deliver(number, text)
+        }
+        requests.finish(id, error ?: "sent", failed = error != null, bytes = text.encodeToByteArray().size.toLong())
+        return error
+    }
+
     /** Sends one text and waits for the radio's word on every part: null when all went, else why not. */
     private suspend fun deliver(to: String, text: String): String? {
         val sms = context.getSystemService(SmsManager::class.java)

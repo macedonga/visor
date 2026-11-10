@@ -332,6 +332,7 @@
     <string name="meta_ai_too_late">Too late for the glasses</string>
     <string name="meta_ai_phone">Phone</string>
     <string name="meta_ai_call">Call %1$s</string>
+    <string name="meta_ai_text">Text %1$s</string>
     <string name="meta_ai_live_ai">Live AI</string>
     <string name="meta_ai_live_length">Live AI · %1$d min</string>
     <string name="meta_ai_continues">Continues · %1$s</string>
@@ -702,7 +703,7 @@
     <string name="access_contacts">Contacts</string>
     <string name="access_contacts_why">So the glasses can say who a message is from, and Meta AI can call or text the people you name.</string>
     <string name="access_sms">Text messages</string>
-    <string name="access_sms_why">So the glasses can show your texts and send one.</string>
+    <string name="access_sms_why">So the glasses can show your texts and send one, and Meta AI can text for you.</string>
     <string name="access_calls">Call history</string>
     <string name="access_calls_why">So the glasses can show your recent calls.</string>
     <string name="access_call_control">Place and answer calls</string>

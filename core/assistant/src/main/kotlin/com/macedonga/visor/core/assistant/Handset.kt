@@ -15,6 +15,9 @@ interface Handset {
      * when [whatsApp].
      */
     suspend fun call(who: String, kind: String, whatsApp: Boolean): HandsetDone
+
+    /** Texts [message] to [who], named as for [call]. */
+    suspend fun text(who: String, kind: String, message: String): HandsetDone
 }
 
 /**
@@ -26,7 +29,8 @@ data class HandsetDone(val text: String, val failed: Boolean = false, val subjec
 /** [Handset] as tools for the model. */
 internal class HandsetTools(private val handset: Handset) {
 
-    val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks."
+    val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
+        "text message with send_text."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -40,6 +44,17 @@ internal class HandsetTools(private val handset: Handset) {
                 required = listOf("who"),
             ),
         ),
+        Triple(
+            "send_text",
+            "Send a text message (SMS) from the wearer's phone to a contact or a number. Send the wearer's own words. When " +
+                "the recipient or the words are unclear, ask first. Never say it was sent unless this tool says so.",
+            schema(
+                "to" to text("The contact's name as the wearer said it, or the number."),
+                "text" to text("The message, as the wearer dictated it."),
+                "kind" to text("The number's kind, only when the wearer said it.", "mobile", "home", "work", "other"),
+                required = listOf("to", "text"),
+            ),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -48,6 +63,15 @@ internal class HandsetTools(private val handset: Handset) {
             val who = input.optString("who").trim()
             if (who.isEmpty()) ToolResult("no one to call", true) to null
             else acted(handset.call(who, input.optString("kind").trim(), input.optString("app").trim().equals("whatsapp", true)), "Call", "call", who)
+        }
+        "send_text" -> {
+            val to = input.optString("to").trim()
+            val message = input.optString("text").trim()
+            when {
+                to.isEmpty() -> ToolResult("no one to text", true) to null
+                message.isEmpty() -> ToolResult("no message; ask the wearer what to say", true) to null
+                else -> acted(handset.text(to, input.optString("kind").trim(), message), "Text", "send_text", to)
+            }
         }
         else -> null
     }
