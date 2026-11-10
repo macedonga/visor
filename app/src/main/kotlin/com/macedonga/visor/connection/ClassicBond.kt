@@ -329,7 +329,7 @@ class ClassicBond @Inject constructor(
         }
         note(if (heard) "heard $address" else "did not hear $address; bonding anyway")
         return try {
-            nearby.bond(address).also { note("bonded over LE as $it; bonded: ${bonded()}") }
+            nearby.bond(address, newLink = true).also { note("bonded over LE as $it; bonded: ${bonded()}") }
         } catch (failed: BondFailed) {
             note("LE bond failed: ${failed.why}")
             null

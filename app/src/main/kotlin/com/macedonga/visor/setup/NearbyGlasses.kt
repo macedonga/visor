@@ -10,13 +10,19 @@ import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.SystemClock
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.productName
 import com.macedonga.visor.core.transport.META_LE_SERVICE
+import com.macedonga.visor.log.EventLog
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -45,7 +51,7 @@ class BondFailed(val why: Why) : Exception(why.name) {
 
 /** Finds Meta glasses (company id 0x01AB or service 0xFD5F) and bonds them over LE; the glasses derive the classic key from it. */
 @Singleton
-class NearbyGlasses @Inject constructor(@ApplicationContext private val context: Context) {
+class NearbyGlasses @Inject constructor(@ApplicationContext private val context: Context, private val log: EventLog) {
     private val adapter: BluetoothAdapter? get() = context.getSystemService(BluetoothManager::class.java)?.adapter
 
     val enabled: Boolean get() = adapter?.isEnabled == true
@@ -113,9 +119,12 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
             .map { NearbyPair(it.address, it.name, null, pairing = false, bonded = true) }
     }.getOrDefault(emptyList())
 
-    /** Bonds [address] over LE; returns the identity address the bond is kept under. Polled: the bond broadcast names only that address. */
+    /**
+     * Bonds [address] over LE; returns the identity address the bond is kept under. Polled: the bond broadcast names
+     * only that address. With [newLink], it returns once the LE link the bond went over has closed.
+     */
     @SuppressLint("MissingPermission", "NewApi")
-    suspend fun bond(address: String): String {
+    suspend fun bond(address: String, newLink: Boolean = false): String {
         val adapter = adapter?.takeIf { it.isEnabled } ?: throw BondFailed(BondFailed.Why.BLUETOOTH_OFF)
         val device = adapter.getRemoteDevice(address)
         if (device.bondState == BluetoothDevice.BOND_BONDED) return address
@@ -124,29 +133,68 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         // names LE; before, an LE link held open makes the phone bond on it.
         val modern = Build.VERSION.SDK_INT >= 37
         val link = if (modern) null else leLink(device)
-        try {
-            val asked = if (modern) device.createBond(BluetoothDevice.TRANSPORT_LE) else device.createBond()
-            // The glasses may start the bond themselves once the link is up.
-            if (!asked && device.bondState == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
-            var bonding = false
-            val deadline = SystemClock.elapsedRealtime() + BOND_MS
-            while (SystemClock.elapsedRealtime() < deadline) {
-                delay(POLL_MS)
-                val state = device.bondState
-                val added = adapter.bondedDevices.filter { it.address !in before }
-                if (state == BluetoothDevice.BOND_BONDED || added.isNotEmpty()) {
-                    return added.firstOrNull { it.address == address }?.address
-                        ?: added.firstOrNull { it.name == device.name }?.address
-                        ?: added.firstOrNull()?.address
-                        ?: address
-                }
-                if (state == BluetoothDevice.BOND_BONDING) bonding = true
-                // Back to none after trying: turned down on the phone or by the glasses.
-                if (bonding && state == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
-            }
-            throw BondFailed(BondFailed.Why.NO_ANSWER)
-        } finally {
+        fun letGo() {
             link?.let { runCatching { it.disconnect() }; it.close() }
+        }
+        val kept = try {
+            awaitBond(adapter, device, before, modern)
+        } catch (error: Throwable) {
+            letGo()
+            throw error
+        }
+        if (!newLink || kept.equals(address, ignoreCase = true)) {
+            letGo()
+            return kept
+        }
+        // The phone keeps the bond's LE link under the random address. While it is up, an L2CAP channel asked for
+        // under [kept] waits on a second link that never comes (#92); the next link comes up under [kept].
+        val closed = leLinkClosed(setOf(address, kept), ::letGo)
+        log.add("Bond: kept under $kept; the LE link on $address ${if (closed) "closed" else "still up after ${LINK_GONE_MS / 1000} s"}")
+        return kept
+    }
+
+    @SuppressLint("MissingPermission", "NewApi")
+    private suspend fun awaitBond(adapter: BluetoothAdapter, device: BluetoothDevice, before: Set<String>, modern: Boolean): String {
+        val asked = if (modern) device.createBond(BluetoothDevice.TRANSPORT_LE) else device.createBond()
+        // The glasses may start the bond themselves once the link is up.
+        if (!asked && device.bondState == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
+        var bonding = false
+        val deadline = SystemClock.elapsedRealtime() + BOND_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
+            delay(POLL_MS)
+            val state = device.bondState
+            val added = adapter.bondedDevices.filter { it.address !in before }
+            if (state == BluetoothDevice.BOND_BONDED || added.isNotEmpty()) {
+                return added.firstOrNull { it.address == device.address }?.address
+                    ?: added.firstOrNull { it.name == device.name }?.address
+                    ?: added.firstOrNull()?.address
+                    ?: device.address
+            }
+            if (state == BluetoothDevice.BOND_BONDING) bonding = true
+            // Back to none after trying: turned down on the phone or by the glasses.
+            if (bonding && state == BluetoothDevice.BOND_NONE) throw BondFailed(BondFailed.Why.REFUSED)
+        }
+        throw BondFailed(BondFailed.Why.NO_ANSWER)
+    }
+
+    /** Runs [letGo], then waits up to [LINK_GONE_MS] for the LE link to any of [addresses] to close; true once it has. */
+    private suspend fun leLinkClosed(addresses: Set<String>, letGo: () -> Unit): Boolean {
+        val closed = CompletableDeferred<Unit>()
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
+                // A classic link to the same address closing says nothing about the LE one.
+                if (intent.getIntExtra(BluetoothDevice.EXTRA_TRANSPORT, BluetoothDevice.TRANSPORT_LE) != BluetoothDevice.TRANSPORT_LE) return
+                if (addresses.any { it.equals(device.address, ignoreCase = true) }) closed.complete(Unit)
+            }
+        }
+        // Sent by the Bluetooth app, not the system: a receiver that is not exported never hears it.
+        ContextCompat.registerReceiver(context, receiver, IntentFilter(BluetoothDevice.ACTION_ACL_DISCONNECTED), ContextCompat.RECEIVER_EXPORTED)
+        return try {
+            letGo()
+            withTimeoutOrNull(LINK_GONE_MS) { closed.await() } != null
+        } finally {
+            context.unregisterReceiver(receiver)
         }
     }
 
@@ -260,6 +308,7 @@ class NearbyGlasses @Inject constructor(@ApplicationContext private val context:
         const val SWEEP_MS = 2_000L
         const val BOND_MS = 90_000L
         const val LINK_MS = 8_000L
+        const val LINK_GONE_MS = 10_000L
         const val BAND_SCAN_MS = 15_000L
         const val POLL_MS = 400L
         val GLASSES_NAME = Regex("ray-?ban|meta|oakley|stories", RegexOption.IGNORE_CASE)

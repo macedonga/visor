@@ -326,7 +326,7 @@ class OnboardingViewModel @Inject constructor(
         bondJob = viewModelScope.launch {
             bonding = true
             val address = try {
-                nearby.bond(pair.address)
+                nearby.bond(pair.address, newLink = true)
             } catch (failed: BondFailed) {
                 bondFailure = failed.why
                 return@launch
