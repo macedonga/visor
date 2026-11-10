@@ -113,7 +113,11 @@ class Brain(
     private val chatGpt: ChatGptPlan, handset: Handset,
 ) {
     private val phoneTools = PhoneTools(phone)
-    private val handsetTools = HandsetTools(handset)
+    private val handsetTools = HandsetTools(handset) { messaging }
+
+    /** The phone's notifications, for the message tools; the assistant sets it. */
+    @Volatile
+    var messaging: Messaging? = null
 
     private fun config() = store.config.value
 

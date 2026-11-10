@@ -18,9 +18,11 @@ import android.service.notification.StatusBarNotification
 import android.telecom.TelecomManager
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.assistant.AssistantPhase
+import com.macedonga.visor.core.assistant.ChatLine
 import com.macedonga.visor.core.assistant.Conversation
 import com.macedonga.visor.core.assistant.LiveAiPhase
 import com.macedonga.visor.core.assistant.Messaging
+import com.macedonga.visor.core.assistant.PhoneChat
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
 import com.macedonga.visor.core.session.LinkState
@@ -338,8 +340,51 @@ class MirrorListener : NotificationListenerService(), Messaging {
     override fun lastAnnounced(): Conversation? = announced
 
     override fun reply(conversation: Conversation, text: String): String? {
-        val action = textReplies.byKey(conversation.key) ?: return "that notification is gone"
+        val action = textReplies.byKey(conversation.key)
+            ?: active().firstOrNull { it.key == conversation.key }?.let { replyAction(it.notification) }
+            ?: return "that notification is gone"
         return textReplies.send(this, action, text)
+    }
+
+    override fun chats(): List<PhoneChat> {
+        val sms = Telephony.Sms.getDefaultSmsPackage(this)
+        return active()
+            .filter { it.packageName != packageName && it.notification.flags and Notification.FLAG_GROUP_SUMMARY == 0 }
+            .filter { chat(it.notification) || it.packageName == sms }
+            .sortedByDescending { it.postTime }
+            .mapNotNull(::chatOf)
+            .take(MAX_CHATS)
+    }
+
+    private fun active(): List<StatusBarNotification> = runCatching { activeNotifications }.getOrNull().orEmpty().toList()
+
+    /** A notification as a conversation: its name, its last messages and whether it takes a reply. */
+    private fun chatOf(sbn: StatusBarNotification): PhoneChat? {
+        val n = sbn.notification
+        val extras = n.extras
+        @Suppress("DEPRECATION")
+        val user = extras.getParcelable(Notification.EXTRA_MESSAGING_PERSON) as? Person
+        @Suppress("DEPRECATION")
+        val bundles = extras.getParcelableArray(Notification.EXTRA_MESSAGES).orEmpty().filterIsInstance<Bundle>()
+        val lines = bundles.takeLast(MAX_LINES).mapNotNull { m ->
+            val text = m.getCharSequence("text")?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            @Suppress("DEPRECATION")
+            val person = m.getParcelable("sender_person") as? Person
+            val sender = if (fromUser(m, user)) "" else m.getCharSequence("sender")?.toString() ?: person?.name?.toString().orEmpty()
+            ChatLine(sender, text, m.getLong("time").takeIf { it > 0 } ?: sbn.postTime)
+        }.ifEmpty {
+            val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+            val text = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString()
+            listOfNotNull(text?.takeIf { it.isNotBlank() }?.let { ChatLine(title, it, sbn.postTime) })
+        }
+        if (lines.isEmpty()) return null
+        val group = extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION)
+        val name = (if (group) extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE) else null)?.toString()
+            ?: extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.takeIf { it.isNotBlank() }
+            ?: lines.last().sender
+        val app = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }
+            .getOrDefault(sbn.packageName)
+        return PhoneChat(Conversation(sbn.key, name, app), group, lines, replyAction(n) != null)
     }
 
     private fun ready() = connection.state.value.link == LinkState.READY
@@ -403,3 +448,5 @@ private const val RELEASE_CHECK_MS = 500L
 private const val QUIET_MS = 1_500L
 private const val MAX_HOLD_MS = 120_000L
 private const val MAX_KEPT = 300
+private const val MAX_CHATS = 10
+private const val MAX_LINES = 3

@@ -2,6 +2,12 @@ package com.macedonga.visor.core.assistant
 
 import com.macedonga.visor.core.assistant.mcp.ToolAction
 import com.macedonga.visor.core.assistant.mcp.ToolResult
+import java.text.Normalizer
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -26,11 +32,11 @@ interface Handset {
  */
 data class HandsetDone(val text: String, val failed: Boolean = false, val subject: String = "", val asked: Boolean = false)
 
-/** [Handset] as tools for the model. */
-internal class HandsetTools(private val handset: Handset) {
+/** [Handset] and the phone's notifications ([messaging]) as tools for the model. */
+internal class HandsetTools(private val handset: Handset, private val messaging: () -> Messaging?) {
 
     val prompt = " On the phone you can also call a contact or a number with call, at once when the wearer asks, and send a " +
-        "text message with send_text."
+        "text message with send_text. messages reads the chats in the phone's notifications and reply_message answers one."
 
     val tools: List<Triple<String, String, JSONObject>> = listOf(
         Triple(
@@ -55,6 +61,22 @@ internal class HandsetTools(private val handset: Handset) {
                 required = listOf("to", "text"),
             ),
         ),
+        Triple(
+            "messages",
+            "Read the messages waiting in the phone's notifications (texts, WhatsApp, Telegram and other chats), newest first.",
+            schema("from" to text("A person, group or app to keep only their conversations; empty for all.")),
+        ),
+        Triple(
+            "reply_message",
+            "Reply in a conversation from the phone's notifications, through its own app. Send the wearer's own words; ask " +
+                "first when they are unclear. Never say it was sent unless this tool says so.",
+            schema(
+                "to" to text("The conversation's name, as messages lists it or the wearer says it."),
+                "app" to text("The app, only when the wearer named it."),
+                "text" to text("The reply, as the wearer dictated it."),
+                required = listOf("to", "text"),
+            ),
+        ),
     )
 
     /** Runs [name] when it is one of these tools: what the model is told, and the diary's line for it. Null for another tool. */
@@ -73,7 +95,54 @@ internal class HandsetTools(private val handset: Handset) {
                 else -> acted(handset.text(to, input.optString("kind").trim(), message), "Text", "send_text", to)
             }
         }
+        "messages" -> messages(input.optString("from").trim()) to null
+        "reply_message" -> {
+            val to = input.optString("to").trim()
+            val message = input.optString("text").trim()
+            when {
+                to.isEmpty() -> ToolResult("no conversation named", true) to null
+                message.isEmpty() -> ToolResult("no reply; ask the wearer what to say", true) to null
+                else -> reply(to, input.optString("app").trim(), message)
+            }
+        }
         else -> null
+    }
+
+    private fun messages(from: String): ToolResult {
+        val phone = messaging() ?: return ToolResult(NO_LISTENER, true)
+        val chats = phone.chats().filter { from.isEmpty() || matches(it, from) }
+        if (chats.isEmpty()) {
+            return ToolResult(if (from.isEmpty()) "No messages in the phone's notifications." else "No messages from $from in the phone's notifications.", false)
+        }
+        return ToolResult(chats.joinToString("\n") { chat ->
+            val c = chat.conversation
+            "[${c.app}] ${c.sender}${if (chat.group) " (group)" else ""}${if (chat.canReply) "" else " (no reply from here)"}: " +
+                chat.lines.joinToString(" / ") { "${clock(it.time)} ${it.sender.ifEmpty { "the wearer" }}: ${it.text}" }
+        }, false)
+    }
+
+    private fun reply(to: String, app: String, message: String): Pair<ToolResult, ToolAction?> {
+        val phone = messaging() ?: return ToolResult(NO_LISTENER, true) to null
+        val found = phone.chats().filter { matches(it, to) && (app.isEmpty() || plain(it.conversation.app).contains(plain(app))) }
+        val chat = found.singleOrNull() ?: found.singleOrNull { plain(it.conversation.sender) == plain(to) }
+            ?: return if (found.isEmpty()) {
+                ToolResult("No conversation with $to in the phone's notifications. For a text message, use send_text.", false) to null
+            } else {
+                ToolResult("Several conversations match: ${found.joinToString("; ") { "${it.conversation.sender} on ${it.conversation.app}" }}. Ask the wearer which one.", false) to null
+            }
+        val c = chat.conversation
+        if (!chat.canReply) return ToolResult("${c.app} takes no reply from its notification.", true) to null
+        val why = phone.reply(c, message)
+        val ok = why == null
+        return ToolResult(if (ok) "Sent to ${c.sender} on ${c.app}: \"$message\"." else "The reply to ${c.sender} did not go: $why.", !ok) to
+            ToolAction("", "Reply · ${c.sender}", ok, kind = "reply_message", subject = c.sender)
+    }
+
+    /** A conversation named [what]: by its name, a sender in it, or its app. */
+    private fun matches(chat: PhoneChat, what: String): Boolean {
+        val w = plain(what)
+        return plain(chat.conversation.sender).contains(w) || plain(chat.conversation.app).contains(w) ||
+            chat.lines.any { plain(it.sender).contains(w) }
     }
 
     /** The result, and the diary's line "[what] · whom" for an action that went or failed; none when the wearer has to choose. */
@@ -84,6 +153,18 @@ internal class HandsetTools(private val handset: Handset) {
     }
 
     private companion object {
+        const val NO_LISTENER = "Visor cannot see the phone's notifications. Tell the wearer to allow Notification access in Visor, " +
+            "Settings > Phone access."
+
+        fun plain(s: String) = Normalizer.normalize(s.trim(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").lowercase()
+
+        /** "14:02" today, else "Mon 9 Nov 14:02". */
+        fun clock(time: Long): String {
+            val at = Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())
+            val pattern = if (at.toLocalDate() == LocalDate.now()) "HH:mm" else "EEE d MMM HH:mm"
+            return at.format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH))
+        }
+
         fun text(help: String, vararg options: String): JSONObject = JSONObject().put("type", "string").put("description", help)
             .apply { if (options.isNotEmpty()) put("enum", JSONArray(options.toList())) }
 

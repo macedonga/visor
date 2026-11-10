@@ -444,9 +444,13 @@ class Assistant(
     @Volatile
     private var early: EarlyImage? = null
 
-    /** The phone's messaging, for replies by voice; set by the notification listener. */
+    /** The phone's messaging, for replies by voice and the model's message tools; set by the notification listener. */
     @Volatile
     var messaging: Messaging? = null
+        set(value) {
+            field = value
+            brain.messaging = value
+        }
 
     // A reply asked for and not yet dictated: the next request's words are its text.
     private class AwaitingReply(val conversation: Conversation, val until: Long)

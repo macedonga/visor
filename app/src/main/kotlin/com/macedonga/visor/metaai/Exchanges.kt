@@ -291,6 +291,7 @@ private fun ToolAction.words(): Pair<String, String> {
         kind == "play_media" -> if (subject.isEmpty()) stringResource(R.string.gallery_play) else stringResource(R.string.phone_play, subject)
         kind == "call" -> stringResource(R.string.meta_ai_call, subject)
         kind == "send_text" -> stringResource(R.string.meta_ai_text, subject)
+        kind == "reply_message" -> stringResource(R.string.meta_ai_reply, subject)
         control != null -> stringResource(
             when (control) {
                 MediaControl.PAUSE -> R.string.meta_ai_pause
