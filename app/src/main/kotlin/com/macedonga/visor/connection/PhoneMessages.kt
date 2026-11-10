@@ -35,6 +35,7 @@ import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -259,21 +260,52 @@ class PhoneMessages @Inject constructor(
                     PendingIntent.getBroadcast(context, it, Intent(action).setPackage(context.packageName), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
                 },
             )
+            val since = System.currentTimeMillis() - CLOCK_SLACK_MS
             // Android files a text a non-default app sends in the SMS store itself.
             if (parts.size == 1) sms.sendTextMessage(to, null, text, sent[0], null) else sms.sendMultipartTextMessage(to, null, parts, sent, null)
-            val codes = withTimeoutOrNull(SEND_TIMEOUT_MS) { List(parts.size) { results.receive() } } ?: return "No answer from the phone's radio"
-            return when (val code = codes.firstOrNull { it != Activity.RESULT_OK }) {
-                null -> null
-                SmsManager.RESULT_ERROR_RADIO_OFF -> "The phone's radio is off"
-                SmsManager.RESULT_ERROR_NO_SERVICE -> "No service"
-                else -> "Not sent (error $code)"
-            }
+            val why = withTimeoutOrNull(SEND_TIMEOUT_MS) { outcome(results, parts.size, text, since) } ?: return "No answer from the phone's radio"
+            return why.ifEmpty { null }
         } catch (e: Exception) {
             return e.message ?: e.toString()
         } finally {
             context.unregisterReceiver(receiver)
         }
     }
+
+    /**
+     * "" when every part went, else why not: the radio's word on each part, or the SMS store's record of the text as
+     * sent or failed. On an Android 16 emulator the radio's word never reached Visor although the text went.
+     */
+    private suspend fun outcome(results: Channel<Int>, parts: Int, text: String, since: Long): String {
+        val codes = ArrayList<Int>()
+        while (true) {
+            results.tryReceive().getOrNull()?.let {
+                codes += it
+                continue
+            }
+            if (codes.size >= parts) {
+                return when (val code = codes.firstOrNull { it != Activity.RESULT_OK }) {
+                    null -> ""
+                    SmsManager.RESULT_ERROR_RADIO_OFF -> "The phone's radio is off"
+                    SmsManager.RESULT_ERROR_NO_SERVICE -> "No service"
+                    else -> "Not sent (error $code)"
+                }
+            }
+            when (recorded(text, since)) {
+                Telephony.Sms.MESSAGE_TYPE_SENT -> return ""
+                Telephony.Sms.MESSAGE_TYPE_FAILED -> return "Not sent"
+            }
+            delay(POLL_MS)
+        }
+    }
+
+    /** The SMS store's type for [text] sent since [since]: sent, failed, still going, or null without it or READ_SMS. */
+    private fun recorded(text: String, since: Long): Int? = runCatching {
+        context.contentResolver.query(
+            Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms.TYPE), "${Telephony.Sms.BODY} = ? AND ${Telephony.Sms.DATE} >= ?",
+            arrayOf(text, since.toString()), "${Telephony.Sms.DATE} DESC",
+        )?.use { if (it.moveToFirst()) it.getInt(0) else null }
+    }.getOrNull()
 
     private suspend fun answer(mux: DataXConnection, reply: Int, type: Int, body: ByteArray, chunked: Boolean) {
         if (!chunked || body.size <= CHUNK) return mux.send(reply, body, messageType = type)
@@ -458,6 +490,9 @@ class PhoneMessages @Inject constructor(
         private const val OUT_SUCCESS = 2L
         private const val OUT_FAILURE = 3L
         private const val SEND_TIMEOUT_MS = 30_000L
+        private const val POLL_MS = 500L
+        // The SMS store dates a text by the phone clock, read on another thread: a second either way.
+        private const val CLOCK_SLACK_MS = 2_000L
         private const val CHUNK = 1000
         private const val CHUNK_HEAD = 52
 
