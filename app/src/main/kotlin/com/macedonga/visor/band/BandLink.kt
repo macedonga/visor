@@ -553,11 +553,12 @@ class BandLink @Inject constructor(
         connection.submit { it.sendOnService(BtPeer.SERVICE, BtPeer.CONNECT, BtPeer.connect(identity, hint)) }
     }
 
-    // The band the Display lists and does not hold, as the Display names it, with its key hint.
+    // The band the Display lists and does not hold, as the Display names it, with its key hint. With no band set up
+    // here the Display is not asked: glasses without svc41109 answer 0xc001.
     private suspend fun listedBand(): Pair<ByteArray, ByteArray>? {
-        val peer = peers.refresh()?.peers?.firstOrNull()?.takeIf { !it.connected } ?: return null
         val band = bands.all.value.firstOrNull { it.serial == _state.value.serial } ?: return null
         val hint = band.publicKey?.let(::rawPublicKey)?.let(::keyHint) ?: return null
+        val peer = peers.refresh()?.peers?.firstOrNull()?.takeIf { !it.connected } ?: return null
         return peer.identity to hint
     }
 

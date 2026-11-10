@@ -121,6 +121,7 @@ import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.Albums
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.media.MediaImport
+import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.Control
 import com.macedonga.visor.core.settings.GlassesSettings
 import com.macedonga.visor.core.settings.SettingsState
@@ -632,6 +633,8 @@ private fun summary(topic: Topic, model: SettingsViewModel, state: SettingsState
             // The Display reports the band it holds.
             val glasses by model.connection.state.collectAsStateWithLifecycle()
             val paired by model.bandPeers.bands.collectAsStateWithLifecycle()
+            val ready = glasses.link == LinkState.READY
+            LaunchedEffect(ready) { if (ready) model.bandPeers.refresh() }
             val device = glasses.device
             device?.bandBattery?.let { batteryWords(it, device.bandCharging) }
                 ?: if (paired?.isEmpty() == true) stringResource(R.string.band_not_paired) else ""
