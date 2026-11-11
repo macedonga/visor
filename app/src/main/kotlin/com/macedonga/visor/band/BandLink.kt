@@ -95,6 +95,13 @@ enum class ShareProblem { BAND_UNREACHABLE, DISPLAY_SILENT, KEPT_DROPPING }
 /** How an errand on the band ended. */
 enum class BandErrand { DONE, NO_ANSWER, NOT_CHANGED, REFUSED }
 
+/** What a band did with a manifest: holds [Held.version], took it without saying, or has no manifest service. */
+sealed interface ManifestInstall {
+    data class Held(val version: Long) : ManifestInstall
+    data object Unconfirmed : ManifestInstall
+    data object NoService : ManifestInstall
+}
+
 /**
  * The phone's link to the Neural Band (svc52822), taken from the Display for a lesson, a pairing, an update or one
  * errand, or kept while the band is shared: then the Display reaches the band through the phone's relay.
@@ -369,9 +376,9 @@ class BandLink @Inject constructor(
     /**
      * Installs [manifest] under [authority] on the band, as the Meta app does: the band checks the Display's manifest
      * against its own authority key, and refuses the Display with 0xc004 until it holds the key that signed it. Then
-     * the two hand each other newer manifests. The version the band holds afterwards, or null when it did not answer.
+     * the two hand each other newer manifests.
      */
-    suspend fun installManifest(authority: ByteArray, manifest: ByteArray): Long? = holdFor { install(authority, manifest, salt = null) }
+    suspend fun installManifest(authority: ByteArray, manifest: ByteArray): ManifestInstall = holdFor { install(authority, manifest, salt = null) }
 
     // As the Meta app does on every band connection: a band holding another manifest than Visor's for its glasses gets
     // Visor's. The band stays here until it is done: half a manifest would leave it with none.
@@ -388,28 +395,66 @@ class BandLink @Inject constructor(
         }
     }
 
-    // svc102 on bands with AirShield 0x11 and up, svc10 before, as the Meta app picks. With [salt], a band already
-    // holding that manifest is left alone. The version the band holds afterwards, or null.
-    private suspend fun install(authority: ByteArray, manifest: ByteArray, salt: ByteArray?): Long? {
+    // svc102 on bands with AirShield 0x11 and up, svc10 before, as the Meta app picks; a service that does not know the
+    // version request (0xd001) is not the band's. A band without a manifest answers the request with an error (0xc004
+    // on a reset band, #95), and the Meta app sends its manifest all the same, without asking first. With [salt], a
+    // band already holding that manifest is left alone.
+    private suspend fun install(authority: ByteArray, manifest: ByteArray, salt: ByteArray?): ManifestInstall {
         for (service in MANIFEST_SERVICES) {
-            val before = manifestVersion(service) ?: continue
-            if (salt != null && before.salt.contentEquals(salt)) return before.version
-            log.add("Band: manifest ${before.version} on svc$service; installing Visor's")
+            when (val before = manifestVersion(service)) {
+                null -> continue
+                is ManifestAnswer.Refused -> {
+                    if (before.error == UNKNOWN_TYPE) continue
+                    log.add("Band: no manifest on svc$service (0x%04x); installing Visor's".format(before.error))
+                    // The Meta app installs on another channel than the one it asked on.
+                    forgetChannel(before.channel)
+                }
+                is ManifestAnswer.Held -> {
+                    if (salt != null && before.version.salt.contentEquals(salt)) return ManifestInstall.Held(before.version.version)
+                    log.add("Band: manifest ${before.version.version} on svc$service; installing Visor's")
+                }
+            }
             sendOn(service, ConstellationManifest.SET_AUTHORITY_KEY, ConstellationManifest.authorityKey(authority))
             ConstellationManifest.chunks(manifest).forEach { (type, chunk) -> sendOn(service, type, chunk) }
-            val after = manifestVersion(service)
-            log.add("Band: holds manifest ${after?.version}")
-            return after?.version
+            return when (val after = manifestVersion(service)) {
+                is ManifestAnswer.Held -> {
+                    log.add("Band: holds manifest ${after.version.version}")
+                    ManifestInstall.Held(after.version.version)
+                }
+                else -> {
+                    log.add("Band: manifest sent; the band does not say which one it holds" + if (after is ManifestAnswer.Refused) " (0x%04x)".format(after.error) else "")
+                    if (after is ManifestAnswer.Refused) forgetChannel(after.channel)
+                    ManifestInstall.Unconfirmed
+                }
+            }
         }
         log.add("Band: no manifest service answered")
-        return null
+        return ManifestInstall.NoService
     }
 
-    private suspend fun manifestVersion(service: Int): ConstellationManifest.Version? = withTimeoutOrNull(REPLY_MS) {
+    /** What the band answered to GET_VERSION on a service: the manifest it holds, or an error status on [channel]. */
+    private sealed interface ManifestAnswer {
+        class Held(val version: ConstellationManifest.Version) : ManifestAnswer
+        class Refused(val error: Int, val channel: Int) : ManifestAnswer
+    }
+
+    private suspend fun manifestVersion(service: Int): ManifestAnswer? = withTimeoutOrNull(REPLY_MS) {
         manifestFrames
             .onSubscription { sendOn(service, ConstellationManifest.GET_VERSION, ByteArray(0)) }
             .first { (it is ServiceData && it.serviceId == service && it.messageType == ConstellationManifest.VERSION_INFO) || (it is DataXError && it.serviceId == service) }
-    }?.let { (it as? ServiceData)?.payload }?.let(ConstellationManifest::version)
+    }?.let { event ->
+        when (event) {
+            is ServiceData -> runCatching { ManifestAnswer.Held(ConstellationManifest.version(event.payload)) }.getOrNull()
+            is DataXError -> ManifestAnswer.Refused(event.errorId, event.channelId)
+            else -> null
+        }
+    }
+
+    // The next message on that channel's service opens a new channel.
+    private fun forgetChannel(channel: Int) {
+        val running = session ?: throw BandAway()
+        running.submit(SessionCommand { s -> s.connection?.forgetServiceChannel(channel) })
+    }
 
     private fun sendOn(service: Int, type: Int, payload: ByteArray) {
         val running = session ?: throw BandAway()
@@ -659,6 +704,8 @@ class BandLink @Inject constructor(
         // Taking the band from the Display and reaching it, as a borrow allows, with room to spare.
         const val REACH_MS = 60_000L
         val MANIFEST_SERVICES = listOf(102, ConstellationManifest.SERVICE)
+        // DataX unknown_type: the service is there but does not handle the message.
+        const val UNKNOWN_TYPE = 0xD001
         const val HAPTICS_PLAYED = 1
         const val RELEASE_MS = 10_000L
         const val HEAR_MS = 8_000L

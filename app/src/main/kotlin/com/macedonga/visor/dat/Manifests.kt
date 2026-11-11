@@ -5,6 +5,7 @@ package com.macedonga.visor.dat
 import android.content.Context
 import com.macedonga.visor.band.BandLink
 import com.macedonga.visor.band.Bands
+import com.macedonga.visor.band.ManifestInstall
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.identity.ConstellationManifest
@@ -82,9 +83,14 @@ class Manifests @Inject constructor(
         val app = ConstellationManifest.App(store.appKey().second, context.packageName)
         val manifest = ConstellationManifest.build(authority.first, authority.second, devices, listOf(app), version, group)
         if (bands.all.value.any { it.glasses == serial }) {
-            val held = runCatching { bandLink.installManifest(authority.second, manifest) }.getOrNull()
-            if (held == null) throw KitException(ErrorCode.FAILED, "The band did not answer.", reason = BAND_AWAY)
-            if (held != version) throw KitException(ErrorCode.FAILED, "The band did not take Visor's manifest (it holds version $held).")
+            when (val done = runCatching { bandLink.installManifest(authority.second, manifest) }.getOrNull()) {
+                null, ManifestInstall.NoService -> throw KitException(ErrorCode.FAILED, "The band did not answer.", reason = BAND_AWAY)
+                // The Meta app does not ask either: the Display connecting to the band is the proof.
+                ManifestInstall.Unconfirmed -> Unit
+                is ManifestInstall.Held -> if (done.version != version) {
+                    throw KitException(ErrorCode.FAILED, "The band did not take Visor's manifest (it holds version ${done.version}).")
+                }
+            }
         }
         val now = sync.install(authority.second, manifest)
         if (now?.version != version) throw KitException(ErrorCode.FAILED, "The glasses did not take Visor's manifest (they hold version ${now?.version}).")
