@@ -16,6 +16,9 @@ on:
 
 permissions:
   contents: write
+  # Build provenance for the APK.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release
@@ -109,6 +112,11 @@ jobs:
           mkdir -p dist
           cp "$apk" "dist/visor-$NAME.apk"
           (cd dist && sha256sum "visor-$NAME.apk" > "visor-$NAME.apk.sha256")
+
+      # Ties the APK to this workflow and commit: gh attestation verify visor-1.2.3.apk -R macedonga/visor
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/visor-*.apk
 
       - name: Publish the release
         env:

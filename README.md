@@ -68,7 +68,7 @@ tools and the glasses' settings. No Meta account, no Meta AI app, no developer r
 ## Install
 
 1. Download `visor-<version>.apk` from the [latest release](https://github.com/macedonga/visor/releases/latest).
-2. Compare its SHA-256 with the `.sha256` file next to it.
+2. Compare its SHA-256 with the `.sha256` file next to it. To check that this repo's release workflow built it, run `gh attestation verify visor-<version>.apk -R macedonga/visor`.
 3. Install the APK. Android asks you to allow installs from your browser or file manager.
 4. Open Visor and follow the setup: permissions, Meta login, pairing, then pick your glasses.
 
