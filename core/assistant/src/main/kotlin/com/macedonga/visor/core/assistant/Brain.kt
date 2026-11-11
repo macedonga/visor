@@ -679,7 +679,7 @@ class Brain(
             val text = (if (code in 200..299) http.inputStream else http.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
             if (code !in 200..299) {
                 val message = runCatching { JSONObject(text).getJSONObject("error").getString("message") }.getOrDefault(text.take(200))
-                error("the model answered $code: $message")
+                throw ModelRefused(code, message, refusalOf(code, text))
             }
             call.resume(JSONObject(text))
         } catch (error: Exception) {

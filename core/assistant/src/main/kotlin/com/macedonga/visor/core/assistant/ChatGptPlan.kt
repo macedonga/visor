@@ -69,6 +69,14 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
     val signIn: StateFlow<SignIn> = _signIn.asStateFlow()
 
     private val _limited = MutableStateFlow(false)
+    private val _notShared = MutableStateFlow(false)
+
+    /**
+     * ChatGPT answered that it does not share the plan with Visor (subscription_sharing_user_not_eligible): in #103 the
+     * app's usage setting in ChatGPT, switched off and on again, made it share. OpenAI asks apps to say so, not to sign
+     * in again; the sign-in and its registration stay, since the usage setting belongs to the registration.
+     */
+    val notShared: StateFlow<Boolean> = _notShared.asStateFlow()
     /** The plan's limit, or this app's, was reached; it clears with the next answer that goes through. */
     val limited: StateFlow<Boolean> = _limited.asStateFlow()
 
@@ -162,7 +170,7 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
             val granted = t.optString("scope").ifEmpty { uri.getQueryParameter("scope").orEmpty() }
             if (USE_SCOPE !in granted.split(' ', '+')) {
                 note("signed in, but the plan was not granted (scope: $granted)")
-                notEligible()
+                _signIn.value = SignIn.Failed(Why.NOT_ELIGIBLE)
                 return
             }
             val claims = idClaims(t.optString("id_token"))
@@ -175,6 +183,7 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
             prefs.edit().putString(EMAIL, email).putString(ID_TOKEN, t.optString("id_token")).apply()
             note("signed in")
             _limited.value = false
+            _notShared.value = false
             store.update { it.copy(chatGpt = email) }
             _signIn.value = SignIn.Idle
         } finally {
@@ -205,23 +214,12 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
         _signIn.value = SignIn.Idle
     }
 
-    /**
-     * OpenAI will not share this account's plan. The app's registration keeps the workspace picked when it was made,
-     * so it goes too: the next sign-in registers again and the person can pick their personal account.
-     */
-    private fun notEligible() {
-        prefs.edit().remove(ACCESS).remove(REFRESH).remove(EXPIRES).remove(ID_TOKEN).remove(CLIENT).apply()
-        _limited.value = false
-        store.update { it.copy(chatGpt = "") }
-        note("the plan is not shared with Visor; signed out, and the next sign-in registers the app again")
-        _signIn.value = SignIn.Failed(Why.NOT_ELIGIBLE)
-    }
-
     /** Forgets the tokens; the app's registration stays, so signing in again is one consent. */
     fun signOut() {
         cancel()
         prefs.edit().remove(ACCESS).remove(REFRESH).remove(EXPIRES).remove(ID_TOKEN).apply()
         _limited.value = false
+        _notShared.value = false
         store.update { it.copy(chatGpt = "") }
     }
 
@@ -395,6 +393,7 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
                 }
             }
             _limited.value = false
+            _notShared.value = false
             call.resume(code to answer)
         } catch (error: Exception) {
             call.resumeWithException(error)
@@ -411,11 +410,12 @@ class ChatGptPlan(context: Context, private val store: AssistantConfigStore) {
         if (code == LIMIT) {
             if (!_limited.value) note("usage limit reached")
             _limited.value = true
-            error("the model answered 429: ChatGPT usage limit reached")
+            throw ModelRefused(429, "ChatGPT usage limit reached", Refusal.LIMIT)
         }
         if (code == NOT_ELIGIBLE) {
-            notEligible()
-            error("ChatGPT does not share this account's plan with Visor. Sign in again in Meta AI settings and pick your personal account, or use an API key")
+            if (!_notShared.value) note("ChatGPT does not share the plan with Visor; its usage setting for Visor decides")
+            _notShared.value = true
+            throw ModelRefused(403, "ChatGPT does not share this account's plan with Visor", Refusal.PLAN)
         }
         val words = err?.optString("message").orEmpty().ifEmpty { json?.optString("detail").orEmpty() }.ifEmpty { code }
         // A capability the plan does not offer, such as a tool, is refused as a server refuses a field.

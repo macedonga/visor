@@ -19,7 +19,7 @@ internal fun bearerHeaders(key: String) = if (key.isBlank()) emptyMap() else map
 data class ModelInfo(val id: String, val name: String, val created: Long)
 
 /** Why a list could not be had: the key was refused, or anything else, with the provider's words. */
-class ModelsError(val refused: Boolean, message: String) : Exception(message)
+class ModelsError(val refused: Boolean, message: String, val why: Refusal? = null) : Exception(message)
 
 /**
  * The models the configured provider offers, newest first. Asking also proves the key: a refused key throws
@@ -62,7 +62,7 @@ private fun get(url: String, headers: Map<String, String>): JSONObject {
         val text = (if (code in 200..299) http.inputStream else http.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
         if (code !in 200..299) {
             val message = runCatching { JSONObject(text).getJSONObject("error").getString("message") }.getOrDefault(text.take(200))
-            throw ModelsError(refused = code == 401 || code == 403, message = message.ifEmpty { "HTTP $code" })
+            throw ModelsError(refused = code == 401 || code == 403, message = message.ifEmpty { "HTTP $code" }, why = refusalOf(code, text))
         }
         return JSONObject(text)
     } finally {
