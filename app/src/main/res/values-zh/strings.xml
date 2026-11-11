@@ -588,6 +588,15 @@
     <string name="ai_provider_chatgpt_sub">你的 Plus 或 Pro 套餐</string>
     <string name="ai_provider_openai_sub">API 密钥</string>
     <string name="ai_get_key">获取密钥</string>
+    <string name="ai_chatgpt_not_shared">套餐未与 Visor 共享</string>
+    <string name="ai_pick_model">选择模型</string>
+    <string name="ai_see_limits">查看限额</string>
+    <string name="ai_add_credit">充值</string>
+    <string name="ai_refused_model">此密钥无法使用该模型。请换一个模型。</string>
+    <string name="ai_refused_limit">账户目前已达到限额。请稍等，或提高限额。</string>
+    <string name="ai_refused_credit">账户余额已用完。充值后再试。</string>
+    <string name="ai_refused_key">API 密钥被拒绝。请重新粘贴，或创建新的密钥。</string>
+    <string name="ai_key_where">在 %1$s 创建密钥，复制后粘贴到这里。</string>
     <string name="ai_chatgpt_account">ChatGPT 账号</string>
     <string name="ai_chatgpt_continue">使用 ChatGPT 继续</string>
     <string name="ai_chatgpt_using">正在使用 ChatGPT 套餐</string>
@@ -598,7 +607,7 @@
     <string name="ai_chatgpt_plan_text">此应用中符合条件的使用会计入你的 ChatGPT 套餐。可在 ChatGPT 设置中管理用量。</string>
     <string name="ai_chatgpt_got_it">知道了</string>
     <string name="ai_chatgpt_declined">已取消登录</string>
-    <string name="ai_chatgpt_not_eligible">OpenAI 不允许 Visor 使用此账号的 ChatGPT 套餐。请重新登录并选择你的个人账号，而不是工作或团队账号，或改用 OpenAI API 密钥。</string>
+    <string name="ai_chatgpt_not_eligible">ChatGPT 没有与 Visor 共享你的套餐。请在 ChatGPT 设置的使用情况中允许 Visor 使用你的套餐，然后再试。</string>
     <string name="ai_chatgpt_expired">已退出登录：请重新登录</string>
     <string name="ai_chatgpt_failed">登录失败：%1$s</string>
     <string name="ai_web_unavailable">此模型无法搜索网页</string>

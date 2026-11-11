@@ -632,6 +632,15 @@
     <string name="ai_provider_chatgpt_sub">Ваш план Plus или Pro</string>
     <string name="ai_provider_openai_sub">API-ключ</string>
     <string name="ai_get_key">Получить ключ</string>
+    <string name="ai_chatgpt_not_shared">План не доступен Visor</string>
+    <string name="ai_pick_model">Выбрать модель</string>
+    <string name="ai_see_limits">Лимиты</string>
+    <string name="ai_add_credit">Пополнить</string>
+    <string name="ai_refused_model">Этот ключ не может использовать эту модель. Выберите другую.</string>
+    <string name="ai_refused_limit">Лимит аккаунта сейчас исчерпан. Подождите немного или увеличьте лимит.</string>
+    <string name="ai_refused_credit">На счёте закончились средства. Пополните его и попробуйте снова.</string>
+    <string name="ai_refused_key">Ключ API отклонён. Вставьте его снова или создайте новый.</string>
+    <string name="ai_key_where">Создайте ключ на %1$s, скопируйте его и вставьте сюда.</string>
     <string name="ai_chatgpt_account">Аккаунт ChatGPT</string>
     <string name="ai_chatgpt_continue">Продолжить с ChatGPT</string>
     <string name="ai_chatgpt_using">Используется план ChatGPT</string>
@@ -642,7 +651,7 @@
     <string name="ai_chatgpt_plan_text">Допустимое использование в этом приложении расходует ваш план ChatGPT. Управляйте использованием в настройках ChatGPT.</string>
     <string name="ai_chatgpt_got_it">Понятно</string>
     <string name="ai_chatgpt_declined">Вход отменён</string>
-    <string name="ai_chatgpt_not_eligible">OpenAI не разрешает Visor использовать план ChatGPT этого аккаунта. Войдите снова и выберите личный аккаунт, а не рабочий или командный, или используйте ключ API OpenAI.</string>
+    <string name="ai_chatgpt_not_eligible">ChatGPT не делится вашим планом с Visor. В настройках ChatGPT, в разделе «Использование», разрешите Visor использовать план и попробуйте снова.</string>
     <string name="ai_chatgpt_expired">Вы вышли: войдите снова</string>
     <string name="ai_chatgpt_failed">Не удалось войти: %1$s</string>
     <string name="ai_web_unavailable">Эта модель не умеет искать в интернете</string>

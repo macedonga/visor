@@ -610,6 +610,15 @@
     <string name="ai_provider_chatgpt_sub">Your Plus or Pro plan</string>
     <string name="ai_provider_openai_sub">API key</string>
     <string name="ai_get_key">Get a key</string>
+    <string name="ai_chatgpt_not_shared">Plan not shared with Visor</string>
+    <string name="ai_pick_model">Pick a model</string>
+    <string name="ai_see_limits">See limits</string>
+    <string name="ai_add_credit">Add credit</string>
+    <string name="ai_refused_model">This key cannot use this model. Pick another one.</string>
+    <string name="ai_refused_limit">The account\'s limit for now is reached. Wait a little, or raise the limit.</string>
+    <string name="ai_refused_credit">The account has no credit left. Add some, then try again.</string>
+    <string name="ai_refused_key">The API key was refused. Paste it again, or make a new one.</string>
+    <string name="ai_key_where">Make a key at %1$s, copy it, then paste it here.</string>
     <string name="ai_chatgpt_account">ChatGPT account</string>
     <string name="ai_chatgpt_continue">Continue with ChatGPT</string>
     <string name="ai_chatgpt_using">Using ChatGPT plan</string>
@@ -620,7 +629,7 @@
     <string name="ai_chatgpt_plan_text">Eligible usage in this app uses your ChatGPT plan. Manage usage in your ChatGPT settings.</string>
     <string name="ai_chatgpt_got_it">Got it</string>
     <string name="ai_chatgpt_declined">Sign-in cancelled</string>
-    <string name="ai_chatgpt_not_eligible">OpenAI does not let Visor use this account\'s ChatGPT plan. Sign in again and pick your personal account, not a work or team one, or use an OpenAI API key.</string>
+    <string name="ai_chatgpt_not_eligible">ChatGPT is not sharing your plan with Visor. In ChatGPT settings, under Usage, allow Visor to use your plan, then try again.</string>
     <string name="ai_chatgpt_expired">Signed out: sign in again</string>
     <string name="ai_chatgpt_failed">Sign-in failed: %1$s</string>
     <string name="ai_web_unavailable">This model can\'t search the web</string>

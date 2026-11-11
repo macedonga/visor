@@ -606,6 +606,15 @@
     <string name="ai_provider_chatgpt_sub">Il tuo piano Plus o Pro</string>
     <string name="ai_provider_openai_sub">Chiave API</string>
     <string name="ai_get_key">Ottieni una chiave</string>
+    <string name="ai_chatgpt_not_shared">Piano non condiviso con Visor</string>
+    <string name="ai_pick_model">Scegli un modello</string>
+    <string name="ai_see_limits">Vedi i limiti</string>
+    <string name="ai_add_credit">Aggiungi credito</string>
+    <string name="ai_refused_model">Questa chiave non può usare questo modello. Scegline un altro.</string>
+    <string name="ai_refused_limit">Il limite dell\'account per ora è raggiunto. Aspetta un po\', o alza il limite.</string>
+    <string name="ai_refused_credit">L\'account non ha più credito. Aggiungine, poi riprova.</string>
+    <string name="ai_refused_key">La chiave API è stata rifiutata. Incollala di nuovo, o creane una nuova.</string>
+    <string name="ai_key_where">Crea una chiave su %1$s, copiala, poi incollala qui.</string>
     <string name="ai_chatgpt_account">Account ChatGPT</string>
     <string name="ai_chatgpt_continue">Continua con ChatGPT</string>
     <string name="ai_chatgpt_using">Usa il piano ChatGPT</string>
@@ -616,7 +625,7 @@
     <string name="ai_chatgpt_plan_text">L\'utilizzo idoneo in questa app usa il tuo piano ChatGPT. Gestisci l\'utilizzo nelle impostazioni di ChatGPT.</string>
     <string name="ai_chatgpt_got_it">Ho capito</string>
     <string name="ai_chatgpt_declined">Accesso annullato</string>
-    <string name="ai_chatgpt_not_eligible">OpenAI non permette a Visor di usare il piano ChatGPT di questo account. Accedi di nuovo e scegli il tuo account personale, non uno di lavoro o di un team, oppure usa una chiave API OpenAI.</string>
+    <string name="ai_chatgpt_not_eligible">ChatGPT non condivide il tuo piano con Visor. Nelle impostazioni di ChatGPT, in Utilizzo, consenti a Visor di usare il piano, poi riprova.</string>
     <string name="ai_chatgpt_expired">Disconnesso: accedi di nuovo</string>
     <string name="ai_chatgpt_failed">Accesso non riuscito: %1$s</string>
     <string name="ai_web_unavailable">Questo modello non può cercare sul web</string>
