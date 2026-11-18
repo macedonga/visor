@@ -30,6 +30,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +47,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Meta's Robusta demo switch: with it on, the glasses take a photo for the phone. */
@@ -88,6 +91,11 @@ class DeveloperMode @Inject constructor(
 
     // The video shortcut reads Stop recording.
     @Volatile private var stopShown = false
+
+    // The switch a configuration report may satisfy after readOnce's caller has stopped waiting.
+    private val pendingSwitch = AtomicReference<Boolean?>(null)
+    private val wantedSwitch = AtomicReference(false)
+    private val switchWrites = Mutex()
 
     init {
         open(_on.value)
@@ -208,12 +216,34 @@ class DeveloperMode @Inject constructor(
                 apps.keys.any { Scope.CAMERA in kitGrants.scopesOf(it) } || clients.any { Scope.CAMERA in it.scopes } ||
                     web.values.any { Scope.CAMERA in it }
             }.distinctUntilChanged()
-            combine(ready, on, photos, kitCamera) { ready, on, photos, kit -> (on || photos || kit).takeIf { ready } }.collectLatest { on ->
+            combine(ready, on, photos, kitCamera) { ready, on, photos, kit ->
+                (on || photos || kit).also(wantedSwitch::set).takeIf { ready }
+            }.collectLatest { on ->
                 on ?: return@collectLatest
                 // A link just up settles first; the configuration comes in a bug report.
                 delay(upAt + SETTLE_MS - SystemClock.elapsedRealtime())
                 keepSwitch(on)
             }
+        }
+        scope.launch {
+            // A late report resumes only the read that timed out. Verification reports do not cause another write.
+            config.state.map { it.readAt }.distinctUntilChanged().collect {
+                val pending = pendingSwitch.getAndSet(null) ?: return@collect
+                keepSwitch(pending)
+            }
+        }
+        scope.launch {
+            data class Evidence(val acknowledged: String?, val report: String?, val verified: String?, val robusta: Any?)
+            config.state.map { Evidence(it.acknowledgedTimestamp, it.reportTimestamp, it.verifiedTimestamp, it.reported[ROBUSTA]) }
+                .distinctUntilChanged()
+                .collect { evidence ->
+                    val acknowledged = evidence.acknowledged ?: return@collect
+                    val report = evidence.report ?: return@collect
+                    if (report == acknowledged && evidence.verified == acknowledged) {
+                        val result = if (evidence.robusta == true) "Robusta enable verified" else "Robusta reported ${evidence.robusta ?: "absent"}"
+                        log.add("Developer mode: glasses report $report matches the file-receiver acknowledgement; $result")
+                    }
+                }
         }
         scope.launch {
             var was: String? = null
@@ -304,18 +334,32 @@ class DeveloperMode @Inject constructor(
         }
     }.getOrNull()
 
-    private suspend fun keepSwitch(on: Boolean) {
+    private suspend fun keepSwitch(on: Boolean) = switchWrites.withLock { keepSwitchLocked(on) }
+
+    private suspend fun keepSwitchLocked(on: Boolean) {
+        if (wantedSwitch.get() != on) return
         if (config.state.value.params.isEmpty()) {
             // A switch Visor never read, it never turned on.
-            if (!on) return
-            if (!config.readOnce(READ_MS) { log.add("Developer mode: reading the glasses' configuration once") }) return
+            if (!on) {
+                pendingSwitch.set(null)
+                return
+            }
+            if (!config.readOnce(READ_MS) { log.add("Developer mode: reading the glasses' configuration once") }) {
+                pendingSwitch.set(on)
+                // A report at the timeout boundary is claimed by this path or the report observer, never both.
+                if (config.state.value.params.isEmpty() || pendingSwitch.getAndSet(null) == null) return
+            }
         }
         val state = config.state.first { it.busy == null }
-        if (ROBUSTA !in state.params || (state.values[ROBUSTA] == true) == on) return
-        log.add(if (on) "Developer mode: letting the glasses take photos for the phone" else "Developer mode: the glasses no longer take photos for the phone")
-        config.apply(mapOf(ROBUSTA to on))
-        withTimeoutOrNull(WRITE_MS) { config.state.first { s -> s.busy == null && s.values[ROBUSTA] == on } }
-            ?: log.add("Developer mode: the glasses did not take the change: ${config.state.value.note?.why.orEmpty()}")
+        if (wantedSwitch.get() != on || ROBUSTA !in state.params || (state.values[ROBUSTA] == true) == on) return
+        log.add("Developer mode: requesting Robusta ${if (on) "on" else "off"}")
+        val why = config.send(mapOf(ROBUSTA to on))
+        if (why == null) {
+            val acknowledged = config.state.value.acknowledgedTimestamp ?: "unknown"
+            log.add("Developer mode: configuration $acknowledged acknowledged by the glasses' file receiver; Robusta is not verified yet")
+        } else {
+            log.add("Developer mode: the glasses did not acknowledge the change: $why")
+        }
     }
 
     private companion object {
@@ -330,6 +374,5 @@ class DeveloperMode @Inject constructor(
         const val LIST_MS = 15_000L
         const val SETTLE_MS = 20_000L
         const val READ_MS = 5 * 60_000L
-        const val WRITE_MS = 2 * 60_000L
     }
 }

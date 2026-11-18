@@ -22,6 +22,7 @@ import java.io.File
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Collections
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -594,9 +595,9 @@ class MediaImport(
         }
     }
 
-    /** Gets each bug report zip before it goes to Download/Visor. */
+    /** Gets each bug report zip before it goes to Download/Visor, and returns one diagnostic line when useful. */
     @Volatile
-    var bugReportReader: ((File) -> Unit)? = null
+    var bugReportReader: ((Received) -> String?)? = null
 
     /** [input] steadied or cut as an import would, into [output], with the logs kept for [handle]: for checking by hand. */
     fun finishAgain(input: File, handle: String, output: File, landscape: Boolean, steadiness: Int): String {
@@ -617,7 +618,7 @@ class MediaImport(
             entry("bug_category_label", "visor") + entry("is_constellation", "false") + entry("bug_report_id", id) +
             (mode?.let { Wire.fieldBytes(6, Wire.fieldVarintNonZero(1, it.toLong())) } ?: ByteArray(0))
         connection.submit { it.sendOnService(SVC_BUG_REPORTER, MT_REQUEST_BUG_REPORT, request) }
-        say("Asked the glasses for a bug report. It comes over airship: minutes over Bluetooth, seconds over Wi-Fi.")
+        say("Asked the glasses for bug report request ${id.take(8)}. It comes over airship: minutes over Bluetooth, seconds over Wi-Fi.")
     }
 
     private fun onBugReporter(data: ServiceData) {
@@ -649,13 +650,24 @@ class MediaImport(
             resolver.delete(uri, null, null)
             throw error
         }
-        say("Saved the glasses' bug report, ${sizeWords(received.offer.size)}, to Download/Visor/$name" + if (received.verified) "" else " (checksum did not match)")
+        val provenance = listOf(received.offer.uuid.take(8), received.offer.baseName.take(96).takeIf { it.isNotEmpty() })
+            .filterNotNull().joinToString(", ")
+        val seconds = "%.1f".format(Locale.US, received.transferMs / 1000.0)
+        say(
+            "Saved the glasses' bug report, ${sizeWords(received.offer.size)}, transfer $seconds s" +
+                provenance.takeIf { it.isNotEmpty() }?.let { ", $it" }.orEmpty() +
+                ", to Download/Visor/$name" + if (received.verified) "" else " (checksum did not match)",
+        )
     }
 
     private fun keep(received: Received) {
         if (received.offer.namespace == NAMESPACE_BUGREPORT) {
             try {
-                bugReportReader?.let { read -> runCatching { read(received.file) }.onFailure { say("Could not read the bug report: ${it.message}") } }
+                bugReportReader?.let { read ->
+                    runCatching { read(received) }
+                        .onSuccess { diagnostic -> diagnostic?.let(::say) }
+                        .onFailure { say("Could not read the bug report: ${it.message}") }
+                }
                 keepBugReport(received)
             } catch (error: Exception) {
                 say("Could not save the bug report: ${error.message}")

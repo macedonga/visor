@@ -65,13 +65,15 @@ class Shutter(private val connection: GlassesConnection) {
             _notes.tryEmit("$what: not connected")
             return false
         }
+        val startedAt = System.nanoTime()
         val answered = coroutineScope {
             // Watching before sending, so a quick answer is not missed; the state at hand is not one.
             val seen = async(start = CoroutineStart.UNDISPATCHED) { withTimeoutOrNull(ANSWER_MS) { connection.state.map { it.device?.camera }.drop(1).first(done) } }
             connection.submit { it.sendOnService(SVC_STATUS, SnApp.MT_SNINTENT, intent()) }
             seen.await()
         }
-        _notes.tryEmit(if (answered != null) "$what: $answered" else "$what: no answer from the glasses")
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+        _notes.tryEmit(if (answered != null) "$what: $answered in $elapsedMs ms" else "$what: no answer from the glasses after $elapsedMs ms")
         return answered != null
     }
 

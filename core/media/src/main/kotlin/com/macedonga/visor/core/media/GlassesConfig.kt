@@ -51,6 +51,10 @@ data class ConfigState(
     // What the last bug report showed, so a write is only taken as landed once a report says so.
     val reported: Map<String, Any> = emptyMap(),
     val reportedAt: Long? = null,
+    // The configuration table the last report names, and the last table the glasses' receiver accepted.
+    val reportTimestamp: String? = null,
+    val acknowledgedTimestamp: String? = null,
+    val verifiedTimestamp: String? = null,
     val params: Map<String, McParam> = emptyMap(),
     // The values from before Visor's first write, the way back.
     val baseline: Map<String, Any>? = null,
@@ -170,18 +174,27 @@ class GlassesConfig(
             if (s.params.isEmpty()) return@withLock "the glasses' configuration has not been read yet"
             val values = s.values + changes
             _state.update { it.copy(busy = ConfigBusy.SENDING, note = null) }
+            var sentTimestamp: String? = null
             val why = runCatching {
                 val (name, zip) = tables(values)
+                sentTimestamp = name.substringBefore('_')
                 val sent = CompletableDeferred<String?>()
                 connection.submit { mux -> sent.complete(airship.send(mux, NAMESPACE, name, zip)) }
                 withTimeoutOrNull(SEND_TIMEOUT_MS) { sent.await() } ?: if (sent.isCompleted) null else "no link or no answer"
             }.getOrElse { it.message ?: it.toString() }
             if (why == null) {
+                val acknowledged = checkNotNull(sentTimestamp)
                 if (s.baseline == null) {
                     File(dir, BASELINE).writeText(valuesJson(s.values))
                 }
                 File(dir, VALUES).writeText(valuesJson(values))
-                _state.update { it.copy(values = values, baseline = it.baseline ?: s.values, busy = null, note = ConfigNote(done)) }
+                File(dir, ACKNOWLEDGED_TIMESTAMP).writeText(acknowledged)
+                _state.update {
+                    it.copy(
+                        values = values, baseline = it.baseline ?: s.values, busy = null, note = ConfigNote(done),
+                        acknowledgedTimestamp = acknowledged,
+                    )
+                }
             } else {
                 _state.update { it.copy(busy = null, note = ConfigNote(ConfigNote.Kind.NOT_SENT, why)) }
             }
@@ -189,32 +202,47 @@ class GlassesConfig(
         }
     }
 
-    /** A bug report zip from the glasses: keep its MobileConfig part. */
-    private fun take(zip: File) {
+    /** A bug report zip from the glasses: keep its MobileConfig part and describe its provenance. */
+    private fun take(received: Received): String? {
         var found = false
         try {
-            val lost = ZipFile(zip).use { z ->
-                fun bytes(path: String) = z.getEntry(path)?.let { e -> z.getInputStream(e).use { it.readBytes() } }
-                val map = bytes("mobileconfig/maps/current/merged_params_map_v4_u0.txt") ?: return
-                val names = bytes("mobileconfig/maps/current/merged_params_names_v4_u0.txt") ?: return
-                val values = bytes("mobileconfig/current_mc_values.json")
+            val report = ZipFile(received.file).use(::readMobileConfigReport)
+                ?: return "Configuration: bug report ${received.offer.uuid.take(8)} has no complete known MobileConfig layout"
+            val reportTimestamp = report.timestamp?.decodeToString()?.trim()?.takeIf { it.isNotEmpty() }
+            val acknowledged = File(dir, ACKNOWLEDGED_TIMESTAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+            val verified = File(dir, VERIFIED_TIMESTAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+            val confirms = report.values != null && verifiesAcknowledgedConfig(reportTimestamp, acknowledged)
+            val pending = acknowledged != null && acknowledged != verified
+            val lost = report.run {
                 values?.let {
-                    File(dir, VALUES).writeBytes(it)
                     File(dir, REPORTED).writeBytes(it)
+                    // A queued pre-write report is evidence, but it must not replace the desired values of a newer
+                    // acknowledged table. The matching report, or any report when no write is pending, may do so.
+                    if (mayReplaceDesiredConfig(reportTimestamp, acknowledged, verified)) File(dir, VALUES).writeBytes(it)
                 }
                 File(dir, MAP).writeBytes(map)
                 File(dir, NAMES).writeBytes(names)
-                bytes("mobileconfig/session_info.json")?.let { File(dir, SESSION).writeBytes(it) }
-                bytes("mobileconfig/current_timestamp.txt")?.let { File(dir, TIMESTAMP).writeText(String(it).trim()) }
-                boot = bytes("settingsservice/boot_session_id")?.let { String(it).trim() } ?: boot
+                session?.let { File(dir, SESSION).writeBytes(it) }
+                timestamp?.let { File(dir, TIMESTAMP).writeText(String(it).trim()) }
+                reportTimestamp?.let { File(dir, REPORT_TIMESTAMP).writeText(it) } ?: File(dir, REPORT_TIMESTAMP).delete()
+                if (confirms) File(dir, VERIFIED_TIMESTAMP).writeText(checkNotNull(acknowledged))
+                this@GlassesConfig.boot = boot?.let { String(it).trim() } ?: this@GlassesConfig.boot
                 values == null
             }
             load()
-            _state.update { it.copy(readAt = System.currentTimeMillis(), boot = boot) }
+            _state.update { it.copy(readAt = maxOf(System.currentTimeMillis(), (it.readAt ?: 0L) + 1), boot = boot) }
             found = true
             // A reset leaves the glasses on built-in defaults, without what Meta's servers had set (dynamic photos among
             // it); the last values Visor saw go back.
             if (lost && state.value.values.isNotEmpty()) scope.launch { write(emptyMap(), ConfigNote.Kind.RESENT) }
+            val robusta = state.value.reported[ROBUSTA_NAME]?.toString() ?: "absent"
+            val relation = when {
+                acknowledged == null -> "no acknowledged configuration is awaiting verification"
+                confirms -> "matches acknowledged configuration $acknowledged"
+                pending -> "does not verify acknowledged configuration $acknowledged"
+                else -> "newer than the last verified configuration is not established"
+            }
+            return "Configuration: parsed ${report.layout.label} report ${received.offer.uuid.take(8)}, timestamp ${reportTimestamp ?: "absent"}, Robusta $robusta; $relation"
         } finally {
             waiting?.complete(found)
         }
@@ -227,12 +255,16 @@ class GlassesConfig(
         val values = File(dir, VALUES).takeIf { it.isFile }?.let { parseValues(it.readText()) }.orEmpty()
         val baseline = File(dir, BASELINE).takeIf { it.isFile }?.let { parseValues(it.readText()) }
         val reported = File(dir, REPORTED).takeIf { it.isFile }
+        val reportTimestamp = File(dir, REPORT_TIMESTAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        val acknowledged = File(dir, ACKNOWLEDGED_TIMESTAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        val verified = File(dir, VERIFIED_TIMESTAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
         _state.update {
             it.copy(
                 values = values, params = params, baseline = baseline, readAt = it.readAt ?: map.lastModified(),
                 // Without reported.json, the saved values are the last report's.
                 reported = reported?.let { f -> parseValues(f.readText()) } ?: values,
                 reportedAt = reported?.lastModified() ?: File(dir, VALUES).takeIf { f -> f.isFile }?.lastModified(),
+                reportTimestamp = reportTimestamp, acknowledgedTimestamp = acknowledged, verifiedTimestamp = verified,
             )
         }
     }
@@ -345,6 +377,9 @@ class GlassesConfig(
         const val SESSION = "session_info.json"
         const val REPORTED = "reported.json"
         const val TIMESTAMP = "current_timestamp.txt"
+        const val REPORT_TIMESTAMP = "reported_timestamp.txt"
+        const val ACKNOWLEDGED_TIMESTAMP = "acknowledged_timestamp.txt"
+        const val VERIFIED_TIMESTAMP = "verified_timestamp.txt"
         const val LAST_STAMP = "last_stamp.txt"
         const val NO_PAIR = "none"
         const val STAMP = "MMM-dd-yyyy-HH-mm-ss"
@@ -355,6 +390,7 @@ class GlassesConfig(
         // BugReportParams.mode 1: the lite report, without dumpstate.
         const val LITE_REPORT = 1
         const val SEND_TIMEOUT_MS = 60_000L
+        const val ROBUSTA_NAME = "wearables_robusta.demo_enabled"
         // One sessionless, one sessioned.
         val FILLERS = mapOf("smartglasses_test_config.test_1" to true, "smartglasses_test_config_sessioned.gw_test_1" to false)
     }

@@ -56,12 +56,12 @@ private const val ANSWER_MS = 15_000L
 private const val CHECK_BYTES = 65_536
 
 /** A file the glasses offered. [uuid] matches the capture list's asset id. */
-class Offer(val idBytes: ByteArray, val size: Long, val namespace: String) {
+class Offer(val idBytes: ByteArray, val size: Long, val namespace: String, val baseName: String) {
     val uuid: String = uuidText(idBytes)
 }
 
 /** A whole file. [verified] is true when our adler32 matches the glasses'. */
-class Received(val offer: Offer, val file: File, val verified: Boolean)
+class Received(val offer: Offer, val file: File, val verified: Boolean, val transferMs: Long)
 
 /** A file in flight. */
 data class Transfer(val uuid: String, val received: Long, val size: Long, val bytesPerSecond: Long)
@@ -93,6 +93,7 @@ class AirshipReceiver(private val spool: File) : Responder {
     private class Incoming(val offer: Offer, val file: File, val taker: ExtraFiles?) {
         var out = FileOutputStream(file)
         val adler = Adler32()
+        val offeredAt = System.nanoTime()
         var received = 0L
         var startedAt = 0L
         var percent = -1L
@@ -276,7 +277,7 @@ class AirshipReceiver(private val spool: File) : Responder {
             MT_OFFER, MT_OFFER_MULTISCOPE -> {
                 saidEmpty = false
                 val f = parsed(payload)
-                val offer = Offer(f.bytes(1), f.varint(2), f.bytes(3).decodeToString())
+                val offer = Offer(f.bytes(1), f.varint(2), f.bytes(3).decodeToString(), f.bytes(4).decodeToString())
                 incoming.remove(channel)?.discard()
                 val taker = if (offer.namespace in ACCEPTED) null else extras.firstOrNull { runCatching { it.wants(offer) }.getOrDefault(false) }
                 // Refusing still needs the drop, or the glasses' queue stalls behind this offer.
@@ -286,7 +287,9 @@ class AirshipReceiver(private val spool: File) : Responder {
                 }
                 spool.mkdirs()
                 incoming[channel] = Incoming(offer, File(spool, offer.uuid), taker)
-                _notes.trySend("Receiving ${sizeWords(offer.size)}${describe(offer.uuid)}")
+                val named = offer.baseName.takeIf { offer.namespace == NAMESPACE_BUGREPORT && it.isNotEmpty() }
+                    ?.let { ", ${it.take(96)}" }.orEmpty()
+                _notes.trySend("Receiving ${sizeWords(offer.size)}${describe(offer.uuid)}$named")
                 publish()
                 // Offset 0 with the adler32 of nothing: what FileReceiver::acceptOffer sends.
                 return Reply(MT_CURSOR, cursor(0, 1))
@@ -313,7 +316,8 @@ class AirshipReceiver(private val spool: File) : Responder {
                 t.out.close()
                 val f = parsed(payload)
                 val verified = f.varint(1) == t.received && f.varint(2) == t.adler.value
-                val whole = Received(t.offer, t.file, verified)
+                val transferMs = (System.nanoTime() - t.offeredAt) / 1_000_000
+                val whole = Received(t.offer, t.file, verified, transferMs)
                 if (t.offer.namespace in ACCEPTED) {
                     if (t.offer.namespace == NAMESPACE_MEDIA) extras.forEach { x ->
                         runCatching { x.peek(whole) }.onFailure { _notes.trySend("A file taker failed: ${it.message ?: it}") }
