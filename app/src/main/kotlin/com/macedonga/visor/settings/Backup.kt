@@ -125,7 +125,7 @@ class Backups @Inject constructor(
                     // The speech service's key stays out, like the model's.
                     .put("tts", a.tts.name).put("ttsBaseUrl", a.ttsBaseUrl).put("ttsModel", a.ttsModel).put("ttsVoice", a.ttsVoice),
             )
-            .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("muted", JSONArray(apps.muted.value.sorted())))
+            .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("onlyLocked", notify.onlyLocked.value).put("muted", JSONArray(apps.muted.value.sorted())))
             .put("import", import.mode.value.name)
             .put("albums", JSONObject().put("photos", albums.photos.value).put("videos", albums.videos.value).put("together", albums.together.value))
             .put(
@@ -221,6 +221,7 @@ class Backups @Inject constructor(
         }
         backup.optJSONObject("notifications")?.let { o ->
             notify.set(o.optBoolean("enabled", true))
+            notify.setOnlyLocked(o.optBoolean("onlyLocked", false))
             o.optJSONArray("muted")?.let { a -> apps.restore(a.strings().toSet()) }
         }
         backup.optString("import").takeIf { it.isNotEmpty() }?.let { m -> runCatching { AutoImport.valueOf(m) }.getOrNull()?.let(import::set) }
