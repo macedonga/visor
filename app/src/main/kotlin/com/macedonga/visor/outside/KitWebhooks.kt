@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -83,26 +84,50 @@ class KitWebhooks @Inject constructor(private val clients: NetworkClients, priva
         return session
     }
 
-    private fun post(client: NetworkClient, url: String, body: String) {
+    // A failure that may pass (no connection, a 5xx, a 429) is tried again a little later, so a blip in the network
+    // does not lose an event. A receiver still failing after the retries is down: it gets one try per event until it
+    // takes one again, so the events queued behind it are not held up for long.
+    private suspend fun post(client: NetworkClient, url: String, body: String) {
         val bytes = body.toByteArray()
         val mac = Mac.getInstance(HMAC).apply { init(SecretKeySpec(client.tokenHash.toByteArray(), HMAC)) }
         val signature = mac.doFinal(bytes).joinToString("") { "%02x".format(it) }
-        try {
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.connectTimeout = TIMEOUT_MS
-            connection.readTimeout = TIMEOUT_MS
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("X-Visor-Signature", "sha256=$signature")
-            connection.outputStream.use { it.write(bytes) }
-            val code = connection.responseCode
-            connection.disconnect()
-            if (code !in 200..299) quietly(client, "answered $code")
-        } catch (e: IOException) {
-            quietly(client, "failed: ${e.message}")
+        val tries = if (client.name in down) 1 else TRIES
+        for (attempt in 1..tries) {
+            val failure = send(url, bytes, signature)
+            if (failure == null) {
+                down.remove(client.name)
+                return
+            }
+            if (!failure.passing || attempt == tries) {
+                if (failure.passing) down.add(client.name)
+                quietly(client, failure.what)
+                return
+            }
+            delay(RETRY_MS * attempt)
         }
     }
+
+    private class Failure(val what: String, val passing: Boolean)
+
+    /** Posts [bytes] once. Null when the receiver took them. */
+    private fun send(url: String, bytes: ByteArray, signature: String): Failure? = try {
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.connectTimeout = TIMEOUT_MS
+        connection.readTimeout = TIMEOUT_MS
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.setRequestProperty("X-Visor-Signature", "sha256=$signature")
+        connection.outputStream.use { it.write(bytes) }
+        val code = connection.responseCode
+        connection.disconnect()
+        if (code in 200..299) null else Failure("answered $code", code == 429 || code >= 500)
+    } catch (e: IOException) {
+        Failure("failed: ${e.message}", passing = true)
+    }
+
+    // The clients whose receiver did not take an event even after the retries.
+    private val down: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     // A receiver that is down fails every event: the log says so once a minute, not once an event.
     private val said = ConcurrentHashMap<String, Long>()
@@ -117,6 +142,8 @@ class KitWebhooks @Inject constructor(private val clients: NetworkClients, priva
     private companion object {
         const val HMAC = "HmacSHA256"
         const val TIMEOUT_MS = 5_000
+        const val TRIES = 3
+        const val RETRY_MS = 2_000L
         const val QUIET_MS = 60_000L
 
         // No Android uid stands behind a network client.
