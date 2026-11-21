@@ -144,12 +144,15 @@ class MirrorListener : NotificationListenerService(), Messaging {
         if (chatProvider == null && !display) return
         apps.saw(sbn.packageName)
         if (!choice.enabled.value || !ready() || sbn.packageName in apps.muted.value) return
+        // Do not disturb holds a notification back from the glasses as it does on the phone, with the
+        // person's own exceptions: the system decides it for each notification.
+        val r = Ranking()
+        if (rankingMap.getRanking(sbn.key, r) && !r.matchesInterruptionFilter()) return
         val n = sbn.notification
         val extras = n.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
         val appName = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString() }.getOrDefault(sbn.packageName)
-        val r = Ranking()
         // The phone's texts, SMS or RCS, go as native messages, which the glasses' Messages app files by thread.
         (if (sms) GlassesNotification.PROVIDER_NATIVE else chatProvider)?.let { provider ->
             message(sbn, provider, appName)?.let { m ->
