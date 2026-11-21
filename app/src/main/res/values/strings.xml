@@ -971,6 +971,7 @@
     <string name="features_section">Features</string>
     <string name="features_problem">The last change did not reach the glasses.</string>
     <string name="features_not_read">The glasses did not answer.</string>
+    <string name="features_unavailable">Not available on these glasses</string>
     <string name="features_sending">Sending to the glasses…</string>
     <string name="features_checking">Checking that the glasses kept it…</string>
     <string name="features_unconfirmed">Not confirmed</string>

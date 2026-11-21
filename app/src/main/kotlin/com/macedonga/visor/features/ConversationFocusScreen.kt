@@ -122,6 +122,7 @@ private fun FocusNow(hearing: HearingState, standing: Standing, busy: Boolean, m
     val paused = run.paused
     val title = when {
         standing == Standing.UNKNOWN -> R.string.settings_not_read
+        standing == Standing.UNAVAILABLE -> R.string.features_unavailable
         !allowed -> R.string.cf_now_locked
         run == HearingRun.ON -> R.string.cf_now_on
         paused -> R.string.cf_now_paused

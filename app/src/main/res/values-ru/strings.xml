@@ -1006,6 +1006,7 @@
     <string name="features_section">Функции</string>
     <string name="features_problem">Последнее изменение не дошло до очков.</string>
     <string name="features_not_read">Очки не ответили.</string>
+    <string name="features_unavailable">Недоступно на этих очках</string>
     <string name="features_sending">Отправка на очки…</string>
     <string name="features_checking">Проверяем, сохранили ли очки настройку…</string>
     <string name="features_unconfirmed">Не подтверждено</string>

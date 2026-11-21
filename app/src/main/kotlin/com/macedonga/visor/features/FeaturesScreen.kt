@@ -143,6 +143,7 @@ fun featureFace(feature: Feature, features: Features, hearing: Hearing, open: (N
         val paused = run.paused
         val blocker = when {
             standing == Standing.UNKNOWN -> R.string.settings_not_read
+            standing == Standing.UNAVAILABLE -> R.string.features_unavailable
             standing != Standing.ON -> R.string.cf_now_locked
             !focus && !(now.fitted ?: tested) -> R.string.hc_now_untested
             else -> null
@@ -166,6 +167,7 @@ fun featureFace(feature: Feature, features: Features, hearing: Hearing, open: (N
     val busy = standing == Standing.SENDING || standing == Standing.CHECKING || (standing == Standing.UNKNOWN && state.busy)
     val words = when (standing) {
         Standing.UNKNOWN -> R.string.settings_not_read
+        Standing.UNAVAILABLE -> R.string.features_unavailable
         Standing.PARTLY -> R.string.tile_partly
         Standing.REFUSED -> R.string.tile_refused
         Standing.UNCONFIRMED -> R.string.features_unconfirmed
@@ -314,6 +316,7 @@ private fun lineOf(feature: Feature, standing: Standing, waits: Boolean): Pair<S
     val note = feature.note?.let { stringResource(it) }
     return when (standing) {
         Standing.UNKNOWN -> stringResource(R.string.settings_not_read) to false
+        Standing.UNAVAILABLE -> stringResource(R.string.features_unavailable) to false
         Standing.OFF -> note to false
         Standing.PARTLY -> stringResource(R.string.tile_partly) to false
         Standing.SENDING -> stringResource(R.string.features_sending) to false

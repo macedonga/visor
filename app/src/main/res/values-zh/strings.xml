@@ -923,6 +923,7 @@
     <string name="features_section">功能</string>
     <string name="features_problem">上次的更改未同步到眼镜。</string>
     <string name="features_not_read">眼镜无响应。</string>
+    <string name="features_unavailable">这副眼镜上不可用</string>
     <string name="features_sending">正在发送到眼镜…</string>
     <string name="features_checking">正在确认眼镜是否已保留设置…</string>
     <string name="features_unconfirmed">未确认</string>

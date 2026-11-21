@@ -494,16 +494,18 @@ private fun Tile(id: String, model: SettingsViewModel, open: (NavKey) -> Unit, o
             val spec = specOf(host.settings, key)
             val value = host.state.valueOf(key, info)
             title = spec.label
+            // Without RLDrive, a key with no svc31 field has nowhere to be written.
+            val nowhere = info?.writable != true || (info?.viaDrive == true && host.state.unserved)
             // A switch not read yet has no side to flip to.
-            locked = !host.ready || info?.writable != true || restriction != null || (spec.control == Control.Toggle && value == null)
+            locked = !host.ready || nowhere || restriction != null || (spec.control == Control.Toggle && value == null)
             lockedWords = when {
                 restriction != null || !host.ready -> blocked
-                info?.writable != true -> stringResource(R.string.settings_no_way_to_write)
+                nowhere -> stringResource(R.string.settings_no_way_to_write)
                 else -> stringResource(R.string.settings_not_read)
             }
             busy = key in host.state.pending
             on = if (spec.control == Control.Toggle) value?.let { asBool(it) != spec.invert } else null
-            state = value?.let { spec.words(it) } ?: stringResource(R.string.settings_not_read)
+            state = value?.let { spec.words(it) } ?: stringResource(if (host.state.unserved) R.string.settings_not_set else R.string.settings_not_read)
             // A slider, number or text opens the page that holds its editor.
             val place = Topic.of(key)?.takeIf { spec.offeredOn(host.product) }?.let(::placeOf) ?: SettingsGroupKey(spec.group)
             act = {
