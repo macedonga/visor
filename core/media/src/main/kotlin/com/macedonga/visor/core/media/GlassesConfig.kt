@@ -59,7 +59,7 @@ data class ConfigState(
     val boot: String? = null,
     val busy: ConfigBusy? = null,
     val note: ConfigNote? = null,
-    // svc7006 refused and nothing was ever read: no bug report to read the configuration from.
+    // No lite bug report to read the configuration from (svc7006 refused, or AirShield 16), and nothing read before.
     val unserved: Boolean = false,
 )
 
@@ -147,6 +147,12 @@ class GlassesConfig(
     @Synchronized
     private fun readAsync(): Deferred<Boolean> = reading?.takeIf { it.isActive } ?: scope.async {
         if (_state.value.unserved) return@async false
+        // AirShield 16 firmware ignores the lite mode and sends the full report, about 5 MB and many minutes over
+        // Bluetooth (#122): no read there.
+        if (connection.link?.peerAirshieldVersion == FULL_REPORTS_ONLY) {
+            _state.update { if (it.params.isEmpty()) it.copy(unserved = true) else it }
+            return@async false
+        }
         val done = CompletableDeferred<Boolean>().also { waiting = it }
         _state.update { it.copy(busy = ConfigBusy.READING, note = null) }
         media.requestBugReport(LITE_REPORT)
@@ -367,6 +373,7 @@ class GlassesConfig(
         const val BRING_OVER_MS = 2 * 60_000L
         // BugReportParams.mode 1: the lite report, without dumpstate.
         const val LITE_REPORT = 1
+        const val FULL_REPORTS_ONLY = 16
         const val SEND_TIMEOUT_MS = 60_000L
         // One sessionless, one sessioned.
         val FILLERS = mapOf("smartglasses_test_config.test_1" to true, "smartglasses_test_config_sessioned.gw_test_1" to false)
