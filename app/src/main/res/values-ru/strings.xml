@@ -514,6 +514,8 @@
     <string name="tile_refused">Отклонено</string>
     <string name="settings_notifications">Уведомления на очках</string>
     <string name="settings_notifications_sub">Уведомления телефона, которые Visor отправляет на очки. Если выключено, Visor их не отправляет.</string>
+    <string name="settings_notifications_locked">Только когда телефон заблокирован</string>
+    <string name="settings_notifications_locked_sub">Пока вы пользуетесь телефоном, уведомления остаются на нём.</string>
 
     <string name="topic_meta_ai">Meta AI</string>
     <string name="topic_language">Язык и голос</string>
@@ -1004,6 +1006,7 @@
     <string name="features_section">Функции</string>
     <string name="features_problem">Последнее изменение не дошло до очков.</string>
     <string name="features_not_read">Очки не ответили.</string>
+    <string name="features_unavailable">Недоступно на этих очках</string>
     <string name="features_sending">Отправка на очки…</string>
     <string name="features_checking">Проверяем, сохранили ли очки настройку…</string>
     <string name="features_unconfirmed">Не подтверждено</string>

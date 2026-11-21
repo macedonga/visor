@@ -53,6 +53,9 @@ enum class Standing {
     /** The glasses kept their old values. */
     REFUSED,
     ON,
+
+    /** The glasses hold no configuration Visor can read, so this switch is not theirs to change. */
+    UNAVAILABLE,
 }
 
 /** What went wrong last: a table that did not go out, or a read the glasses did not answer. */
@@ -299,7 +302,7 @@ class Features @Inject constructor(
     private fun standing(gates: List<Gate>, c: ConfigState, s: SettingsState, q: Map<String, Any>, m: Marks, refused: Boolean): Standing {
         val configs = gates.filterIsInstance<Gate.Config>()
         val sets = gates.filterIsInstance<Gate.Setting>()
-        if (configs.isNotEmpty() && c.params.isEmpty()) return Standing.UNKNOWN
+        if (configs.isNotEmpty() && c.params.isEmpty()) return if (c.unserved) Standing.UNAVAILABLE else Standing.UNKNOWN
         if (configs.any { it.name in q } || sets.any { it.key in s.pending }) return Standing.SENDING
         if (refused || sets.any { it.key in s.kept }) return Standing.REFUSED
         // Sent and not yet in a report: the glasses' configuration has to be read to know.

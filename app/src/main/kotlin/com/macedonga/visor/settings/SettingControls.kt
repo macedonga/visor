@@ -61,8 +61,9 @@ internal fun specOf(settings: GlassesSettings, key: String): SettingSpec = setti
 
 internal const val OTHER = "Other"
 
-/** The value in force: being written, else stored, else the firmware default once the glasses have been read. */
-internal fun SettingsState.valueOf(key: String, info: SettingInfo?): String? = pending[key] ?: stored[key] ?: info?.default?.takeIf { readAt != null }
+/** The value in force: being written, else stored, else the firmware default once read (or once there is no store). */
+internal fun SettingsState.valueOf(key: String, info: SettingInfo?): String? =
+    pending[key] ?: stored[key] ?: info?.default?.takeIf { readAt != null || unserved }
 
 /** A unitless range as a share of its span. */
 internal fun Control.Range.percent(x: Double): String = "${((x - min) / (max - min) * 100).roundToInt()}%"

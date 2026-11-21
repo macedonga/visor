@@ -101,8 +101,9 @@ class KitSettings @Inject constructor(
                 is Control.Number -> SettingRange(control.min?.toDouble(), control.max?.toDouble(), null, control.unit)
                 else -> null
             },
+            // Glasses with no settings store take only the settings svc31 writes.
             writable = info.writable && !secret && spec != null && everyday(control) && spec.group !in SYSTEM_GROUPS &&
-                !SYSTEM_KEY.containsMatchIn(key),
+                !SYSTEM_KEY.containsMatchIn(key) && !(state.unserved && info.viaDrive),
             pending = key in state.pending,
         )
     }

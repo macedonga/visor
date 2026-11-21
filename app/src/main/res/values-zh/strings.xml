@@ -484,6 +484,8 @@
     <string name="tile_refused">已拒绝</string>
     <string name="settings_notifications">眼镜上的通知</string>
     <string name="settings_notifications_sub">将手机的通知发送到眼镜。关闭后，Visor 不再发送任何通知。</string>
+    <string name="settings_notifications_locked">仅在手机锁定时</string>
+    <string name="settings_notifications_locked_sub">你使用手机时，通知只留在手机上。</string>
     <string name="topic_meta_ai">Meta AI</string>
     <string name="topic_language">语言与语音</string>
     <string name="topic_notifications">通知与通话</string>
@@ -921,6 +923,7 @@
     <string name="features_section">功能</string>
     <string name="features_problem">上次的更改未同步到眼镜。</string>
     <string name="features_not_read">眼镜无响应。</string>
+    <string name="features_unavailable">这副眼镜上不可用</string>
     <string name="features_sending">正在发送到眼镜…</string>
     <string name="features_checking">正在确认眼镜是否已保留设置…</string>
     <string name="features_unconfirmed">未确认</string>

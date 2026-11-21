@@ -59,6 +59,8 @@ data class ConfigState(
     val boot: String? = null,
     val busy: ConfigBusy? = null,
     val note: ConfigNote? = null,
+    // No lite bug report to read the configuration from (svc7006 refused, or AirShield 16), and nothing read before.
+    val unserved: Boolean = false,
 )
 
 /**
@@ -91,6 +93,13 @@ class GlassesConfig(
 
     init {
         media.bugReportReader = { take(it) }
+        scope.launch {
+            connection.errors.collect { e ->
+                if (e.serviceId != BUG_REPORTER || e.errorId != NOT_SERVED) return@collect
+                _state.update { if (it.params.isEmpty()) it.copy(unserved = true) else it }
+                waiting?.complete(false)
+            }
+        }
         scope.launch {
             connection.pair.filterNotNull().distinctUntilChanged().collect { serial ->
                 writes.withLock { runCatching { switchTo(serial) } }
@@ -127,6 +136,7 @@ class GlassesConfig(
     /** The configuration, read once if it never was, after any photos still to come over; [onRead] hears the read start. True once there is one. */
     suspend fun readOnce(timeoutMs: Long, onRead: () -> Unit): Boolean {
         if (_state.value.params.isNotEmpty()) return true
+        if (_state.value.unserved) return false
         withTimeoutOrNull(BRING_OVER_MS) { combine(media.importing, media.fresh) { importing, fresh -> !importing && fresh.isEmpty() }.first { it } }
         media.importing.first { !it }
         onRead()
@@ -136,6 +146,13 @@ class GlassesConfig(
 
     @Synchronized
     private fun readAsync(): Deferred<Boolean> = reading?.takeIf { it.isActive } ?: scope.async {
+        if (_state.value.unserved) return@async false
+        // AirShield 16 firmware ignores the lite mode and sends the full report, about 5 MB and many minutes over
+        // Bluetooth (#122): no read there.
+        if (connection.link?.peerAirshieldVersion == FULL_REPORTS_ONLY) {
+            _state.update { if (it.params.isEmpty()) it.copy(unserved = true) else it }
+            return@async false
+        }
         val done = CompletableDeferred<Boolean>().also { waiting = it }
         _state.update { it.copy(busy = ConfigBusy.READING, note = null) }
         media.requestBugReport(LITE_REPORT)
@@ -347,6 +364,8 @@ class GlassesConfig(
         const val TIMESTAMP = "current_timestamp.txt"
         const val LAST_STAMP = "last_stamp.txt"
         const val NO_PAIR = "none"
+        const val BUG_REPORTER = 7006
+        const val NOT_SERVED = 0xC001
         const val STAMP = "MMM-dd-yyyy-HH-mm-ss"
         const val STALE_MARGIN_MS = 15 * 60_000L
         const val READ_TIMEOUT_MS = 10 * 60_000L
@@ -354,6 +373,7 @@ class GlassesConfig(
         const val BRING_OVER_MS = 2 * 60_000L
         // BugReportParams.mode 1: the lite report, without dumpstate.
         const val LITE_REPORT = 1
+        const val FULL_REPORTS_ONLY = 16
         const val SEND_TIMEOUT_MS = 60_000L
         // One sessionless, one sessioned.
         val FILLERS = mapOf("smartglasses_test_config.test_1" to true, "smartglasses_test_config_sessioned.gw_test_1" to false)

@@ -114,6 +114,7 @@ private fun CorrectionNow(hearing: HearingState, standing: Standing, busy: Boole
     val paused = run.paused
     val title = when {
         standing == Standing.UNKNOWN -> R.string.settings_not_read
+        standing == Standing.UNAVAILABLE -> R.string.features_unavailable
         !allowed -> R.string.cf_now_locked
         !fitted -> R.string.hc_now_untested
         run == HearingRun.ON -> R.string.cf_now_on
@@ -130,7 +131,7 @@ private fun CorrectionNow(hearing: HearingState, standing: Standing, busy: Boole
         else -> null to false
     }
     val (label, act) = when {
-        standing == Standing.UNKNOWN -> R.string.try_again to model.features::check
+        standing == Standing.UNKNOWN || standing == Standing.UNAVAILABLE -> R.string.try_again to model.features::check
         !allowed -> R.string.cf_allow_now to { model.features.set(feature, true) }
         !fitted -> R.string.hc_test_take to { open(HearingTestKey) }
         run == HearingRun.ON -> R.string.cf_stop to model.hearing::stop
@@ -139,7 +140,7 @@ private fun CorrectionNow(hearing: HearingState, standing: Standing, busy: Boole
     }
     NowCard(
         VisorIcons.HearingAid, lit = run == HearingRun.ON, title = stringResource(title), sub = sub?.let { stringResource(it) }, warn = warn,
-        action = label, quiet = run == HearingRun.ON || standing == Standing.UNKNOWN,
+        action = label, quiet = run == HearingRun.ON || standing == Standing.UNKNOWN || standing == Standing.UNAVAILABLE,
         busy = standing == Standing.SENDING || standing == Standing.CHECKING || (busy && !allowed),
         onAction = { act() },
     )

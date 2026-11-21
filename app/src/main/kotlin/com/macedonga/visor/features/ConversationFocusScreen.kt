@@ -122,6 +122,7 @@ private fun FocusNow(hearing: HearingState, standing: Standing, busy: Boolean, m
     val paused = run.paused
     val title = when {
         standing == Standing.UNKNOWN -> R.string.settings_not_read
+        standing == Standing.UNAVAILABLE -> R.string.features_unavailable
         !allowed -> R.string.cf_now_locked
         run == HearingRun.ON -> R.string.cf_now_on
         paused -> R.string.cf_now_paused
@@ -140,7 +141,7 @@ private fun FocusNow(hearing: HearingState, standing: Standing, busy: Boolean, m
         else -> null to false
     }
     val (label, act) = when {
-        standing == Standing.UNKNOWN -> R.string.try_again to model.features::check
+        standing == Standing.UNKNOWN || standing == Standing.UNAVAILABLE -> R.string.try_again to model.features::check
         !allowed -> R.string.cf_allow_now to { model.features.set(feature, true) }
         run == HearingRun.ON -> R.string.cf_stop to model.hearing::stop
         paused -> R.string.cf_resume to model.hearing::resume
@@ -148,7 +149,7 @@ private fun FocusNow(hearing: HearingState, standing: Standing, busy: Boolean, m
     }
     NowCard(
         VisorIcons.Ear, lit = run == HearingRun.ON, title = stringResource(title), sub = sub, warn = warn,
-        action = label, quiet = run == HearingRun.ON || standing == Standing.UNKNOWN,
+        action = label, quiet = run == HearingRun.ON || standing == Standing.UNKNOWN || standing == Standing.UNAVAILABLE,
         busy = standing == Standing.SENDING || standing == Standing.CHECKING || (busy && !allowed),
         onAction = { act() },
     )
