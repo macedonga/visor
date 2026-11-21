@@ -130,7 +130,15 @@ class ToolkitSession @Inject constructor(
         if (!session.dam || session.ended.isCompleted) return
         val (wanted, keep) = opening.withLock { (navigationUsers > 0) to (backKeepers > 0) }
         val now = session.navigation
-        if (!wanted || now == keep) return
+        // Nobody listens any more: the capability goes, and the glasses' own focus comes back.
+        if (!wanted) {
+            if (now == null) return
+            runCatching { session.remove(Dat.INPUT) }
+                .onSuccess { session.navigation = null }
+                .onFailure { log.add("Toolkit: no release of the toolkit app's navigation: ${it.message}") }
+            return
+        }
+        if (now == keep) return
         runCatching {
             if (Dat.INPUT !in session.capabilities) session.add(Dat.INPUT)
             session.request(Dat.INPUT, Dat.inputStart(listOf(Dat.NAV_TOUCHPAD, Dat.NAV_BAND, Dat.NAV_BAND_DRAG), keep))
@@ -376,6 +384,12 @@ class ToolkitSession @Inject constructor(
                 delay(ADD_RETRY_MS)
             }
             throw KitException(ErrorCode.FAILED, "The toolkit app did not take the capability: ${last?.message}", reason = "toolkit_app")
+        }
+
+        /** Removes [capability] once nothing needs it, as the DAT's capabilities go. */
+        suspend fun remove(capability: Int) {
+            request(capability, null, Dat.removeCapability(capability))
+            capabilities -= capability
         }
 
         suspend fun request(capability: Int, payload: ByteArray): Dat.Response = request(capability, payload, null)
