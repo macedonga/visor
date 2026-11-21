@@ -12,7 +12,7 @@ import java.nio.ByteBuffer
 data class GlassesContact(
     val id: String,
     val name: String,
-    // Each number as the Meta app writes it: type code, country code, label, number.
+    // Each number as the Meta app writes it: type code, country code, number, label.
     val numbers: List<Number> = emptyList(),
     val favorite: Boolean = false,
     val nicknames: List<String> = emptyList(),
@@ -25,14 +25,14 @@ const val TYPE_CONTACT = "contact"
 
 fun contactsNamespace(provider: String) = "contacts_$provider"
 
-/** One contact as a FlexBuffers map: name, phoneNumbers ("type,cc,label,number,extra" joined by ";"), ... */
+/** One contact as a FlexBuffers map: name, phoneNumbers ("type,cc,number,,label" joined by ";"), ... */
 fun encodeContact(c: GlassesContact): ByteArray {
     val b = FlexBuffersBuilder(ByteBuffer.allocate(512), FlexBuffersBuilder.BUILDER_FLAG_SHARE_KEYS)
     val start = b.startMap()
     b.putString("name", c.name)
     b.putString("nicknames", c.nicknames.joinToString(";") { csv(it) })
     b.putString("relationship", "")
-    b.putString("phoneNumbers", c.numbers.joinToString(";") { listOf(it.type.toString(), it.countryCode, csv(it.label), it.number, "").joinToString(",") })
+    b.putString("phoneNumbers", c.numbers.joinToString(";") { listOf(it.type.toString(), it.countryCode, it.number, "", csv(it.label)).joinToString(",") })
     b.putInt("contactType", 0)
     b.putBoolean("isFavorite", c.favorite)
     b.putString("profilePictureUri", "")
