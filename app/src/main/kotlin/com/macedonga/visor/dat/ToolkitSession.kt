@@ -73,6 +73,8 @@ class ToolkitSession @Inject constructor(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val opening = Mutex()
+    // One navigation change at a time, so a release in flight cannot undo a start that came after it.
+    private val steering = Mutex()
     private var live: Live? = null
     private var closing: Job? = null
 
@@ -126,19 +128,19 @@ class ToolkitSession @Inject constructor(
     }
 
     // Gives [session] the input capability while someone listens, with back kept as the listeners want it.
-    private suspend fun navigate(session: Live) {
-        if (!session.dam || session.ended.isCompleted) return
+    private suspend fun navigate(session: Live): Unit = steering.withLock {
+        if (!session.dam || session.ended.isCompleted) return@withLock
         val (wanted, keep) = opening.withLock { (navigationUsers > 0) to (backKeepers > 0) }
         val now = session.navigation
-        // Nobody listens any more: the capability goes, and the glasses' own focus comes back.
+        // Nobody listens any more: the input capability goes, so the glasses keep their gestures.
         if (!wanted) {
-            if (now == null) return
+            if (now == null) return@withLock
             runCatching { session.remove(Dat.INPUT) }
                 .onSuccess { session.navigation = null }
-                .onFailure { log.add("Toolkit: no release of the toolkit app's navigation: ${it.message}") }
-            return
+                .onFailure { if (!session.ended.isCompleted) log.add("Toolkit: no release of the toolkit app's navigation: ${it.message}") }
+            return@withLock
         }
-        if (now == keep) return
+        if (now == keep) return@withLock
         runCatching {
             if (Dat.INPUT !in session.capabilities) session.add(Dat.INPUT)
             session.request(Dat.INPUT, Dat.inputStart(listOf(Dat.NAV_TOUCHPAD, Dat.NAV_BAND, Dat.NAV_BAND_DRAG), keep))
@@ -386,7 +388,7 @@ class ToolkitSession @Inject constructor(
             throw KitException(ErrorCode.FAILED, "The toolkit app did not take the capability: ${last?.message}", reason = "toolkit_app")
         }
 
-        /** Removes [capability] once nothing needs it, as the DAT's capabilities go. */
+        /** Removes [capability] once nothing uses it. */
         suspend fun remove(capability: Int) {
             request(capability, null, Dat.removeCapability(capability))
             capabilities -= capability
