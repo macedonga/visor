@@ -66,11 +66,14 @@ class Receipt(val signature: ByteArray, val bodyJson: ByteArray) {
 }
 
 /** IdentityResponse {1: certificate, 2: serial, 3: registration challenge, 4: DRK present, 5: secondary certificate}. */
-class DeviceIdentity(val certDer: ByteArray, val serial: String, val secondaryCert: ByteArray) {
+class DeviceIdentity(val certDer: ByteArray, val serial: String, val registration: ByteArray, val secondaryCert: ByteArray) {
     companion object {
         fun decode(data: ByteArray): DeviceIdentity {
             val fields = Wire.parse(data)
-            return DeviceIdentity(certDer = fields.bytes(1), serial = String(fields.bytes(2), Charsets.US_ASCII), secondaryCert = fields.bytes(5))
+            return DeviceIdentity(
+                certDer = fields.bytes(1), serial = String(fields.bytes(2), Charsets.US_ASCII), registration = fields.bytes(3),
+                secondaryCert = fields.bytes(5),
+            )
         }
     }
 }
@@ -234,6 +237,10 @@ internal class ProvisioningFlow(
         onStep(ProvisionStep.IDENTITY)
         send(IdentityMsgType.IDENTITY_REQUEST)
         val identity = DeviceIdentity.decode(await(IdentityMsgType.IDENTITY_RESPONSE))
+        // Meta's pair_request needs the certificate; glasses Meta never registered may send only field 3 (#118).
+        if (identity.certDer.isEmpty()) {
+            throw ProvisioningError("the glasses sent no device certificate, and a registration package of ${identity.registration.size} bytes")
+        }
 
         onStep(ProvisionStep.SKIP_CHALLENGE)
         send(IdentityMsgType.SKIP_CHALLENGE)
