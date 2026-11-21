@@ -59,7 +59,7 @@ data class ConfigState(
     val boot: String? = null,
     val busy: ConfigBusy? = null,
     val note: ConfigNote? = null,
-    // The glasses answered svc7006 with 0xC001: there is no bug report to read the configuration from.
+    // svc7006 refused and nothing was ever read: no bug report to read the configuration from.
     val unserved: Boolean = false,
 )
 
@@ -96,7 +96,7 @@ class GlassesConfig(
         scope.launch {
             connection.errors.collect { e ->
                 if (e.serviceId != BUG_REPORTER || e.errorId != NOT_SERVED) return@collect
-                _state.update { it.copy(unserved = true) }
+                _state.update { if (it.params.isEmpty()) it.copy(unserved = true) else it }
                 waiting?.complete(false)
             }
         }

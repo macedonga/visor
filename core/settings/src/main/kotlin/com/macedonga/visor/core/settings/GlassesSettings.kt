@@ -76,7 +76,7 @@ data class SettingsState(
     val product: Int? = null,
     // The serial of the pair these are, so a reader never takes them for another's.
     val pair: String? = null,
-    // The glasses answered RLDrive with 0xC001: nothing to read or write there, for this pair until the app restarts.
+    // RLDrive refused before any read: no store for this pair until the app restarts.
     val unserved: Boolean = false,
 )
 
@@ -178,8 +178,11 @@ class GlassesSettings(private val connection: GlassesConnection, drive: RlDriveR
         scope.launch {
             connection.errors.collect { e ->
                 if (e.serviceId != SVC_RLDRIVE || e.errorId != NOT_SERVED) return@collect
-                if (!_state.value.unserved) say("These glasses keep no settings store Visor can read (service $SVC_RLDRIVE refused)")
-                _state.update { it.copy(unserved = true, reading = false) }
+                // Only a pair never read is taken to have no store; a one-off refusal ends just that read.
+                if (_state.value.readAt == null && !_state.value.unserved) {
+                    say("These glasses keep no settings store Visor can read (service $SVC_RLDRIVE refused)")
+                    _state.update { it.copy(unserved = true, reading = false, stored = it.stored + it.pending, pending = emptyMap()) }
+                } else _state.update { it.copy(reading = false) }
                 sync?.let { it.refused = true; it.done.complete(Unit) }
             }
         }
