@@ -496,6 +496,8 @@
     <string name="tile_refused">Refused</string>
     <string name="settings_notifications">Notifications on the glasses</string>
     <string name="settings_notifications_sub">The phone\'s notifications, sent to the glasses. Off, Visor sends them none.</string>
+    <string name="settings_notifications_locked">Only while the phone is locked</string>
+    <string name="settings_notifications_locked_sub">While you use the phone, its notifications stay on it.</string>
 
     <string name="topic_meta_ai">Meta AI</string>
     <string name="topic_language">Language and voice</string>

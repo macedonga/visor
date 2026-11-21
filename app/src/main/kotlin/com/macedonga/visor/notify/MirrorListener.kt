@@ -1,6 +1,7 @@
 package com.macedonga.visor.notify
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.Person
@@ -11,6 +12,7 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import android.provider.Telephony
 import android.service.notification.NotificationListenerService
@@ -144,6 +146,7 @@ class MirrorListener : NotificationListenerService(), Messaging {
         if (chatProvider == null && !display) return
         apps.saw(sbn.packageName)
         if (!choice.enabled.value || !ready() || sbn.packageName in apps.muted.value) return
+        if (choice.onlyLocked.value && !phoneLocked()) return
         // Do not disturb holds a notification back from the glasses as it does on the phone, with the
         // person's own exceptions: the system decides it for each notification.
         val r = Ranking()
@@ -210,6 +213,14 @@ class MirrorListener : NotificationListenerService(), Messaging {
         val request = GlassesNotification.removal(sbn.key, provider, uuid)
         connection.submit { it.sendOnService(GlassesNotification.SVC, GlassesNotification.MT_REMOVE, request) }
     }
+
+    /**
+     * The lock screen up, or the screen off before it locks. Not "screen off" alone: a notification
+     * often wakes the screen on its own, and the phone is still locked then.
+     */
+    private fun phoneLocked(): Boolean =
+        getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true ||
+            getSystemService(PowerManager::class.java)?.isInteractive == false
 
     /** The glasses listening, thinking or answering, Visor's model at work, or a Live AI session. */
     private fun talking(): Boolean =

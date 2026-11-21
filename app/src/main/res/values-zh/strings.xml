@@ -484,6 +484,8 @@
     <string name="tile_refused">已拒绝</string>
     <string name="settings_notifications">眼镜上的通知</string>
     <string name="settings_notifications_sub">将手机的通知发送到眼镜。关闭后，Visor 不再发送任何通知。</string>
+    <string name="settings_notifications_locked">仅在手机锁定时</string>
+    <string name="settings_notifications_locked_sub">你使用手机时，通知只留在手机上。</string>
     <string name="topic_meta_ai">Meta AI</string>
     <string name="topic_language">语言与语音</string>
     <string name="topic_notifications">通知与通话</string>

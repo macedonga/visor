@@ -494,6 +494,8 @@
     <string name="tile_refused">Rifiutato</string>
     <string name="settings_notifications">Notifiche sugli occhiali</string>
     <string name="settings_notifications_sub">Le notifiche del telefono, mandate agli occhiali. Spento, Visor non ne manda nessuna.</string>
+    <string name="settings_notifications_locked">Solo con il telefono bloccato</string>
+    <string name="settings_notifications_locked_sub">Mentre usi il telefono, le sue notifiche restano lì.</string>
 
     <string name="topic_meta_ai">Meta AI</string>
     <string name="topic_language">Lingua e voce</string>
