@@ -47,3 +47,5 @@ include(":core:settings")
 include(":core:assistant")
 include(":core:design")
 
+include(":shared")
+

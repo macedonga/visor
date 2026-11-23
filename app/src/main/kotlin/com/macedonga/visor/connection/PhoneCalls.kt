@@ -3,6 +3,7 @@ package com.macedonga.visor.connection
 import android.Manifest
 import android.content.Context
 import android.provider.CallLog
+import com.macedonga.visor.core.protocol.PhoneOs
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -62,7 +63,7 @@ class PhoneCalls @Inject constructor(
                 val body = Wire.fieldBytes(1, requestId) +
                     Wire.fieldString(2, if (calls != null) json.toString() else "") +
                     Wire.fieldVarint(3, if (calls != null) SUCCESS else NO_PERMISSION) +
-                    Wire.fieldVarint(4, OS_ANDROID)
+                    Wire.fieldVarint(4, PhoneOs.ANDROID.phoneBookOs.toLong())
                 connection.send(reply, body, messageType = MT_SYNC_RESPONSE)
                 if (calls != null) requests.finish(id, "${calls.size} calls", failed = false, bytes = body.size.toLong())
                 else requests.finish(id, "call history not allowed", failed = true)
@@ -150,7 +151,6 @@ class PhoneCalls @Inject constructor(
         private const val MT_LOAD_CALL_LOG_RESPONSE = 12
         private const val SUCCESS = 0L
         private const val NO_PERMISSION = 1L
-        private const val OS_ANDROID = 1L
         private const val MAX_CALLS = 100
         private const val DEFAULT_RECENT = 15
     }

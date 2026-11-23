@@ -19,6 +19,9 @@ coroutines = "1.10.2"
 bouncycastle = "1.86"
 kotlinxSerialization = "1.11.0"
 
+# :core:connection only, compile only: Android ships org.json itself.
+orgJson = "20180813"
+
 # :core:settings only: the glasses' contact objects are FlexBuffers maps, as the Meta app writes them.
 flatbuffers = "25.2.10"
 
@@ -86,6 +89,7 @@ androidx-hilt-lifecycle-viewmodel-compose = { module = "androidx.hilt:hilt-lifec
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+org-json = { module = "org.json:json", version.ref = "orgJson" }
 flatbuffers-java = { module = "com.google.flatbuffers:flatbuffers-java", version.ref = "flatbuffers" }
 filament-android = { module = "com.google.android.filament:filament-android", version.ref = "filament" }
 gltfio-android = { module = "com.google.android.filament:gltfio-android", version.ref = "filament" }
@@ -122,6 +126,7 @@ pin-kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin
 android-application = { id = "com.android.application", version.ref = "androidGradlePlugin" }
 android-library = { id = "com.android.library", version.ref = "androidGradlePlugin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

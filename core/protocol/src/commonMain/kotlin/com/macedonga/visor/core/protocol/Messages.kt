@@ -1,0 +1,148 @@
+package com.macedonga.visor.core.protocol
+
+import kotlin.uuid.Uuid
+
+/** First handshake message: the initiator proposes ECDH parameters. */
+class RequestEncryption(
+    val publicKey: ByteArray,
+    val challenge: ByteArray,
+    val ellipticCurve: Int = 0,
+    val supportedParameters: Int,
+    val keyHint: List<ByteArray> = emptyList(),
+    val quirks: Int = 0,
+    val airshieldVersion: Int = 16,
+    /** Whether field 4 was on the wire. */
+    val hasSupportedParameters: Boolean = true,
+) {
+    fun encode(): ByteArray {
+        var parts = Wire.fieldBytes(1, publicKey)
+        parts += Wire.fieldBytes(2, challenge)
+        parts += Wire.fieldVarint(3, ellipticCurve.toLong())
+        parts += Wire.fieldVarint(4, supportedParameters.toLong())
+        for (hint in keyHint) {
+            parts += Wire.fieldBytes(5, hint)
+        }
+        parts += Wire.fieldVarintNonZero(6, quirks.toLong())
+        parts += Wire.fieldVarint(7, airshieldVersion.toLong())
+        return parts
+    }
+
+    companion object {
+        fun decode(data: ByteArray): RequestEncryption {
+            val f = Wire.parse(data)
+            return RequestEncryption(
+                publicKey = f.bytes(1),
+                challenge = f.bytes(2),
+                ellipticCurve = f.varint(3).toInt(),
+                supportedParameters = f.varint(4).toInt(),
+                keyHint = f.repeatedBytes(5),
+                quirks = f.varint(6).toInt(),
+                airshieldVersion = f.varint(7).toInt(),
+                hasSupportedParameters = f.has(4),
+            )
+        }
+    }
+}
+
+/** Second handshake message: the responder accepts and provides the seed and IV. */
+class EnableEncryption(
+    val publicKey: ByteArray,
+    val seed: ByteArray,
+    val iv: ByteArray,
+    /** The sender's preamble seq, unsigned 32-bit. */
+    val base: Long = 0,
+    val parameters: Int,
+    val quirks: Int = 0,
+    val phasedLinkSetupSupported: Int = 0,
+    val supportedLinkSetupServices: Long = 0,
+    val linkSwitchVersionSupported: Int = 0,
+    /** Whether field 5 was on the wire. */
+    val hasParameters: Boolean = true,
+) {
+    /** Fields 1 to 5 always; 6 to 9 only when non-zero. */
+    fun encode(): ByteArray {
+        var parts = Wire.fieldBytes(1, publicKey)
+        parts += Wire.fieldBytes(2, seed)
+        parts += Wire.fieldBytes(3, iv)
+        parts += Wire.fieldVarint(4, base)
+        parts += Wire.fieldVarint(5, parameters.toLong())
+        parts += Wire.fieldVarintNonZero(6, quirks.toLong())
+        parts += Wire.fieldVarintNonZero(7, phasedLinkSetupSupported.toLong())
+        parts += Wire.fieldVarintNonZero(8, supportedLinkSetupServices)
+        parts += Wire.fieldVarintNonZero(9, linkSwitchVersionSupported.toLong())
+        return parts
+    }
+
+    companion object {
+        fun decode(data: ByteArray): EnableEncryption {
+            val f = Wire.parse(data)
+            val hasParameters = f.has(5)
+            return EnableEncryption(
+                publicKey = f.bytes(1),
+                seed = f.bytes(2),
+                iv = f.bytes(3),
+                base = f.varint(4),
+                // Left out, the glasses mean 31: Multikey on.
+                parameters = if (hasParameters) f.varint(5).toInt() else 31,
+                quirks = f.varint(6).toInt(),
+                phasedLinkSetupSupported = f.varint(7).toInt(),
+                supportedLinkSetupServices = f.varint(8),
+                linkSwitchVersionSupported = f.varint(9).toInt(),
+                hasParameters = hasParameters,
+            )
+        }
+    }
+}
+
+/**
+ * Final handshake message: {1 state, 2 the sender's stream uuid, 3 the sender's link uuid}. [MAIN] makes the link the
+ * one in use; [READY] keeps it beside the main link for a switch. The glasses file the link under the two sides' link
+ * uuids, and a SwitchTransportLink names it by the sender's.
+ */
+object EndLinkSetup {
+    const val READY = 0
+    const val MAIN = 1
+
+    fun encode(state: Int, streamUuid: ByteArray, linkUuid: ByteArray): ByteArray {
+        // The glasses drop the channel silently on a non-v4 uuid.
+        require(LinkUuid.isValid(streamUuid) && LinkUuid.isValid(linkUuid)) { "EndLinkSetup uuids must be RFC 4122 v4" }
+        return Wire.fieldVarint(1, state.toLong()) + Wire.fieldBytes(2, streamUuid) + Wire.fieldBytes(3, linkUuid)
+    }
+
+    /** The link uuid in a peer's EndLinkSetup, which its switch messages name this link by. */
+    fun linkUuid(payload: ByteArray): ByteArray? = runCatching { Wire.parse(payload).bytes(3) }.getOrNull()?.takeIf { it.size == 16 }
+}
+
+/**
+ * svc10 switch messages, {1 target}, the link uuid the sender gave the link. SwitchLink moves only the peer's
+ * receiving side; SwitchTransportLink moves both: the glasses read the named link, flush the old one, answer with a
+ * switch message of their own on the old link and send on the new one from then on.
+ */
+object LinkSwitch {
+    const val SERVICE = 10
+    const val SWITCH_LINK = 4117
+    const val SWITCH_TRANSPORT_LINK = 4128
+
+    /** GET_MANIFEST_VERSION, which the glasses always answer: a cheap sign of life. */
+    const val GET_MANIFEST_VERSION = 4144
+
+    fun encode(target: ByteArray): ByteArray = Wire.fieldBytes(1, target)
+
+    fun target(payload: ByteArray): ByteArray? = runCatching { Wire.parse(payload).bytes(1) }.getOrNull()
+}
+
+/** The 16-byte UUIDs EndLinkSetup carries, and the firmware check they have to pass. */
+object LinkUuid {
+
+    /** 16 bytes from [Uuid.random], which is version 4 and variant 10xx by construction. */
+    fun random(): ByteArray = Uuid.random().toByteArray()
+
+    fun isValid(bytes: ByteArray): Boolean =
+        bytes.size == 16 &&
+            (bytes[6].toInt() and 0xF0) == 0x40 &&
+            (bytes[8].toInt() and 0xC0) == 0x80
+}
+
+/** 16 bytes as a dashed uuid; any other length as hex. */
+fun uuidText(raw: ByteArray): String =
+    if (raw.size == 16) Uuid.fromByteArray(raw).toString() else raw.toHexString()

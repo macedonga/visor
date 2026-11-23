@@ -1,12 +1,14 @@
 plugins {
-    id("visor.android.library")
+    id("visor.kmp.library")
 }
 
-android {
-    namespace = "com.macedonga.visor.core.connection"
-}
-
-dependencies {
-    // api rather than implementation: this module's public API is made of the layers below it.
-    api(project(":core:identity"))
+// GlassesConnection, its state and the services it reads first.
+kotlin {
+    sourceSets.commonMain.dependencies {
+        // api rather than implementation: this module's public API is made of the layers below it.
+        api(project(":core:identity"))
+    }
+    sourceSets.jvmMain.dependencies {
+        compileOnly(libs.org.json)
+    }
 }

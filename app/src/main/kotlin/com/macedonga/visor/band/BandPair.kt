@@ -6,6 +6,7 @@ import com.macedonga.visor.core.identity.keyHint
 import com.macedonga.visor.core.identity.rawPublicKey
 import com.macedonga.visor.core.protocol.BtPeer
 import com.macedonga.visor.core.protocol.CamControl
+import com.macedonga.visor.core.protocol.LinkUuid
 import com.macedonga.visor.core.session.DataXError
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.session.ServiceData
@@ -14,7 +15,6 @@ import com.macedonga.visor.dat.Manifests
 import com.macedonga.visor.kit.KitException
 import com.macedonga.visor.log.EventLog
 import java.util.Locale
-import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -210,7 +210,7 @@ class BandPair @Inject constructor(
     private suspend fun steps(display: BtPeer.PairingInfo, hint: ByteArray, fromDisplay: Channel<SessionEvent>, fromBand: Channel<SessionEvent>) {
         if (!link.startPairing()) throw Stop(Reason.NO_ANSWER, "band", unreached = true)
         var band = bandInfo(fromBand)
-        val session = UUID.randomUUID()
+        val session = LinkUuid.random()
         val known = band.lists(display.identity) && display.lists(band.identity)
         toDisplay(BtPeer.TOPOLOGY_EVENT, BtPeer.topologyEvent(band.identity, hint, session, BtPeer.TOPOLOGY_START, if (known) BtPeer.TOPOLOGY_CONNECT else BtPeer.TOPOLOGY_PAIR_AND_CONNECT))
         if (known) return connect(band, hint, session, fromDisplay)
@@ -249,7 +249,7 @@ class BandPair @Inject constructor(
     }
 
     /** CONNECT for a band the Display has bonded: the phone lets go of it first. */
-    private suspend fun connect(band: BtPeer.PairingInfo, hint: ByteArray, session: UUID, fromDisplay: Channel<SessionEvent>) {
+    private suspend fun connect(band: BtPeer.PairingInfo, hint: ByteArray, session: ByteArray, fromDisplay: Channel<SessionEvent>) {
         _status.value = Status.Running(Step.CONNECTING)
         log.add("Band pairing: the glasses and the band know each other, connecting")
         link.release()

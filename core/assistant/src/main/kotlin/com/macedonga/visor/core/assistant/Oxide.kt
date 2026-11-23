@@ -1,6 +1,7 @@
 package com.macedonga.visor.core.assistant
 
 import com.macedonga.visor.core.connection.SnApp
+import com.macedonga.visor.core.protocol.AssistantPhone
 import com.macedonga.visor.core.protocol.Thrift
 import com.macedonga.visor.core.protocol.ThriftWriter
 import java.util.UUID
@@ -9,7 +10,7 @@ import java.util.zip.Inflater
 /** svc15, Oxide: the assistant. */
 const val SVC_ASSISTANT = 15
 
-internal const val MT_PAIRED_DEVICE_ANDROID = 11
+internal const val MT_PAIRED_DEVICE_ANDROID = AssistantPhone.PAIRED_DEVICE_ANDROID
 internal const val MT_INIT_MESSAGE_REQUEST = 1000
 internal const val MT_INIT_MESSAGE_RESPONSE = 1001
 // A message too big for one frame: a header {1 type, 2 total size, 3 id}, then buffers {1 bytes, 2 id, 3 last}.
