@@ -4,6 +4,7 @@ import android.content.Context
 import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.GlassesConnection
 import com.macedonga.visor.core.connection.isDisplayBuild
+import com.macedonga.visor.core.protocol.PhoneOs
 import com.macedonga.visor.core.protocol.Wire
 import com.macedonga.visor.core.session.DataXConnection
 import com.macedonga.visor.core.session.DataXMessage
@@ -48,7 +49,7 @@ class Navigation @Inject constructor(
         owner.launch {
             glasses.get().state.map { it.link == LinkState.READY && isDisplayBuild(it.info?.build) }.distinctUntilChanged().collect { ready ->
                 if (ready) {
-                    glasses.get().submit { it.sendOnService(SVC, MT_INIT_REQUEST, Wire.fieldVarint(1, PLATFORM_ANDROID)) }
+                    glasses.get().submit { it.sendOnService(SVC, MT_INIT_REQUEST, Wire.fieldVarint(1, PhoneOs.ANDROID.companionOs.toLong())) }
                 } else {
                     endSession()
                 }
@@ -281,7 +282,6 @@ class Navigation @Inject constructor(
         const val SVC = 42
         private const val MT_INIT_REQUEST = 0
         private const val MT_NAV_MESSAGE = 2
-        private const val PLATFORM_ANDROID = 1L
 
         private const val MSG_ROUTE_REQUEST = 0
         private const val MSG_ROUTE_RESPONSE = 1

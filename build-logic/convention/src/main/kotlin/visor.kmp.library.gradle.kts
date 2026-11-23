@@ -6,6 +6,9 @@ plugins {
 
 // Code both apps share: the JVM target for the Android app, the iOS targets for the iPhone app and its simulator.
 kotlin {
+    // Ecdh's key type differs per platform.
+    compilerOptions.freeCompilerArgs.add("-Xexpect-actual-classes")
+
     jvm {
         // The phone runs this code, so only the JDK 17 API, whichever JDK runs Gradle.
         compilerOptions {

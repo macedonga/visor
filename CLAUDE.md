@@ -6,8 +6,8 @@ the frame style and language packs. Works on real glasses as of 2026-10-05.
 
 ## Modules
 
-- `core/protocol`: wire format, ciphers, handshake messages. Kotlin Multiplatform: the wire format in `commonMain`,
-  the ciphers in `jvmMain` until iOS has its own.
+- `core/protocol`: wire format, ciphers, handshake messages, `PhoneOs`. Kotlin Multiplatform: all in `commonMain`, on
+  SHA-256, HMAC, AES-CBC and P-256 from JCA (`jvmMain`) or CommonCrypto and Security (`iosMain`).
 - `core/transport`: LE L2CAP, RFCOMM and TCP byte pipes, and the wire log.
 - `core/session`: the link: handshake, channel mux, reconnect ladder.
 - `core/identity`: owner key store, svc36 trust, Meta login (`token/`), change owner (`provision/`).

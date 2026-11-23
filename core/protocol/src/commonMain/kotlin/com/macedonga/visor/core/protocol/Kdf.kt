@@ -1,14 +1,10 @@
 package com.macedonga.visor.core.protocol
 
-import java.security.MessageDigest
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
-
 /** AirShield key schedule. */
 object Kdf {
 
-    private val AIRSHIELD_INFO: ByteArray = "AirShield".toByteArray(Charsets.US_ASCII)
-    private val HMAC_DERIVE_LABEL: ByteArray = "hmac_derive".toByteArray(Charsets.US_ASCII)
+    private val AIRSHIELD_INFO: ByteArray = "AirShield".encodeToByteArray()
+    private val HMAC_DERIVE_LABEL: ByteArray = "hmac_derive".encodeToByteArray()
 
     // QCS7 info: "AirShield" in a 128-byte label, then u32 32 and u32 256 (libairshield HKDF::getQcs7HkdfInfo).
     private val QCS7_INFO: ByteArray = AIRSHIELD_INFO.copyOf(128) + byteArrayOf(32, 0, 0, 0, 0, 1, 0, 0)
@@ -39,18 +35,6 @@ object Kdf {
         val hmacSalt = sha256(seed, nonce, HMAC_DERIVE_LABEL)
         val hmacKey = hkdfExpand(hkdfExtract(hmacSalt, ecdhSecret), info)
         return SessionKeys(aesKey = aesKey, hmacKey = hmacKey, iv = preambleIv)
-    }
-
-    private fun sha256(vararg parts: ByteArray): ByteArray {
-        val digest = MessageDigest.getInstance("SHA-256")
-        parts.forEach(digest::update)
-        return digest.digest()
-    }
-
-    private fun hmacSha256(key: ByteArray, data: ByteArray): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(key, "HmacSHA256"))
-        return mac.doFinal(data)
     }
 
     private fun hkdfExtract(salt: ByteArray, ikm: ByteArray): ByteArray = hmacSha256(salt, ikm)

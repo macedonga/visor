@@ -1,13 +1,5 @@
 package com.macedonga.visor.core.protocol
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.security.MessageDigest
-import javax.crypto.Cipher
-import javax.crypto.Mac
-import javax.crypto.spec.IvParameterSpec
-import javax.crypto.spec.SecretKeySpec
-
 /** Raised when a frame's MAC or length does not verify. */
 class AuthenticationException(message: String) : Exception(message)
 
@@ -45,18 +37,8 @@ object AirShieldCipher {
         return data.copyOfRange(0, data.size - padLen)
     }
 
-    internal fun aesCbc(key: ByteArray, iv: ByteArray, data: ByteArray, encrypt: Boolean): ByteArray {
-        val cipher = Cipher.getInstance("AES/CBC/NoPadding")
-        cipher.init(
-            if (encrypt) Cipher.ENCRYPT_MODE else Cipher.DECRYPT_MODE,
-            SecretKeySpec(key, "AES"),
-            IvParameterSpec(iv),
-        )
-        return cipher.doFinal(data)
-    }
-
     internal fun le32(value: Int): ByteArray =
-        ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array()
+        byteArrayOf(value.toByte(), (value shr 8).toByte(), (value shr 16).toByte(), (value shr 24).toByte())
 }
 
 /** One direction's crypto on AirShield DATA frame bodies: [seal] for tx, [unseal] for rx. */
@@ -82,13 +64,11 @@ class FrameCrypto(keys: SessionKeys, initSeq: Int = 0, quirks: Int = 0) {
         // MAC input: prefix (LE u32), seq (LE u32), blockCount, ciphertext.
         val macInput = macPrefix + AirShieldCipher.le32(seq) +
             byteArrayOf(blockCount.toByte()) + ciphertext
-        val hmac = Mac.getInstance("HmacSHA256")
-        hmac.init(SecretKeySpec(hmacKey, "HmacSHA256"))
-        return hmac.doFinal(macInput).copyOf(AirShieldCipher.TAG_SIZE)
+        return hmacSha256(hmacKey, macInput).copyOf(AirShieldCipher.TAG_SIZE)
     }
 
     fun seal(plaintext: ByteArray): ByteArray {
-        val ciphertext = AirShieldCipher.aesCbc(aesKey, iv, AirShieldCipher.pad(plaintext), encrypt = true)
+        val ciphertext = aesCbc(aesKey, iv, AirShieldCipher.pad(plaintext), encrypt = true)
         val blockCount = (ciphertext.size / AirShieldCipher.BLOCK) - 1
         require(blockCount in 0..0xFF) { "plaintext too large for a single AirShield frame" }
         val tag = mac(blockCount, ciphertext)
@@ -109,11 +89,10 @@ class FrameCrypto(keys: SessionKeys, initSeq: Int = 0, quirks: Int = 0) {
         if (ciphertext.size != (blockCount + 1) * AirShieldCipher.BLOCK) {
             throw AuthenticationException("ciphertext length does not match the block count")
         }
-        // Constant-time compare.
-        if (!MessageDigest.isEqual(tag, mac(blockCount, ciphertext))) {
+        if (!constantTimeEquals(tag, mac(blockCount, ciphertext))) {
             throw AuthenticationException("MAC verification failed")
         }
-        val plaintext = AirShieldCipher.aesCbc(aesKey, iv, ciphertext, encrypt = false)
+        val plaintext = aesCbc(aesKey, iv, ciphertext, encrypt = false)
         iv = ciphertext.copyOfRange(ciphertext.size - AirShieldCipher.BLOCK, ciphertext.size)
         seq += 1
         return plaintext

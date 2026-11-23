@@ -14,8 +14,9 @@ import java.security.spec.ECPrivateKeySpec
 import java.security.spec.ECPublicKeySpec
 import javax.crypto.KeyAgreement
 
-/** ECDH helpers on secp256r1, NIST P-256. */
-object Ecdh {
+actual typealias EcPrivateKey = PrivateKey
+
+actual object Ecdh {
 
     private const val COORDINATE_BYTES = 32
 
@@ -25,8 +26,7 @@ object Ecdh {
         parameters.getParameterSpec(ECParameterSpec::class.java)
     }
 
-    /** Generate an ephemeral secp256r1 key pair. */
-    fun generateEphemeral(): EphemeralKeyPair {
+    actual fun generateEphemeral(): EphemeralKeyPair {
         val generator = KeyPairGenerator.getInstance("EC")
         generator.initialize(ECGenParameterSpec(EC_CURVE))
         val pair = generator.generateKeyPair()
@@ -59,8 +59,7 @@ object Ecdh {
         return fixedWidth(point.affineX) + fixedWidth(point.affineY)
     }
 
-    /** ECDH key agreement to a 32-byte shared secret, the raw X coordinate of the shared point. */
-    fun computeSharedSecret(privateKey: PrivateKey, peerPublic64: ByteArray): ByteArray {
+    actual fun computeSharedSecret(privateKey: EcPrivateKey, peerPublic64: ByteArray): ByteArray {
         val peer = publicKeyFromRaw(peerPublic64)
         val agreement = KeyAgreement.getInstance("ECDH")
         agreement.init(privateKey)
@@ -78,6 +77,3 @@ object Ecdh {
         }
     }
 }
-
-/** An ephemeral key pair with its public half already in wire form. */
-class EphemeralKeyPair(val privateKey: PrivateKey, val publicKey64: ByteArray)
