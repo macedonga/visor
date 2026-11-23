@@ -29,6 +29,8 @@ targets:
         FRAMEWORK_SEARCH_PATHS: $(SRCROOT)/../shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)
         OTHER_LDFLAGS: $(inherited) -framework VisorCore
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        # VisorCore has no Intel simulator slice.
+        EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
     preBuildScripts:
       - name: VisorCore
         basedOnDependencyAnalysis: false
