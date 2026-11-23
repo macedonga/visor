@@ -6,7 +6,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-internal actual fun sha256(vararg parts: ByteArray): ByteArray {
+actual fun sha256(vararg parts: ByteArray): ByteArray {
     val digest = MessageDigest.getInstance("SHA-256")
     parts.forEach(digest::update)
     return digest.digest()

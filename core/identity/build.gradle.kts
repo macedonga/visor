@@ -1,7 +1,7 @@
 import java.util.Properties
 
 plugins {
-    id("visor.android.library")
+    id("visor.kmp.library")
     alias(libs.plugins.kotlin.serialization)
 }
 
@@ -13,24 +13,33 @@ val localProperties = providers.fileContents(rootProject.layout.projectDirectory
 fun metaToken(name: String): String =
     providers.environmentVariable(name).orNull ?: localProperties?.getProperty(name).orEmpty()
 
-android {
-    namespace = "com.macedonga.visor.core.identity"
-
-    defaultConfig {
-        buildConfigField("String", "META_HW_TOKEN", "\"${metaToken("VISOR_META_HW_TOKEN")}\"")
-        buildConfigField("String", "META_AR_TOKEN", "\"${metaToken("VISOR_META_AR_TOKEN")}\"")
-        buildConfigField("String", "META_FRL_TOKEN", "\"${metaToken("VISOR_META_FRL_TOKEN")}\"")
-    }
-
-    buildFeatures {
-        buildConfig = true
+// The tokens as a Kotlin object, BuildConfig as Android named it, so both platforms compile them.
+val buildConfig = tasks.register("buildConfig") {
+    val tokens = listOf("META_HW_TOKEN", "META_AR_TOKEN", "META_FRL_TOKEN").associateWith { metaToken("VISOR_$it") }
+    val out = layout.buildDirectory.dir("generated/buildConfig")
+    inputs.property("tokens", tokens)
+    outputs.dir(out)
+    doLast {
+        val file = out.get().file("com/macedonga/visor/core/identity/BuildConfig.kt").asFile
+        file.parentFile.mkdirs()
+        val fields = tokens.entries.joinToString("\n") { (name, value) ->
+            val escaped = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$")
+            "    const val $name: String = \"$escaped\""
+        }
+        file.writeText("package com.macedonga.visor.core.identity\n\nobject BuildConfig {\n$fields\n}\n")
     }
 }
 
-dependencies {
-    // api: this module's API exposes session types.
-    api(project(":core:session"))
-
-    implementation(libs.bouncycastle)
-    implementation(libs.kotlinx.serialization.json)
+kotlin {
+    sourceSets.commonMain {
+        kotlin.srcDir(buildConfig)
+        dependencies {
+            // api: this module's API exposes session types.
+            api(project(":core:session"))
+            implementation(libs.kotlinx.serialization.json)
+        }
+    }
+    sourceSets.jvmMain.dependencies {
+        implementation(libs.bouncycastle)
+    }
 }

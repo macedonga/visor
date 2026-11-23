@@ -1,7 +1,7 @@
 package com.macedonga.visor.core.protocol
 
 /** Raised when a frame's MAC or length does not verify. */
-class AuthenticationException(message: String) : Exception(message)
+class AuthenticationException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** AirShield per-frame cipher: AES-256-CBC plus HMAC-SHA256, encrypt-then-MAC. */
 object AirShieldCipher {

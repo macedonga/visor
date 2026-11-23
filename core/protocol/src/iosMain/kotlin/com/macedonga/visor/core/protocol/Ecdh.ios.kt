@@ -28,6 +28,7 @@ import platform.CoreFoundation.kCFTypeDictionaryValueCallBacks
 import platform.Security.SecKeyCopyExternalRepresentation
 import platform.Security.SecKeyCopyKeyExchangeResult
 import platform.Security.SecKeyCreateRandomKey
+import platform.Security.SecKeyCreateSignature
 import platform.Security.SecKeyCreateWithData
 import platform.Security.SecKeyRef
 import platform.Security.kSecAttrKeyClass
@@ -37,6 +38,7 @@ import platform.Security.kSecAttrKeySizeInBits
 import platform.Security.kSecAttrKeyType
 import platform.Security.kSecAttrKeyTypeECSECPrimeRandom
 import platform.Security.kSecKeyAlgorithmECDHKeyExchangeStandard
+import platform.Security.kSecKeyAlgorithmECDSASignatureDigestX962SHA256
 import platform.posix.memcpy
 
 actual interface EcPrivateKey
@@ -81,44 +83,61 @@ actual object Ecdh {
             CFRelease(mine)
         }
     }
+}
 
-    private fun key(x963: ByteArray, keyClass: CFStringRef?): SecKeyRef {
-        val attributes = attributes(keyClass)
-        val data = x963.usePinned { CFDataCreate(null, it.addressOf(0).reinterpret(), x963.size.convert()) }
+/** ECDSA over a 32-byte digest with the key [scalar], whose public half is [public64]: a DER X9.62 signature. */
+fun ecdsaSignDigest(scalar: ByteArray, public64: ByteArray, digest: ByteArray): ByteArray {
+    val key = key(byteArrayOf(4) + public64 + scalar, kSecAttrKeyClassPrivate)
+    try {
+        val data = digest.usePinned { CFDataCreate(null, it.addressOf(0).reinterpret(), digest.size.convert()) }
         try {
-            return checkNotNull(SecKeyCreateWithData(data, attributes, null)) { "not a P-256 key" }
+            return checkNotNull(SecKeyCreateSignature(key, kSecKeyAlgorithmECDSASignatureDigestX962SHA256, data, null)) {
+                "could not sign"
+            }.consume()
         } finally {
             CFRelease(data)
-            CFRelease(attributes)
         }
+    } finally {
+        CFRelease(key)
     }
+}
 
-    /** A P-256 key's attributes; [sized] false gives an empty dictionary, for the exchange's parameters. */
-    private fun attributes(keyClass: CFStringRef?, sized: Boolean = true): CFMutableDictionaryRef {
-        val dictionary = checkNotNull(
-            CFDictionaryCreateMutable(null, 3.convert(), kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr),
-        )
-        if (!sized) return dictionary
-        CFDictionarySetValue(dictionary, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom)
-        if (keyClass != null) CFDictionarySetValue(dictionary, kSecAttrKeyClass, keyClass)
-        val bits = memScoped {
-            val value = alloc<IntVar>()
-            value.value = 256
-            CFNumberCreate(null, kCFNumberIntType, value.ptr)
-        }
-        CFDictionarySetValue(dictionary, kSecAttrKeySizeInBits, bits)
-        CFRelease(bits)
-        return dictionary
+private fun key(x963: ByteArray, keyClass: CFStringRef?): SecKeyRef {
+    val attributes = attributes(keyClass)
+    val data = x963.usePinned { CFDataCreate(null, it.addressOf(0).reinterpret(), x963.size.convert()) }
+    try {
+        return checkNotNull(SecKeyCreateWithData(data, attributes, null)) { "not a P-256 key" }
+    } finally {
+        CFRelease(data)
+        CFRelease(attributes)
     }
+}
 
-    /** The bytes, and the CFData released. */
-    private fun CFDataRef.consume(): ByteArray {
-        try {
-            val out = ByteArray(CFDataGetLength(this).toInt())
-            if (out.isNotEmpty()) out.usePinned { memcpy(it.addressOf(0), CFDataGetBytePtr(this), out.size.convert()) }
-            return out
-        } finally {
-            CFRelease(this)
-        }
+/** A P-256 key's attributes; [sized] false gives an empty dictionary, for the exchange's parameters. */
+private fun attributes(keyClass: CFStringRef?, sized: Boolean = true): CFMutableDictionaryRef {
+    val dictionary = checkNotNull(
+        CFDictionaryCreateMutable(null, 3.convert(), kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr),
+    )
+    if (!sized) return dictionary
+    CFDictionarySetValue(dictionary, kSecAttrKeyType, kSecAttrKeyTypeECSECPrimeRandom)
+    if (keyClass != null) CFDictionarySetValue(dictionary, kSecAttrKeyClass, keyClass)
+    val bits = memScoped {
+        val value = alloc<IntVar>()
+        value.value = 256
+        CFNumberCreate(null, kCFNumberIntType, value.ptr)
+    }
+    CFDictionarySetValue(dictionary, kSecAttrKeySizeInBits, bits)
+    CFRelease(bits)
+    return dictionary
+}
+
+/** The bytes, and the CFData released. */
+private fun CFDataRef.consume(): ByteArray {
+    try {
+        val out = ByteArray(CFDataGetLength(this).toInt())
+        if (out.isNotEmpty()) out.usePinned { memcpy(it.addressOf(0), CFDataGetBytePtr(this), out.size.convert()) }
+        return out
+    } finally {
+        CFRelease(this)
     }
 }

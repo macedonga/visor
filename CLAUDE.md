@@ -8,17 +8,20 @@ the frame style and language packs. Works on real glasses as of 2026-10-05.
 
 - `core/protocol`: wire format, ciphers, handshake messages, `PhoneOs`. Kotlin Multiplatform: all in `commonMain`, on
   SHA-256, HMAC, AES-CBC and P-256 from JCA (`jvmMain`) or CommonCrypto and Security (`iosMain`).
-- `core/transport`: LE L2CAP, RFCOMM and TCP byte pipes, and the wire log.
-- `core/session`: the link: handshake, channel mux, reconnect ladder.
-- `core/identity`: owner key store, svc36 trust, Meta login (`token/`), change owner (`provision/`).
-- `core/connection`: `GlassesConnection` and `GlassesState`, svc100 canary, svc28 device status.
+- `core/transport`: Android's LE L2CAP, RFCOMM and TCP byte pipes, and the wire log file.
+- `core/session`: the link: the `Transport` interface, handshake, channel mux, reconnect ladder. Multiplatform.
+- `core/identity`: owner key store, svc36 trust, Meta login (`token/`), change owner (`provision/`). Multiplatform:
+  bundles, trust and the store in common code; Meta login and provisioning are JVM only so far.
+- `core/connection`: `GlassesConnection` and `GlassesState`, svc100 canary, svc28 device status. Multiplatform.
 - `core/media`: airship (svc20) file receiver, the svc18 capture list, and `GlassesConfig` (MobileConfig flags
   read from a bug report, written back as mctables on airship `mobileconfig`).
 - `core/settings`: glasses settings over svc31 and RLDrive (svc33), the catalogue `settings_ui.json`, contacts.
 - `core/assistant`: plays Meta's server on svc15 (ev57 in, VARM out) with the user's own model.
 - `core/design`: colours and type.
 - `app`: `GlassesService`, the screens (`VisorNav`), the event log, setup, media import.
-- `shared`: the iPhone app's framework, `VisorCore`: every multiplatform module, exported to Swift.
+- `shared`: the iPhone app's framework, `VisorCore`: `VisorClient` over the multiplatform modules, and the iPhone's
+  CoreBluetooth link.
+- `iosApp`: the SwiftUI app. Its Xcode project is generated from `project.yml`.
 
 ## Working on it
 
@@ -71,8 +74,11 @@ JDK from Android Studio, SDK `platforms/android-37.0`. Versions only in `gradle/
     ./gradlew :app:assembleDebug
     adb install -r app/build/outputs/apk/debug/app-debug.apk
 
-iOS: the iOS targets compile on any host (`./gradlew :shared:compileKotlinIosArm64`). Linking `VisorCore`
-(`:shared:linkDebugFrameworkIosArm64`, or `embedAndSignAppleFrameworkForXcode` from Xcode) needs a Mac.
+iPhone: the Kotlin compiles on any host (`./gradlew :shared:compileKotlinIosArm64`). The app needs a Mac:
+
+    cd iosApp && xcodegen && open Visor.xcodeproj
+
+Xcode's build runs `:shared:embedAndSignAppleFrameworkForXcode` for `VisorCore`. CI builds it for the simulator.
 
 Releases: push a tag `vX.Y.Z`. `.github/workflows/release.yml` builds the APK, signs it with the key in the repo
 secrets and publishes it. Run it by hand for a draft. A release key never goes in the repo.

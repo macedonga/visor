@@ -7,16 +7,6 @@ import java.io.FileWriter
 import java.io.PrintWriter
 import java.time.LocalTime
 
-/**
- * Every SDU in both directions, so a session that misbehaves can be diffed against one that did
- * not.
- */
-fun interface WireLog {
-
-    /** [outbound] is true for a frame the phone sent. */
-    fun trace(outbound: Boolean, frame: ByteArray)
-}
-
 /** A [WireLog] that appends `direction timestamp length hex` to a file, one line per SDU. */
 class FileWireLog(private val file: File) : WireLog, Closeable {
 

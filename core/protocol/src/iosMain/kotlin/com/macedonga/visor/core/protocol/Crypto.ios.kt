@@ -21,7 +21,7 @@ import platform.posix.size_tVar
 
 private fun ByteArray.ref() = if (isEmpty()) null else refTo(0)
 
-internal actual fun sha256(vararg parts: ByteArray): ByteArray {
+actual fun sha256(vararg parts: ByteArray): ByteArray {
     val data = parts.fold(ByteArray(0), ByteArray::plus)
     val out = UByteArray(CC_SHA256_DIGEST_LENGTH)
     CC_SHA256(data.ref(), data.size.convert(), out.refTo(0))
