@@ -1,7 +1,5 @@
 package com.macedonga.visor.core.protocol
 
-import java.util.UUID
-
 /** svc41109, bt_peer_connection, on a channel the phone opens on the Display and on the band; a BleAddr is {1 type, 2 addr}. */
 object BtPeer {
     const val SERVICE = 41109
@@ -87,13 +85,11 @@ object BtPeer {
     fun setPreferredLink(link: Int, identity: ByteArray, keyHint: ByteArray): ByteArray =
         Wire.fieldVarint(1, link.toLong()) + Wire.fieldBytes(2, identity) + Wire.fieldBytes(3, keyHint)
 
-    /** TOPOLOGY_EVENT {1 peerIdentityAddr, 2 peerKeyHint, 3 uuid, 4 event, 5 type}; an empty address or hint is left out. */
-    fun topologyEvent(peerIdentity: ByteArray, keyHint: ByteArray, uuid: UUID, event: Int, type: Int): ByteArray {
-        val id = uuid.toBytes()
-        return (if (peerIdentity.isNotEmpty()) Wire.fieldBytes(1, peerIdentity) else ByteArray(0)) +
+    /** TOPOLOGY_EVENT {1 peerIdentityAddr, 2 peerKeyHint, 3 uuid (16 bytes), 4 event, 5 type}; an empty address or hint is left out. */
+    fun topologyEvent(peerIdentity: ByteArray, keyHint: ByteArray, uuid: ByteArray, event: Int, type: Int): ByteArray =
+        (if (peerIdentity.isNotEmpty()) Wire.fieldBytes(1, peerIdentity) else ByteArray(0)) +
             (if (keyHint.isNotEmpty()) Wire.fieldBytes(2, keyHint) else ByteArray(0)) +
-            Wire.fieldBytes(3, id) + Wire.fieldVarint(4, event.toLong()) + Wire.fieldVarint(5, type.toLong())
-    }
+            Wire.fieldBytes(3, uuid) + Wire.fieldVarint(4, event.toLong()) + Wire.fieldVarint(5, type.toLong())
 
     fun pairingInfo(payload: ByteArray): PairingInfo {
         val f = Wire.parse(payload)

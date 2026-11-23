@@ -1,7 +1,5 @@
 package com.macedonga.visor.core.protocol
 
-import java.io.ByteArrayOutputStream
-
 /** svc11004 messages before compression, version 26, little-endian: 1 and 11 JSON, 2 to 10 syncers led by clock and Timestamp, 0 a piece. */
 object Constellation {
     const val VERSION = 26
@@ -217,23 +215,30 @@ object Constellation {
     }
 
     private class Out {
-        private val b = ByteArrayOutputStream()
-        fun u8(v: Int) = apply { b.write(v) }
-        fun u32(v: Int) = apply { for (i in 0 until 4) b.write(v ushr (8 * i)) }
-        fun u64(v: Long) = apply { for (i in 0 until 8) b.write((v ushr (8 * i)).toInt()) }
+        private var b = ByteArray(256)
+        private var size = 0
+
+        private fun write(v: Int) {
+            if (size == b.size) b = b.copyOf(size * 2)
+            b[size++] = v.toByte()
+        }
+
+        fun u8(v: Int) = apply { write(v) }
+        fun u32(v: Int) = apply { for (i in 0 until 4) write(v ushr (8 * i)) }
+        fun u64(v: Long) = apply { for (i in 0 until 8) write((v ushr (8 * i)).toInt()) }
         fun f64(v: Double) = u64(v.toRawBits())
         fun of64(v: Double?) = if (v == null) u8(0) else u8(1).f64(v)
         fun ou32(v: Int?) = if (v == null) u8(0) else u8(1).u32(v)
-        fun raw(bytes: ByteArray) = apply { b.write(bytes, 0, bytes.size) }
+        fun raw(bytes: ByteArray) = apply { for (x in bytes) write(x.toInt()) }
         fun stamp(s: Stamp) = u64(s.value).u64(s.sub)
 
         fun count(n: Int) = apply {
             var v = n
             while (v >= 0x80) {
-                b.write(v and 0x7f or 0x80)
+                write(v and 0x7f or 0x80)
                 v = v ushr 7
             }
-            b.write(v)
+            write(v)
         }
 
         fun str(s: String): Out {
@@ -242,7 +247,7 @@ object Constellation {
         }
 
         fun ostr(s: String?) = if (s == null) u8(0) else u8(1).str(s)
-        fun bytes(): ByteArray = b.toByteArray()
+        fun bytes(): ByteArray = b.copyOf(size)
     }
 
     /** A reader that throws on a short body. */
@@ -293,7 +298,7 @@ object Constellation {
 
         fun str(): String {
             val n = count()
-            return String(b, at, n, Charsets.UTF_8).also { at += n }
+            return b.decodeToString(at, at + n).also { at += n }
         }
 
         fun ostr() {

@@ -1,11 +1,5 @@
 package com.macedonga.visor.core.protocol
 
-import java.nio.BufferUnderflowException
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
-
 /** Thrift compact protocol reader and writer. */
 object Thrift {
 
@@ -81,11 +75,7 @@ object Thrift {
 
     /** Strict UTF-8, or null so the caller keeps the bytes. */
     private fun decodeUtf8OrNull(bytes: ByteArray): String? = try {
-        Charsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(bytes))
-            .toString()
+        bytes.decodeToString(throwOnInvalidSequence = true)
     } catch (_: CharacterCodingException) {
         null
     }
@@ -104,11 +94,16 @@ object Thrift {
             }
 
             DOUBLE -> {
-                val value = ByteBuffer.wrap(b, i, 8).order(ByteOrder.LITTLE_ENDIAN).double
-                return Read(value, i + 8)
+                var bits = 0L
+                for (k in 0 until 8) bits = bits or ((b[i + k].toLong() and 0xFF) shl (8 * k))
+                return Read(Double.fromBits(bits), i + 8)
             }
 
-            FLOAT -> return Read(ByteBuffer.wrap(b, i, 4).order(ByteOrder.BIG_ENDIAN).float.toDouble(), i + 4)
+            FLOAT -> {
+                var bits = 0
+                for (k in 0 until 4) bits = (bits shl 8) or (b[i + k].toInt() and 0xFF)
+                return Read(Float.fromBits(bits).toDouble(), i + 4)
+            }
 
             BIN -> {
                 val len = Wire.decodeVarint(b, i)
@@ -179,8 +174,6 @@ object Thrift {
     private inline fun <T> guardingFormat(what: String, body: () -> T): T = try {
         body()
     } catch (e: IndexOutOfBoundsException) {
-        throw ProtocolFormatException("truncated $what: ${e.message}")
-    } catch (e: BufferUnderflowException) {
         throw ProtocolFormatException("truncated $what: ${e.message}")
     }
 
@@ -305,7 +298,7 @@ object Thrift {
         scanStrings(raw, 0, spans)
         var out = raw
         for (span in spans.sortedByDescending { it.lengthStart }) {
-            val key = String(span.value, Charsets.UTF_8)
+            val key = span.value.decodeToString()
             val replacement = mapping[key] ?: continue
             out = out.copyOfRange(0, span.lengthStart) +
                 Wire.encodeVarintUnsigned(replacement.size.toLong()) +
@@ -372,7 +365,7 @@ class ThriftWriter {
         return this
     }
 
-    fun str(fid: Int, v: String): ThriftWriter = str(fid, v.toByteArray(Charsets.UTF_8))
+    fun str(fid: Int, v: String): ThriftWriter = str(fid, v.encodeToByteArray())
 
     fun str(fid: Int, v: ByteArray): ThriftWriter {
         header(fid, Thrift.BIN)

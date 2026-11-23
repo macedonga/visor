@@ -91,16 +91,22 @@ object Band {
      */
     fun motion(type: Int, payload: ByteArray): Motion {
         val f = Wire.parse(payload)
-        val channels = java.nio.ByteBuffer.wrap(f.bytes(3)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val channels = f.bytes(3)
+        fun le(at: Int, n: Int): Int {
+            if (at + n > channels.size) throw ProtocolFormatException("short motion channels")
+            var v = 0
+            for (i in 0 until n) v = v or ((channels[at + i].toInt() and 0xFF) shl (8 * i))
+            return v
+        }
         val values = when (type) {
-            IMU_QUAT -> FloatArray(4) { channels.getFloat() }
+            IMU_QUAT -> FloatArray(4) { Float.fromBits(le(4 * it, 4)) }
             else -> {
                 val scale = when (type) {
                     IMU_GYRO -> GYRO_RAD_S
                     IMU_ACCEL -> ACCEL_M_S2
                     else -> 1f
                 }
-                FloatArray(3) { channels.getShort() * scale }
+                FloatArray(3) { le(2 * it, 2).toShort() * scale }
             }
         }
         return Motion(type, f.varint(1).toInt(), f.varint(2), values)

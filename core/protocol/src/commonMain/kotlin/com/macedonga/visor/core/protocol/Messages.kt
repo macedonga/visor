@@ -1,7 +1,6 @@
 package com.macedonga.visor.core.protocol
 
-import java.nio.ByteBuffer
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /** First handshake message: the initiator proposes ECDH parameters. */
 class RequestEncryption(
@@ -135,8 +134,8 @@ object LinkSwitch {
 /** The 16-byte UUIDs EndLinkSetup carries, and the firmware check they have to pass. */
 object LinkUuid {
 
-    /** 16 bytes from [UUID.randomUUID], which is version 4 and variant 10xx by construction. */
-    fun random(): ByteArray = UUID.randomUUID().toBytes()
+    /** 16 bytes from [Uuid.random], which is version 4 and variant 10xx by construction. */
+    fun random(): ByteArray = Uuid.random().toByteArray()
 
     fun isValid(bytes: ByteArray): Boolean =
         bytes.size == 16 &&
@@ -144,12 +143,6 @@ object LinkUuid {
             (bytes[8].toInt() and 0xC0) == 0x80
 }
 
-/** The uuid's 16 bytes, most significant first. */
-fun UUID.toBytes(): ByteArray = ByteBuffer.allocate(16).putLong(mostSignificantBits).putLong(leastSignificantBits).array()
-
 /** 16 bytes as a dashed uuid; any other length as hex. */
-fun uuidText(raw: ByteArray): String {
-    if (raw.size != 16) return raw.toHexString()
-    val b = ByteBuffer.wrap(raw)
-    return UUID(b.long, b.long).toString()
-}
+fun uuidText(raw: ByteArray): String =
+    if (raw.size == 16) Uuid.fromByteArray(raw).toString() else raw.toHexString()
