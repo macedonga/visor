@@ -648,6 +648,8 @@
     <string name="ai_other_model">Enter a model ID…</string>
     <string name="ai_lines_model">Day summary model</string>
     <string name="ai_same_model">Same model</string>
+    <string name="ai_live_same_sub">Speech recognition and the model above</string>
+    <string name="ai_live_audio_sub">Live audio model</string>
     <string name="ai_section_answers">How it answers</string>
     <string name="ai_voice">Voice</string>
     <string name="ai_voice_glasses">The glasses\' own</string>

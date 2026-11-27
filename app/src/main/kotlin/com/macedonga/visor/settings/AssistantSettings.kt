@@ -56,6 +56,7 @@ import com.macedonga.visor.core.assistant.Provider
 import com.macedonga.visor.core.assistant.Refusal
 import com.macedonga.visor.core.assistant.SPEECH_LANGUAGES
 import com.macedonga.visor.core.assistant.TtsPath
+import com.macedonga.visor.core.assistant.isLiveModelId
 import com.macedonga.visor.core.assistant.listModels
 import com.macedonga.visor.core.assistant.previewSpeech
 import com.macedonga.visor.core.assistant.mcp.McpHub
@@ -156,6 +157,29 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
             throw e
         } catch (e: Exception) {
             if ((e as? ModelsError)?.refused == true) KeyCheck.Refused(e.message.orEmpty()) else KeyCheck.Failed(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    var liveCheck by remember { mutableStateOf<KeyCheck>(KeyCheck.None) }
+    LaunchedEffect(config.liveProvider, config.liveSameProvider, config.liveApiKey, config.liveBaseUrl) {
+        val p = config.liveProvider
+        if (p == null || config.liveSameProvider || (p != Provider.OPENAI_COMPATIBLE && config.liveApiKey.isBlank()) ||
+            (p == Provider.OPENAI_COMPATIBLE && config.liveBaseUrl.isBlank())
+        ) {
+            liveCheck = KeyCheck.None
+            return@LaunchedEffect
+        }
+        liveCheck = KeyCheck.Checking
+        delay(350)
+        val probe = config.copy(provider = p, apiKey = config.liveApiKey, baseUrl = config.liveBaseUrl)
+        liveCheck = try {
+            KeyCheck.Works(listModels(probe))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val why = (e as? ModelsError)?.why
+            if ((e as? ModelsError)?.refused == true || why == Refusal.KEY) KeyCheck.Refused(e.message.orEmpty(), why)
+            else KeyCheck.Failed(e.message ?: e.javaClass.simpleName, why)
         }
     }
 
@@ -269,6 +293,56 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                             busy = trying,
                         )
                     },
+                )
+            }
+        }
+        item(key = "live_ai") {
+            val liveProvider = config.liveProvider
+            Column {
+                SectionLabel(stringResource(R.string.meta_ai_live_ai))
+                Rows(
+                    {
+                        ValueRow(
+                            stringResource(R.string.ai_provider),
+                            liveProvider?.let { providerName(it) } ?: stringResource(R.string.ai_same_model),
+                            sub = if (liveProvider == null) stringResource(R.string.ai_live_same_sub) else null,
+                            onClick = { sheet = "live_provider" },
+                        )
+                    },
+                    if (liveProvider == Provider.OPENAI_COMPATIBLE && !config.liveSameProvider) row {
+                        ValueRow(stringResource(R.string.ai_base_url), config.liveBaseUrl, onClick = { sheet = "live_url" })
+                    } else null,
+                    if (liveProvider != null && !config.liveSameProvider) row {
+                        val (sub, problem) = keyWords(liveCheck)
+                        val why = (liveCheck as? KeyCheck.Refused)?.why ?: (liveCheck as? KeyCheck.Failed)?.why
+                        val fix = why?.let { fixFor(it, liveProvider) { sheet = "live_model" } }
+                        RowFrame(
+                            stringResource(R.string.ai_key),
+                            onClick = { sheet = "live_key" },
+                            value = masked(config.liveApiKey) ?: stringResource(R.string.settings_not_set),
+                            sub = sub, problem = fix?.words ?: problem, busy = liveCheck == KeyCheck.Checking,
+                            below = fix?.action?.let { label -> { ActionPill(label, fix.run, Modifier.padding(top = 8.dp), quiet = true) } },
+                        ) {
+                            Icon(VisorIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp), tint = Visor.colors.textTertiary)
+                        }
+                    } else null,
+                    if (liveProvider != null) row {
+                        ValueRow(
+                            stringResource(R.string.ai_model),
+                            modelWords(config.effectiveLiveModel.removePrefix("models/")).ifEmpty { stringResource(R.string.settings_not_set) },
+                            onClick = { sheet = "live_model" },
+                        )
+                    } else null,
+                    if (liveProvider != null) row {
+                        ValueRow(
+                            stringResource(R.string.ai_tts_voice),
+                            config.liveVoice.ifEmpty {
+                                liveProvider.liveDefaultVoice.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ai_default_model, it) }
+                                    ?: stringResource(R.string.ai_tts_voice_default)
+                            },
+                            onClick = { sheet = "live_voice" },
+                        )
+                    } else null,
                 )
             }
         }
@@ -503,6 +577,81 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                 onDismiss = { sheet = null },
             )
         }
+        "live_provider" -> ChoiceSheet<Provider?>(
+            stringResource(R.string.meta_ai_live_ai) + " · " + stringResource(R.string.ai_provider),
+            listOf(Triple<Provider?, String, String?>(null, stringResource(R.string.ai_same_model), stringResource(R.string.ai_live_same_sub))) +
+                Provider.liveProviders.map { p ->
+                    val detail = if (p == Provider.OPENAI_COMPATIBLE) stringResource(R.string.ai_openai_compatible) else stringResource(R.string.ai_live_audio_sub)
+                    Triple(p as Provider?, providerName(p), detail)
+                },
+            config.liveProvider,
+            onPick = model.store::switchLiveProvider,
+            onDismiss = { sheet = null },
+        )
+        "live_url" -> TextSheet(
+            stringResource(R.string.meta_ai_live_ai) + " · " + stringResource(R.string.ai_base_url),
+            config.liveBaseUrl,
+            onSave = { url -> model.store.update { it.copy(liveBaseUrl = url.trim()) } },
+            onDismiss = { sheet = null }, keyboard = KeyboardType.Uri, valid = ::isWebAddress,
+        )
+        "live_key" -> {
+            val liveProvider = config.liveProvider
+            if (liveProvider != null) {
+                TextSheet(
+                    providerName(liveProvider) + " · " + stringResource(R.string.ai_key), config.liveApiKey,
+                    onSave = { key -> model.store.update { it.copy(liveApiKey = key.trim()) } },
+                    onDismiss = { sheet = null }, secret = true, keyboard = KeyboardType.Password,
+                    sub = liveProvider.keys.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ai_key_where, Uri.parse(it).host.orEmpty()) },
+                    extra = { set ->
+                        ActionPill(stringResource(R.string.ai_paste), { paste(context)?.let { set(it.trim()) } }, quiet = true)
+                        if (liveProvider.keys.isNotEmpty()) {
+                            ActionPill(stringResource(R.string.ai_get_key), { openInBrowser(context, liveProvider.keys) }, quiet = true)
+                        }
+                    },
+                )
+            }
+        }
+        "live_model" -> {
+            val liveProvider = config.liveProvider
+            if (liveProvider != null) {
+                ModelSheet(
+                    title = stringResource(R.string.meta_ai_live_ai) + " · " + stringResource(R.string.ai_model),
+                    check = liveModelCheck(if (config.liveSameProvider) check else liveCheck, liveProvider),
+                    current = config.liveModel.removePrefix("models/"),
+                    emptyLabel = liveProvider.liveDefaultModel.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.ai_default_model, it) },
+                    onPick = { id -> model.store.update { it.copy(liveModel = id.removePrefix("models/")) } },
+                    onDismiss = { sheet = null },
+                )
+            }
+        }
+        "live_voice" -> TextSheet(
+            stringResource(R.string.meta_ai_live_ai) + " · " + stringResource(R.string.ai_tts_voice),
+            config.liveVoice,
+            onSave = { name -> model.store.update { it.copy(liveVoice = name.trim()) } },
+            onDismiss = { sheet = null },
+            hint = config.liveProvider?.liveDefaultVoice?.takeIf { it.isNotEmpty() } ?: "voice-id",
+        )
+    }
+}
+
+private fun liveModelCheck(base: KeyCheck, provider: Provider): KeyCheck {
+    val known = provider.knownLiveModels.map { ModelInfo(it, it, 0L) }
+    return when (base) {
+        is KeyCheck.Works -> {
+            val seen = HashSet<String>()
+            val merged = ArrayList<ModelInfo>()
+            for (m in known) {
+                seen += m.id.removePrefix("models/")
+                merged += m
+            }
+            for (m in base.models.filter { isLiveModelId(it.id) }) {
+                val clean = m.id.removePrefix("models/")
+                if (seen.add(clean)) merged += ModelInfo(clean, clean, m.created)
+            }
+            if (merged.isEmpty()) KeyCheck.Works(base.models) else KeyCheck.Works(merged)
+        }
+        KeyCheck.None -> if (known.isNotEmpty()) KeyCheck.Works(known) else KeyCheck.None
+        else -> base
     }
 }
 

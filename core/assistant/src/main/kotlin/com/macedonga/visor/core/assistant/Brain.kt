@@ -48,6 +48,17 @@ data class Reply(
     val text: String, val remembered: List<String> = emptyList(), val actions: List<ToolAction> = emptyList(), val ends: Boolean = false,
 )
 
+internal class LiveToolOutcome(
+    val result: ToolResult, val photo: ByteArray?, val remembered: List<String>, val actions: List<ToolAction>,
+)
+
+internal class LiveToolset(
+    val instructions: String,
+    val openAiTools: JSONArray,
+    val geminiDeclarations: JSONArray,
+    val call: suspend (name: String, input: JSONObject, latestFrame: ByteArray?) -> LiveToolOutcome,
+)
+
 /**
  * What one answer may use and what it did with it; [photo] is the glasses' JPEG that came with the question, [canEnd]
  * whether the model may end the conversation.
@@ -206,6 +217,56 @@ class Brain(
             "naming the actual subjects, places and things looked at, in the order they came. No times, no greeting, no " +
             "judgement, no markdown. Answer with the entry only."
         write(c, c.linesModel.ifBlank { c.model }, system, exchanges, 300)
+    }
+
+    /** The instructions, tool declarations and runner a live audio-to-audio session shares with text answers. */
+    internal suspend fun liveTools(
+        locale: Locale,
+        note: String,
+        glasses: GlassesToolbox? = null,
+        hasCamera: Boolean = false,
+        capturePhoto: (suspend () -> ByteArray?)? = null,
+        cameraAction: (suspend (CameraAction) -> Boolean)? = null,
+    ): LiveToolset = withContext(Dispatchers.IO) {
+        val c = config()
+        val box = try {
+            hub.toolbox()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Toolbox(emptyList(), "")
+        }
+        val apps = appTools.tools()
+        val described = glasses?.described()
+        val seed = Turn(box, glasses = described, capturePhoto = capturePhoto, cameraAction = cameraAction, apps = apps)
+        val allSpecs = specs(c, seed)
+        val system = SYSTEM_PROMPT +
+            " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
+            " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." +
+            memoryPrompt() +
+            phoneTools.prompt + handsetTools.prompt +
+            box.prompt +
+            (if ((hasCamera || capturePhoto != null) && box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
+            (if (note.isNotBlank()) " $note" else "") +
+            if (c.instructions.isNotBlank()) " " + c.instructions else ""
+        val openAi = JSONArray()
+        val gemini = JSONArray()
+        for ((name, help, schema) in allSpecs) {
+            openAi.put(
+                JSONObject().put("type", "function").put("name", name).put("description", help)
+                    .put("parameters", JSONObject(schema.toString()).apply { remove("\$schema") }),
+            )
+            gemini.put(JSONObject().put("name", name).put("description", help).apply { geminiSchema(schema)?.let { put("parameters", it) } })
+        }
+        LiveToolset(system, openAi, gemini) { rawName, input, latestFrame ->
+            withContext(Dispatchers.IO) {
+                val name = rawName.removePrefix("$NAMESPACE.").removePrefix("${NAMESPACE}__")
+                val turn = Turn(box, photo = latestFrame, glasses = described, capturePhoto = capturePhoto, cameraAction = cameraAction, apps = apps)
+                turn.appNames.putAll(seed.appNames)
+                val out = runTool(name, input, turn)
+                LiveToolOutcome(out, if (name == PHOTO_TOOL && !out.isError) turn.photo else null, turn.remembered, turn.actions)
+            }
+        }
     }
 
     private fun ready(): AssistantConfig =

@@ -693,6 +693,7 @@ internal fun assistantWords(config: AssistantConfig): String {
         !configured -> stringResource(R.string.sum_ai_unset)
         else -> listOfNotNull(
             modelWords(config.answerModel),
+            modelWords(config.effectiveLiveModel.removePrefix("models/")).takeIf { config.hasLiveModel },
             stringResource(R.string.sum_ai_glasses_voice).takeIf { config.tts == TtsPath.GLASSES },
         ).filter { it.isNotEmpty() }.joinToString(" · ")
     }

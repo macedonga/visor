@@ -23,6 +23,12 @@ internal interface LiveAiHost {
     /** One turn: the model sees the camera and hears [question]; the answer is spoken as [subInteraction]. */
     suspend fun answer(subInteraction: String, question: String)
 
+    /** True when Live AI is configured to connect to a live audio-to-audio model. */
+    val useLiveModel: Boolean
+
+    /** Opens and shakes hands with the configured live audio model, or throws / returns null if unavailable. */
+    suspend fun openLiveSession(locale: Locale, onFailed: () -> Unit): LiveModelSession?
+
     /** Opens and closes the [LiveAiCamera]. */
     fun cameraOn()
     fun cameraOff()
@@ -44,8 +50,9 @@ enum class LiveAiPhase { OFF, STARTING, LISTENING, THINKING }
 /**
  * Meta's Live AI with Visor as both the phone app and the server. The glasses switch their session to LIVE_AI
  * (ev289, mode 2), open an interaction for it (START_INTERACTION), start their MMAI_LIVE camera app and stream
- * the microphone on s0 with their own speech recognition unloaded. The server acknowledges the interaction,
- * listens, and answers each utterance as a sub-interaction of it, with the camera's picture.
+ * the microphone on s0 with their own speech recognition unloaded. The server acknowledges the interaction, then
+ * either bridges s0 audio and camera frames directly to a live audio-to-audio model or listens with the phone's
+ * speech recognition and answers each utterance as a sub-interaction.
  */
 internal class LiveAi(
     private val context: Context,
@@ -63,6 +70,12 @@ internal class LiveAi(
         private set
 
     private var ears: GlassesEars? = null
+    private var micDecoder: MicOpusDecoder? = null
+    @Volatile private var liveSession: LiveModelSession? = null
+    private var liveStartJob: Job? = null
+    @Volatile private var startingLive = false
+    private val earlyPcm = ArrayDeque<ShortArray>()
+
     private var keepalive: Job? = null
     private var heardAudio = false
     private val nonce = AtomicInteger(1)
@@ -93,10 +106,85 @@ internal class LiveAi(
             delay(20)
         }
         keepAirSession("AsrStartListening", id)
-        ears?.stop()
-        ears = GlassesEars(context, locale, onUtterance = ::heard, onProblem = { host.note("Live AI: $it") }).also { it.start() }
+        stopAudioInputs()
+        if (host.useLiveModel) {
+            val decoder = runCatching { MicOpusDecoder { host.note("Live AI: $it") } }.getOrElse {
+                host.note("Live AI: no Opus decoder (${it.message}); falling back to speech recognition")
+                startEars(locale)
+                keepalive?.cancel()
+                keepalive = scope.launch { keepAlive() }
+                return
+            }
+            micDecoder = decoder
+            startingLive = true
+            liveStartJob = scope.launch {
+                val opened = try {
+                    host.openLiveSession(locale) {
+                        if (active && interaction == id) {
+                            scope.launch { fallbackToEars(locale, "live audio connection dropped") }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (active && interaction == id) fallbackToEars(locale, "could not start live model (${e.message})")
+                    return@launch
+                }
+                if (!active || interaction != id) {
+                    opened?.close()
+                    return@launch
+                }
+                if (opened == null) {
+                    fallbackToEars(locale, "no live model ready")
+                    return@launch
+                }
+                val buffered = synchronized(earlyPcm) {
+                    liveSession = opened
+                    startingLive = false
+                    earlyPcm.toList().also { earlyPcm.clear() }
+                }
+                buffered.forEach(opened::hearPcm16k)
+            }
+        } else {
+            startEars(locale)
+        }
         keepalive?.cancel()
         keepalive = scope.launch { keepAlive() }
+    }
+
+    private fun startEars(locale: Locale): GlassesEars =
+        GlassesEars(context, locale, onUtterance = ::heard, onProblem = { host.note("Live AI: $it") }).also {
+            ears = it
+            it.start()
+        }
+
+    private fun fallbackToEars(locale: Locale, why: String) {
+        if (!active || ears != null) return
+        host.note("Live AI: $why; using speech recognition instead")
+        liveSession?.close()
+        liveSession = null
+        micDecoder?.close()
+        micDecoder = null
+        val buffered = synchronized(earlyPcm) {
+            startingLive = false
+            earlyPcm.toList().also { earlyPcm.clear() }
+        }
+        val started = startEars(locale)
+        buffered.forEach(started::hearPcm)
+    }
+
+    private fun stopAudioInputs() {
+        liveStartJob?.cancel()
+        liveStartJob = null
+        startingLive = false
+        liveSession?.close()
+        liveSession = null
+        micDecoder?.reportOdd()
+        micDecoder?.close()
+        micDecoder = null
+        synchronized(earlyPcm) { earlyPcm.clear() }
+        ears?.stop()
+        ears = null
     }
 
     /** The glasses' own header for their microphone stream. */
@@ -110,7 +198,27 @@ internal class LiveAi(
             heardAudio = true
             scope.launch { firstPayload(PAYLOAD_AUDIO) }
         }
-        ears?.hear(chunk)
+        val decoder = micDecoder
+        if (decoder != null) {
+            decoder.decode(chunk) { samples, _ ->
+                val session = liveSession
+                if (session != null) {
+                    session.hearPcm16k(samples)
+                } else if (startingLive) {
+                    synchronized(earlyPcm) {
+                        val live = liveSession
+                        if (live != null) {
+                            live.hearPcm16k(samples)
+                        } else if (startingLive) {
+                            if (earlyPcm.size >= MAX_EARLY_CHUNKS) earlyPcm.removeFirst()
+                            earlyPcm.addLast(samples)
+                        }
+                    }
+                }
+            }
+        } else {
+            ears?.hear(chunk)
+        }
     }
 
     /** The camera's first frame, acknowledged as the video payload. */
@@ -174,8 +282,7 @@ internal class LiveAi(
         _phase.value = LiveAiPhase.OFF
         keepalive?.cancel()
         keepalive = null
-        ears?.stop()
-        ears = null
+        stopAudioInputs()
         interaction = ""
         sessionId = ""
         host.cameraOff()
@@ -186,5 +293,6 @@ internal class LiveAi(
         const val PAYLOAD_VIDEO = 2
         const val KEEPALIVE_MS = 5_000L
         const val AIR_SESSION_MS = 20_000
+        const val MAX_EARLY_CHUNKS = 400
     }
 }

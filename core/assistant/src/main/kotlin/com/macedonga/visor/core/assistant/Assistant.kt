@@ -38,9 +38,11 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -54,6 +56,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -154,6 +157,12 @@ class Assistant(
         override suspend fun answer(subInteraction: String, question: String) {
             link?.let { liveAnswer(it, subInteraction, question) }
         }
+
+        override val useLiveModel: Boolean
+            get() = store.config.value.hasLiveModel
+
+        override suspend fun openLiveSession(locale: Locale, onFailed: () -> Unit): LiveModelSession? =
+            startLiveModelSession(locale, onFailed)
 
         override fun cameraOn() {
             camera.on()
@@ -1450,6 +1459,265 @@ class Assistant(
         } catch (error: Exception) {
             say("Live AI: the answer did not reach the glasses: ${error.message}")
             update(sub) { it.copy(problem = error.why()) }
+        }
+    }
+
+    private suspend fun startLiveModelSession(locale: Locale, onFailed: () -> Unit): LiveModelSession? {
+        val c = store.config.value
+        val provider = c.liveProvider ?: return null
+        if (!c.hasLiveModel) return null
+        val protocol = liveProtocolFor(provider, c.effectiveLiveModel)
+        val frameGrabber: suspend () -> ByteArray? = { runCatching { liveFrame() }.getOrNull()?.let(::toModelJpeg) }
+        val hasCamera = c.vision && provider != Provider.GROK
+        val capturePhoto = if (hasCamera && protocol != LiveProtocol.GEMINI) frameGrabber else null
+        val note = when {
+            provider == Provider.GROK && c.vision ->
+                LIVE_AI_BRIEF.trim() + " This voice model cannot see the camera view; if the wearer asks about what they see, say so briefly."
+            !c.vision ->
+                "This is Live AI: a continuous spoken conversation. Camera use is turned off." +
+                    if (liveAiDetailed()) LIVE_AI_DETAILED else LIVE_AI_BRIEF
+            else -> liveAiNote()
+        }
+        val toolset = brain.liveTools(locale, note, hasCamera = hasCamera, capturePhoto = capturePhoto)
+        val session = LiveModelSession(scope, c, locale, toolset, LiveAudioPlayout(), frameGrabber, onSessionFailed = { onFailed() })
+        session.start()
+        return session
+    }
+
+    /** Streams a live model's PCM output onto s0 as real-time Opus frames, aborting on barge-in. */
+    private inner class LiveAudioPlayout : LivePlayout {
+        private val lock = Any()
+        private var activeBurst: AudioBurst? = null
+        private val openedTurns: MutableSet<String> = Collections.newSetFromMap(ConcurrentHashMap())
+
+        override val isSpeaking: Boolean
+            get() = synchronized(lock) { activeBurst?.done?.isCompleted == false }
+
+        override fun note(text: String) = say(text)
+
+        override fun recordTurn(
+            turnId: String,
+            startedAt: Long,
+            question: String,
+            answer: String,
+            photo: ByteArray?,
+            remembered: List<String>,
+            actions: List<ToolAction>,
+        ) {
+            val existing = diary.turn(turnId)
+            if (existing == null) {
+                val session = liveAi.sessionId.ifEmpty { liveAi.interaction }
+                record(
+                    TurnRecord(
+                        interactionId = turnId,
+                        at = startedAt,
+                        question = question,
+                        answer = answer,
+                        modelMs = if (answer.isNotEmpty()) System.currentTimeMillis() - startedAt else 0,
+                        source = TurnSource.LIVE_AI,
+                        session = session,
+                        conversation = "live-$session",
+                        remembered = remembered,
+                        actions = actions,
+                    ),
+                )
+                if (photo != null) keepPhoto(turnId, photo)
+            } else {
+                update(turnId) { prev ->
+                    prev.copy(
+                        question = question.ifEmpty { prev.question },
+                        answer = answer.ifEmpty { prev.answer },
+                        modelMs = if (prev.modelMs == 0L && answer.isNotEmpty()) System.currentTimeMillis() - startedAt else prev.modelMs,
+                        remembered = if (remembered.isNotEmpty()) remembered else prev.remembered,
+                        actions = if (actions.isNotEmpty()) actions else prev.actions,
+                    )
+                }
+                if (photo != null && existing.image.isEmpty()) keepPhoto(turnId, photo)
+            }
+        }
+
+        override fun pushAudio(turnId: String, samples: ShortArray, rate: Int, question: String, answer: String) {
+            val burst = synchronized(lock) {
+                val cur = activeBurst
+                if (cur != null && !cur.closing && cur.turnId == turnId && !cur.interrupted) {
+                    if (question.isNotEmpty()) cur.question = question
+                    if (answer.isNotEmpty()) cur.answer = answer
+                    cur
+                } else {
+                    cur?.let { prev ->
+                        prev.closing = true
+                        prev.chunks.close()
+                    }
+                    val sub = if (openedTurns.add(turnId)) turnId else UUID.randomUUID().toString()
+                    AudioBurst(sub, turnId, rate, question, answer, cur?.done).also {
+                        activeBurst = it
+                        it.start()
+                    }
+                }
+            }
+            burst.chunks.trySend(samples)
+        }
+
+        override fun finishAudio(turnId: String) {
+            synchronized(lock) {
+                val cur = activeBurst
+                if (cur != null && cur.turnId == turnId) {
+                    cur.closing = true
+                    cur.chunks.close()
+                }
+            }
+        }
+
+        override suspend fun awaitAudioIdle() {
+            val cur = synchronized(lock) { activeBurst } ?: return
+            cur.closing = true
+            cur.chunks.close()
+            cur.done.await()
+        }
+
+        override fun interrupt() {
+            val cur = synchronized(lock) { activeBurst.also { activeBurst = null } } ?: return
+            cur.interrupted = true
+            cur.closing = true
+            cur.chunks.close()
+            cur.job?.cancel()
+        }
+
+        private inner class AudioBurst(
+            val sub: String,
+            val turnId: String,
+            val rate: Int,
+            @Volatile var question: String,
+            @Volatile var answer: String,
+            val previousDone: CompletableDeferred<Unit>?,
+        ) {
+            val chunks = Channel<ShortArray>(Channel.UNLIMITED)
+            val done = CompletableDeferred<Unit>()
+            @Volatile var closing = false
+            @Volatile var interrupted = false
+            var job: Job? = null
+
+            fun start() {
+                job = scope.launch {
+                    previousDone?.await()
+                    val encoder = runCatching { StreamingOpusEncoder(rate) }.getOrElse {
+                        say("Live AI: no Opus encoder (${it.message})")
+                        done.complete(Unit)
+                        return@launch
+                    }
+                    val pendingPackets = ArrayDeque<OpusPacket>()
+                    var headerSent = false
+                    var openedLink: Link? = null
+                    var openedMono = 0L
+                    var startNs = 0L
+                    var dueUs = 0L
+                    var sentUs = 0L
+
+                    suspend fun emitBatch(batch: List<OpusPacket>): Boolean {
+                        if (!headerSent) {
+                            openedMono = System.nanoTime() / 1_000_000
+                            val l = openSubStream(sub, question, answer, openedMono) ?: return false
+                            openedLink = l
+                            startNs = System.nanoTime()
+                            headerSent = true
+                            sendSubFrame(l, batch, first = true, sub = sub, q = question, a = answer)
+                        } else {
+                            sendSubFrame(openedLink ?: return false, batch, first = false, sub = sub, q = question, a = answer)
+                        }
+                        val dur = batch.sumOf { it.durationUs }
+                        dueUs += dur
+                        sentUs += dur
+                        val wait = dueUs / 1000 - (System.nanoTime() - startNs) / 1_000_000
+                        if (wait > 0 && !interrupted) delay(wait)
+                        return true
+                    }
+
+                    try {
+                        for (pcm in chunks) {
+                            if (interrupted) break
+                            encoder.encode(pcm).forEach(pendingPackets::addLast)
+                            while (pendingPackets.size >= 2 && !interrupted) {
+                                val pair = listOf(pendingPackets.removeFirst(), pendingPackets.removeFirst())
+                                if (!emitBatch(pair)) break
+                            }
+                        }
+                        if (!interrupted) {
+                            encoder.finish().forEach(pendingPackets::addLast)
+                            while (pendingPackets.isNotEmpty() && !interrupted) {
+                                val batch = if (pendingPackets.size >= 2) {
+                                    listOf(pendingPackets.removeFirst(), pendingPackets.removeFirst())
+                                } else {
+                                    listOf(pendingPackets.removeFirst())
+                                }
+                                if (!emitBatch(batch)) break
+                            }
+                        }
+                    } catch (_: CancellationException) {
+                    } catch (e: Exception) {
+                        say("Live AI: audio stream failed: ${e.message}")
+                    } finally {
+                        encoder.close()
+                        val l = openedLink
+                        if (headerSent && l != null) {
+                            withContext(NonCancellable) {
+                                runCatching { closeSubStream(l, sub, question, answer, openedMono) }
+                                update(turnId) { it.copy(sentMs = it.sentMs + sentUs / 1000) }
+                                setPhase(l, AssistantPhase.LISTENING)
+                                if (answer.isNotBlank()) say("Live AI answered${if (interrupted) " (interrupted)" else ""}: \"$answer\"")
+                            }
+                        }
+                        done.complete(Unit)
+                    }
+                }
+            }
+        }
+
+        private suspend fun openSubStream(sub: String, q: String, a: String, mono: Long): Link? {
+            val l = link ?: return null
+            val m0 = l.m0 ?: return null
+            val s0 = l.s0 ?: return null
+            preamble(l, sub, q.ifEmpty { "…" }, a.ifEmpty { "…" })
+            val e388 = ThriftWriter().i64(1, System.currentTimeMillis()).i64(2, mono).str(3, sub).done()
+            l.mux.send(m0, netEvent(EV_TTS_START_INFO, e388), messageType = MT_NET_EVENT)
+            delay(20)
+            val streamId = l.streamIds[sub] ?: l.latestStream
+            val header = (if (streamId.isNotEmpty()) Wire.fieldString(1, streamId) else ByteArray(0)) +
+                Wire.fieldString(2, sub) + Wire.fieldVarint(4, 1) + Wire.fieldVarint(7, 1) + Wire.fieldVarint(19, 1)
+            if (streamId.isEmpty()) say("Live AI: no stream id from the glasses; audio may not play")
+            l.mux.send(s0, header, messageType = MT_STREAM_HEADER)
+            setPhase(l, AssistantPhase.SPEAKING)
+            return l
+        }
+
+        private suspend fun sendSubFrame(l: Link, packets: List<OpusPacket>, first: Boolean, sub: String, q: String, a: String) {
+            val s0 = checkNotNull(l.s0)
+            val m0 = checkNotNull(l.m0)
+            val frame = packets.fold(ByteArray(0)) { acc, p ->
+                acc + ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(p.data.size).array() + p.data
+            }
+            if (first) {
+                l.mux.send(s0, frame, messageType = MT_STREAM_AUDIO)
+                if (l.simplified) {
+                    sendNetEvent(l, m0, netEvent(EV_VOICE_ACTION_RESPONSE, varm(sub, q.ifEmpty { "…" }, a.ifEmpty { "…" })))
+                }
+            } else {
+                // Bare header: tagged with type 0, only the first 40 ms would ever play.
+                l.mux.send(s0, frame)
+            }
+        }
+
+        private suspend fun closeSubStream(l: Link, sub: String, q: String, a: String, mono: Long) {
+            val s0 = l.s0 ?: return
+            val m0 = l.m0 ?: return
+            l.mux.send(s0, ByteArray(0), messageType = MT_STREAM_END)
+            if (!l.simplified) {
+                sendNetEvent(l, m0, netEvent(EV_VOICE_ACTION_RESPONSE, varm(sub, q.ifEmpty { "…" }, a.ifEmpty { "…" })))
+            }
+            val e389 = ThriftWriter().i64(1, System.currentTimeMillis()).i64(2, mono).i64(3, 7000).str(4, sub).done()
+            for (event in listOf(netEvent(EV_TTS_END_INFO, e389), answerAlive(mono))) {
+                l.mux.send(m0, event, messageType = MT_NET_EVENT)
+                delay(20)
+            }
         }
     }
 

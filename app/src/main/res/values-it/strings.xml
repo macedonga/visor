@@ -644,6 +644,8 @@
     <string name="ai_other_model">Inserisci l\'ID di un modello…</string>
     <string name="ai_lines_model">Modello per i riassunti del giorno</string>
     <string name="ai_same_model">Stesso modello</string>
+    <string name="ai_live_same_sub">Riconoscimento vocale e il modello sopra</string>
+    <string name="ai_live_audio_sub">Modello audio dal vivo</string>
     <string name="ai_section_answers">Come risponde</string>
     <string name="ai_voice">Voce</string>
     <string name="ai_voice_glasses">Quella degli occhiali</string>
