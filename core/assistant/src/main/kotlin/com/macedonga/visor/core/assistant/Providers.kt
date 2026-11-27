@@ -26,17 +26,17 @@ enum class WebSearch {
 
 /**
  * Where an answer comes from: a known service with its API address, the page where a key is made, and how it
- * searches the web; or [OPENAI_COMPATIBLE], any server that speaks Chat Completions at the address the person gives.
- * [CHATGPT] is the person's own ChatGPT plan, signed in instead of a key. [billing] is where credit is added and
- * [limits] where the account's limits show, for a [Refusal] to point at.
+ * searches the web, and whether its API takes [audio]; or [OPENAI_COMPATIBLE], any server that speaks Chat Completions
+ * at the address the person gives. [CHATGPT] is the person's own ChatGPT plan, signed in instead of a key. [billing]
+ * is where credit is added and [limits] where the account's limits show, for a [Refusal] to point at.
  */
 enum class Provider(
     val title: String, val api: String, val keys: String, val search: WebSearch?, val defaultModel: String = "",
-    val billing: String = "", val limits: String = billing,
+    val billing: String = "", val limits: String = billing, val audio: Boolean = true,
 ) {
     CLAUDE(
         "Claude", ANTHROPIC_API, "https://console.anthropic.com/settings/keys", WebSearch.CLAUDE, DEFAULT_CLAUDE_MODEL,
-        "https://console.anthropic.com/settings/billing", "https://console.anthropic.com/settings/limits",
+        "https://console.anthropic.com/settings/billing", "https://console.anthropic.com/settings/limits", audio = false,
     ),
     CHATGPT("ChatGPT", OPENAI_API, "", WebSearch.RESPONSES, billing = CHATGPT_USAGE),
     OPENAI(

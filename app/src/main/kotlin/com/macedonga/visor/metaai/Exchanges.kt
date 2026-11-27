@@ -206,7 +206,7 @@ internal fun Exchange(
         ) {
             val where = if (turn.source == TurnSource.PHONE) " · " + stringResource(R.string.meta_ai_phone) else ""
             Text(clockTime(turn.at) + where, style = Visor.type.label, color = colors.textTertiary)
-            Text(turn.question.ifBlank { "…" }, style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 4.dp))
+            Text(turn.questionWords(), style = Visor.type.body, color = colors.textSecondary, modifier = Modifier.padding(top = 4.dp))
             if (photo != null) {
                 Box(
                     Modifier
@@ -377,8 +377,9 @@ internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit, onAc
                 }
             }
         }
+        val voiceLabel = stringResource(R.string.meta_ai_voice_question)
         Text(
-            turns.joinToString(" · ") { it.question.trim() },
+            turns.joinToString(" · ") { it.question.trim().ifEmpty { if (it.audio.isNotEmpty()) voiceLabel else "…" } },
             style = Visor.type.body,
             color = colors.textSecondary,
             maxLines = 2,
@@ -386,6 +387,13 @@ internal fun LiveBlock(conversation: DiaryConversation, onOpen: () -> Unit, onAc
             modifier = Modifier.padding(top = 12.dp),
         )
     }
+}
+
+@Composable
+internal fun TurnRecord.questionWords(): String = when {
+    question.isNotBlank() -> question
+    audio.isNotEmpty() -> stringResource(R.string.meta_ai_voice_question)
+    else -> "…"
 }
 
 /** A photo on its own, lit by itself; a tap anywhere puts it back. */

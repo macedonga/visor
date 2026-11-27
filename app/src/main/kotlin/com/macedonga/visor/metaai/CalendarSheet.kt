@@ -174,7 +174,7 @@ private fun Results(turns: List<TurnRecord>, query: String, onTurn: (TurnRecord)
         items(found, key = { it.interactionId }) { turn ->
             Column(Modifier.fillMaxWidth().clickable { onTurn(turn) }.padding(horizontal = SIDE, vertical = 12.dp)) {
                 Text(dayTitle(turn.date) + " · " + clockTime(turn.at), style = Visor.type.label, color = colors.textTertiary)
-                Text(marked(turn.question, query), style = Visor.type.body, color = colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+                Text(marked(turn.questionWords(), query), style = Visor.type.body, color = colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                 if (turn.answer.isNotEmpty()) {
                     Text(marked(turn.answer, query), style = Visor.type.body, color = colors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }

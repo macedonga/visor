@@ -331,6 +331,7 @@
     <string name="meta_ai_on_glasses">Done on the glasses</string>
     <string name="meta_ai_too_late">Too late for the glasses</string>
     <string name="meta_ai_phone">Phone</string>
+    <string name="meta_ai_voice_question">Voice question</string>
     <string name="meta_ai_call">Call %1$s</string>
     <string name="meta_ai_text">Text %1$s</string>
     <string name="meta_ai_reply">Reply to %1$s</string>
@@ -635,6 +636,7 @@
     <string name="ai_chatgpt_expired">Signed out: sign in again</string>
     <string name="ai_chatgpt_failed">Sign-in failed: %1$s</string>
     <string name="ai_web_unavailable">This model can\'t search the web</string>
+    <string name="ai_audio_unavailable">This model can\'t take audio</string>
     <string name="ai_key_checking">Asking the provider…</string>
     <plurals name="ai_key_works">
         <item quantity="one">Works · %d model</item>
@@ -665,7 +667,9 @@
     <string name="ai_tts_trying">Saying it…</string>
     <string name="ai_glasses_voice">Glasses\' own voice</string>
     <string name="ai_glasses_voice_sub">Off, answers are spoken with the phone\'s voice.</string>
+    <string name="ai_audio_input">Send voice audio</string>
     <string name="ai_vision">Use the camera</string>
+    <string name="ai_always_photo">Photo with every question</string>
     <string name="ai_voice_photos">Voice photos</string>
     <string name="ai_web">Search the web</string>
     <string name="ai_quiet_actions">Silent when actions succeed</string>

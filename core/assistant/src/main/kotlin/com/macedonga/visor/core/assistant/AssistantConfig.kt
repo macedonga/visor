@@ -17,8 +17,12 @@ data class AssistantConfig(
     val linesModel: String = "",
     val baseUrl: String = "https://api.openai.com/v1",
     val webSearch: Boolean = false,
+    // Send the glasses' microphone audio straight to the model instead of a transcript.
+    val audioInput: Boolean = false,
     // Let a visual question use the glasses' camera.
     val vision: Boolean = true,
+    // Include a photo from the glasses' camera with every question while vision is on.
+    val alwaysPhoto: Boolean = false,
     // Let a partner-language voice command take a photo; it turns on the glasses' Robusta switch, not Developer mode.
     val voicePhotos: Boolean = false,
     // Who says the answers: the glasses' own voice, the phone's engine streamed to them, or a cloud service.
@@ -104,13 +108,26 @@ class AssistantConfigStore(context: Context) {
     /** The provider and model pairs that refused a web search, so their answers go without it. */
     val noSearch: StateFlow<Set<String>> = _noSearch.asStateFlow()
 
-    fun cannotSearch(c: AssistantConfig): Boolean = searchKey(c) in _noSearch.value
+    fun cannotSearch(c: AssistantConfig): Boolean = modelKey(c) in _noSearch.value
 
-    fun markCannotSearch(c: AssistantConfig) = setNoSearch(_noSearch.value + searchKey(c))
+    fun markCannotSearch(c: AssistantConfig) = setNoSearch(_noSearch.value + modelKey(c))
 
     private fun setNoSearch(keys: Set<String>) {
         _noSearch.value = keys
         prefs.edit().putStringSet(NO_SEARCH, keys).apply()
+    }
+
+    private val _noAudio = MutableStateFlow(prefs.getStringSet(NO_AUDIO, null).orEmpty().toSet())
+    /** The provider and model pairs that refused audio input, so their answers go from the transcript. */
+    val noAudio: StateFlow<Set<String>> = _noAudio.asStateFlow()
+
+    fun cannotHear(c: AssistantConfig): Boolean = modelKey(c) in _noAudio.value
+
+    fun markCannotHear(c: AssistantConfig) = setNoAudio(_noAudio.value + modelKey(c))
+
+    private fun setNoAudio(keys: Set<String>) {
+        _noAudio.value = keys
+        prefs.edit().putStringSet(NO_AUDIO, keys).apply()
     }
 
     /**
@@ -137,8 +154,9 @@ class AssistantConfigStore(context: Context) {
     fun update(change: (AssistantConfig) -> AssistantConfig) {
         val before = _config.value
         val next = change(before)
-        // Turned on again, search is tried again with every model.
+        // Turned on again, search and audio are tried again with every model.
         if (next.webSearch && !before.webSearch && _noSearch.value.isNotEmpty()) setNoSearch(emptySet())
+        if (next.audioInput && !before.audioInput && _noAudio.value.isNotEmpty()) setNoAudio(emptySet())
         // What a server took holds for the address and models it was found with.
         val moved = next.provider != before.provider || next.baseUrl != before.baseUrl || next.model != before.model ||
             next.linesModel != before.linesModel
@@ -151,7 +169,9 @@ class AssistantConfigStore(context: Context) {
             .putString("lines_model", next.linesModel)
             .putString("base_url", next.baseUrl)
             .putBoolean("web_search", next.webSearch)
+            .putBoolean("audio_input", next.audioInput)
             .putBoolean("vision", next.vision)
+            .putBoolean("always_photo", next.alwaysPhoto)
             .putBoolean("voice_photos", next.voicePhotos)
             .putString("tts", next.tts.name)
             .putString("tts_base_url", next.ttsBaseUrl)
@@ -181,7 +201,9 @@ class AssistantConfigStore(context: Context) {
             linesModel = prefs.getString("lines_model", d.linesModel).orEmpty(),
             baseUrl = baseUrl,
             webSearch = prefs.getBoolean("web_search", d.webSearch),
+            audioInput = prefs.getBoolean("audio_input", d.audioInput),
             vision = prefs.getBoolean("vision", d.vision),
+            alwaysPhoto = prefs.getBoolean("always_photo", d.alwaysPhoto),
             voicePhotos = prefs.getBoolean("voice_photos", d.voicePhotos),
             // Before "tts", a boolean chose the glasses' voice or the phone's.
             tts = prefs.getString("tts", null)?.let { runCatching { TtsPath.valueOf(it) }.getOrNull() }
@@ -203,8 +225,9 @@ class AssistantConfigStore(context: Context) {
         const val FIELDS = "server_fields"
         const val SESSION_VOICES = "session_voices"
         const val NO_SEARCH = "no_search"
+        const val NO_AUDIO = "no_audio"
         const val SLOTS = "provider_slots"
 
-        fun searchKey(c: AssistantConfig) = "${c.provider.name} ${c.answerModel}"
+        fun modelKey(c: AssistantConfig) = "${c.provider.name} ${c.answerModel}"
     }
 }

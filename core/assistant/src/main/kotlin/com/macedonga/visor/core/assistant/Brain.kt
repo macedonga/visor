@@ -28,6 +28,9 @@ import org.json.JSONObject
 /** One question, its answer and what the tools did for it: the conversation behind the next question. */
 data class Exchange(val question: String, val answer: String, val actions: List<ToolAction> = emptyList())
 
+/** The question as the model reads it later: a turn sent as audio has no transcript. */
+private fun Exchange.asked(): String = question.ifBlank { "(spoken question)" }
+
 /** The answer as the model reads it later: with Visor's note of what the tools did, so words alone never pass for an action. */
 private fun Exchange.told(): String = if (actions.isEmpty()) answer else
     answer + " [Visor: " + actions.joinToString("; ") { "${it.server.ifEmpty { "Phone" }} · ${it.what}, " + if (it.ok) "done" else "failed" } + "]"
@@ -35,17 +38,19 @@ private fun Exchange.told(): String = if (actions.isEmpty()) answer else
 /** [past] as the conversation so far: each question and its answer. */
 private fun JSONArray.putPast(past: List<Exchange>): JSONArray = apply {
     for (e in past) {
-        put(JSONObject().put("role", "user").put("content", e.question))
+        put(JSONObject().put("role", "user").put("content", e.asked()))
         put(JSONObject().put("role", "assistant").put("content", e.told()))
     }
 }
 
 /**
  * An answer, what the model chose to remember while giving it, and what it did with the person's tools. [ends]: the
- * model ended the conversation, so the glasses should stop listening after the answer.
+ * model ended the conversation, so the glasses should stop listening after the answer. [heardAudio]: the model answered
+ * from the recorded question rather than a transcript.
  */
 data class Reply(
     val text: String, val remembered: List<String> = emptyList(), val actions: List<ToolAction> = emptyList(), val ends: Boolean = false,
+    val heardAudio: Boolean = false,
 )
 
 /**
@@ -122,8 +127,9 @@ class Brain(
     private fun config() = store.config.value
 
     /**
-     * The answer to [question] after [past], with [image] (a JPEG) when the glasses sent one; [canEnd] offers the
-     * end_conversation tool. Throws on any failure.
+     * The answer to [question] (or [audio], a WAV recording of it) after [past], with [image] (a JPEG) when the glasses
+     * sent one; [canEnd] offers the end_conversation tool. Should a model refuse [audio], [fallbackQuestion] answers
+     * instead and the model is marked as unable to take audio. Throws on any failure.
      */
     suspend fun answer(
         question: String,
@@ -136,9 +142,11 @@ class Brain(
         canEnd: Boolean = false,
         capturePhoto: (suspend () -> ByteArray?)? = null,
         cameraAction: (suspend (CameraAction) -> Boolean)? = null,
+        audio: ByteArray? = null,
+        fallbackQuestion: String = "",
     ): Reply = withContext(Dispatchers.IO) {
         // With the camera off only a stop goes without the model; the model answers the rest, its camera tools withheld.
-        val keyword = if (cameraAction != null && audience == Audience.GLASSES) {
+        val keyword = if (audio == null && cameraAction != null && audience == Audience.GLASSES) {
             cameraKeyword(question, locale)?.takeIf { it in cameraTools(config()) }
         } else null
         if (keyword != null) {
@@ -163,30 +171,47 @@ class Brain(
             Toolbox(emptyList(), "")
         }
         val turn = Turn(box, image, glasses?.described(), canEnd, capturePhoto, cameraAction, appTools.tools())
-        val system = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
+        val baseSystem = (if (audience == Audience.PHONE) PHONE_PROMPT else SYSTEM_PROMPT) +
             " It is ${ZonedDateTime.now().format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm", Locale.ENGLISH))}." +
             (if (audience == Audience.GLASSES) " The glasses are set to ${locale.getDisplayLanguage(Locale.ENGLISH)}." else "") +
             memoryPrompt() +
             phoneTools.prompt + handsetTools.prompt +
             (if (canEnd) END_PROMPT else "") +
             turn.box.prompt +
-            (if ((image != null || capturePhoto != null) && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "") +
+            (if ((image != null || capturePhoto != null) && turn.box.tools.isNotEmpty()) PHOTO_PROMPT else "")
+        fun systemFor(withAudio: Boolean) = baseSystem +
+            (if (withAudio) AUDIO_PROMPT else "") +
             (if (note.isNotBlank()) " $note" else "") +
             if (c.instructions.isNotBlank()) " " + c.instructions else ""
         val recent = past.takeLast(MAX_EXCHANGES)
         val tokens = if (audience == Audience.PHONE) PHONE_TOKENS else GLASSES_TOKENS
         val search = c.webSearch && c.provider.search != null && !store.cannotSearch(c)
-        val said = try {
-            ask(c, system, recent, question, image, tokens, search, turn)
+        val sentAudio = audio?.takeIf { (c.audioInput || (question.isBlank() && fallbackQuestion.isBlank())) && c.provider.audio && !store.cannotHear(c) }
+        var usedAudio = sentAudio != null
+        val prompt = if (usedAudio) question.ifBlank { AUDIO_TURN_TEXT } else question.ifBlank { fallbackQuestion }
+        check(usedAudio || prompt.isNotBlank()) { "no question was heard" }
+        suspend fun tryAsk(sys: String, q: String, wav: ByteArray?, withSearch: Boolean): String = try {
+            ask(c, sys, recent, q, image, wav, tokens, withSearch, turn)
         } catch (error: IllegalStateException) {
             // A model that refuses the search still answers without it, and the settings say so. Not after a tool ran:
             // asking again would run it twice.
-            if (!search || turn.toolsRan || !SEARCH_REFUSED.containsMatchIn(error.message.orEmpty())) throw error
-            ask(c, system, recent, question, image, tokens, false, turn).also { store.markCannotSearch(c) }
+            if (!withSearch || turn.toolsRan || (error as? ModelRefused)?.why != null || !SEARCH_REFUSED.containsMatchIn(error.message.orEmpty())) throw error
+            ask(c, sys, recent, q, image, wav, tokens, false, turn).also { store.markCannotSearch(c) }
         }
-        val text = (if (search) spoken(said) else said).replace(VISOR_NOTE, "").trim()
+        val said = try {
+            tryAsk(systemFor(usedAudio), prompt, sentAudio, search)
+        } catch (error: IllegalStateException) {
+            if (!usedAudio || turn.toolsRan || (error as? ModelRefused)?.why != null || !SEARCH_REFUSED.containsMatchIn(error.message.orEmpty())) throw error
+            store.markCannotHear(c)
+            usedAudio = false
+            val fallback = question.ifBlank { fallbackQuestion }.trim()
+            if (fallback.isEmpty()) throw error
+            tryAsk(systemFor(false), fallback, null, search && !store.cannotSearch(c))
+        }
+        val searched = search && !store.cannotSearch(c)
+        val text = (if (searched) spoken(said) else said).replace(VISOR_NOTE, "").trim()
         check(text.isNotEmpty()) { "the model gave an empty answer" }
-        Reply(text, turn.remembered, turn.actions, turn.ends)
+        Reply(text, turn.remembered, turn.actions, turn.ends, heardAudio = usedAudio)
     }
 
     /** One sentence for the wearer, in [locale]'s language, written from [what]; outside the conversation. */
@@ -211,24 +236,25 @@ class Brain(
     private fun ready(): AssistantConfig =
         config().also { check(it.hasModel) { "no API key is set" } }
 
-    /** One answer from the provider, through the API that can [search] when asked to. */
+    /** One answer from the provider, through the API that can [search] and take [audio] when asked to. */
     private suspend fun ask(
-        c: AssistantConfig, system: String, past: List<Exchange>, question: String, image: ByteArray?, tokens: Int, search: Boolean, turn: Turn,
+        c: AssistantConfig, system: String, past: List<Exchange>, question: String, image: ByteArray?, audio: ByteArray?,
+        tokens: Int, search: Boolean, turn: Turn,
     ): String {
         val model = c.answerModel
         return when {
             c.provider == Provider.CLAUDE -> claude(c, model, system, past, question, image, tokens, search, turn)
-            c.provider == Provider.CHATGPT -> responses(c, model, system, past, question, image, tokens, search, turn)
-            search && c.provider.search == WebSearch.RESPONSES -> responses(c, model, system, past, question, image, tokens, true, turn)
-            search && c.provider.search == WebSearch.GEMINI -> gemini(c, model, system, past, question, image, tokens, turn)
-            else -> openAi(c, model, system, past, question, image, tokens, turn, if (search) chatSearch(c.provider) else null)
+            c.provider == Provider.CHATGPT -> responses(c, model, system, past, question, image, audio, tokens, search, turn)
+            (search || audio != null) && c.provider.search == WebSearch.GEMINI -> gemini(c, model, system, past, question, image, audio, tokens, search, turn)
+            search && c.provider.search == WebSearch.RESPONSES -> responses(c, model, system, past, question, image, audio, tokens, true, turn)
+            else -> openAi(c, model, system, past, question, image, audio, tokens, turn, if (search) chatSearch(c.provider) else null)
         }
     }
 
     private suspend fun write(c: AssistantConfig, model: String, system: String, text: String, tokens: Int): String = when (c.provider) {
         Provider.CLAUDE -> claude(c, model.ifBlank { DEFAULT_CLAUDE_MODEL }, system, emptyList(), text, null, tokens, false, null)
-        Provider.CHATGPT -> responses(c, model.ifBlank { c.answerModel }, system, emptyList(), text, null, tokens, false, null)
-        else -> openAi(c, model, system, emptyList(), text, null, tokens, null)
+        Provider.CHATGPT -> responses(c, model.ifBlank { c.answerModel }, system, emptyList(), text, null, null, tokens, false, null)
+        else -> openAi(c, model, system, emptyList(), text, null, null, tokens, null)
     }.trim().also { check(it.isNotEmpty()) { "the model gave an empty answer" } }
 
     /** What the model knows of the wearer, and how to keep it. */
@@ -377,12 +403,15 @@ class Brain(
 
     private suspend fun openAi(
         c: AssistantConfig, model: String, system: String, past: List<Exchange>, question: String, image: ByteArray?,
-        tokens: Int, turn: Turn?, searchTool: JSONObject? = null,
+        audio: ByteArray?, tokens: Int, turn: Turn?, searchTool: JSONObject? = null,
     ): String {
         val messages = JSONArray().put(JSONObject().put("role", "system").put("content", system)).putPast(past)
-        val user: Any = if (image == null) question else JSONArray()
+        val user: Any = if (image == null && audio == null) question else JSONArray()
             .put(JSONObject().put("type", "text").put("text", question))
-            .put(openAiImage(image))
+            .apply {
+                if (audio != null) put(openAiAudio(audio))
+                if (image != null) put(openAiImage(image))
+            }
         messages.put(JSONObject().put("role", "user").put("content", user))
         val headers = if (c.apiKey.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer ${c.apiKey}")
         val url = c.api.trimEnd('/') + "/chat/completions"
@@ -413,7 +442,8 @@ class Brain(
             }
             val choice = answer.getJSONArray("choices").getJSONObject(0)
             val message = choice.getJSONObject("message")
-            val text = message.optString("content").takeUnless { message.isNull("content") }.orEmpty().replace(THINKING, "")
+            val text = (message.optString("content").takeUnless { message.isNull("content") }.orEmpty()
+                .ifBlank { message.optJSONObject("audio")?.optString("transcript").orEmpty() }).replace(THINKING, "")
             check(text.isNotBlank() || choice.optString("finish_reason") != "length") { "the model used its whole answer thinking" }
             if (text.isNotBlank()) said = text
             val calls = message.optJSONArray("tool_calls")
@@ -443,14 +473,14 @@ class Brain(
      */
     private suspend fun responses(
         c: AssistantConfig, model: String, system: String, past: List<Exchange>, question: String, image: ByteArray?,
-        tokens: Int, search: Boolean, turn: Turn?,
+        audio: ByteArray?, tokens: Int, search: Boolean, turn: Turn?,
     ): String {
         val input = JSONArray()
         for (e in past) {
-            input.put(JSONObject().put("role", "user").put("content", e.question))
+            input.put(JSONObject().put("role", "user").put("content", e.asked()))
             input.put(JSONObject().put("role", "assistant").put("content", e.told()))
         }
-        input.put(JSONObject().put("role", "user").put("content", inputContent(question, image)))
+        input.put(JSONObject().put("role", "user").put("content", inputContent(question, image, audio)))
         val functions = turn?.let { specs(c, it) }.orEmpty().map { (name, help, schema) ->
             JSONObject().put("type", "function").put("name", name).put("description", help)
                 .put("parameters", JSONObject(schema.toString()).apply { remove("\$schema") })
@@ -526,39 +556,43 @@ class Brain(
         .put("reasoning", JSONObject().put("effort", "low"))
         .put("include", JSONArray().put("reasoning.encrypted_content"))
 
-    /** Responses API content: the text, and the glasses' photo when there is one. */
-    private fun inputContent(text: String, image: ByteArray?): JSONArray = JSONArray()
+    /** Responses API content: the text, and the glasses' audio and photo when there are any. */
+    private fun inputContent(text: String, image: ByteArray?, audio: ByteArray? = null): JSONArray = JSONArray()
         .put(JSONObject().put("type", "input_text").put("text", text))
         .apply {
+            if (audio != null) put(openAiAudio(audio))
             if (image != null) put(JSONObject().put("type", "input_image").put("image_url", "data:image/jpeg;base64," + Base64.encodeToString(image, Base64.NO_WRAP)))
         }
 
     /**
-     * Gemini's own API, the one with Google Search. Search and Visor's tools go together from Gemini 3, the model's
-     * turns going back exactly as they came, with their thought signatures; an older model refuses the pair, and
-     * answer() then asks without search.
+     * Gemini's own API, the one with Google Search and native audio. Search and Visor's tools go together from Gemini 3,
+     * the model's turns going back exactly as they came, with their thought signatures; an older model refuses the pair,
+     * and answer() then asks without search.
      */
     private suspend fun gemini(
         c: AssistantConfig, model: String, system: String, past: List<Exchange>, question: String, image: ByteArray?,
-        tokens: Int, turn: Turn?,
+        audio: ByteArray?, tokens: Int, search: Boolean, turn: Turn?,
     ): String {
         val id = model.removePrefix("models/")
         val url = "$GEMINI_API/models/$id:generateContent"
         val headers = mapOf("x-goog-api-key" to c.apiKey)
         val contents = JSONArray()
         for (e in past) {
-            contents.put(geminiTurn("user", JSONArray().put(JSONObject().put("text", e.question))))
+            contents.put(geminiTurn("user", JSONArray().put(JSONObject().put("text", e.asked()))))
             contents.put(geminiTurn("model", JSONArray().put(JSONObject().put("text", e.told()))))
         }
         val first = JSONArray()
         if (image != null) first.put(geminiImage(image))
+        if (audio != null) first.put(geminiAudio(audio))
         contents.put(geminiTurn("user", first.put(JSONObject().put("text", question))))
         val functions = JSONArray()
         turn?.let { specs(c, it) }.orEmpty().forEach { (name, help, schema) ->
             functions.put(JSONObject().put("name", name).put("description", help).apply { geminiSchema(schema)?.let { put("parameters", it) } })
         }
-        val tools = JSONArray().put(JSONObject().put("googleSearch", JSONObject()))
-        if (functions.length() > 0) tools.put(JSONObject().put("functionDeclarations", functions))
+        val tools = JSONArray().apply {
+            if (search) put(JSONObject().put("googleSearch", JSONObject()))
+            if (functions.length() > 0) put(JSONObject().put("functionDeclarations", functions))
+        }
         // Gemini 2 thinks as it sees fit; from Gemini 3 a level keeps a spoken answer quick.
         val thinkingKey = "gemini $id"
         val levels = !id.startsWith("gemini-2") && thinkingKey !in refused
@@ -567,11 +601,13 @@ class Brain(
             val body = JSONObject()
                 .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
                 .put("contents", contents)
-                .put("tools", tools)
                 .put("generationConfig", JSONObject().put("maxOutputTokens", tokens + THINKING_TOKENS))
+            if (tools.length() > 0) body.put("tools", tools)
             if (functions.length() > 0) {
-                body.put("toolConfig", JSONObject().put("includeServerSideToolInvocations", true)
-                    .put("functionCallingConfig", JSONObject().put("mode", "VALIDATED")))
+                body.put("toolConfig", JSONObject().apply {
+                    if (search) put("includeServerSideToolInvocations", true)
+                    put("functionCallingConfig", JSONObject().put("mode", "VALIDATED"))
+                })
             }
             val answer = if (!levels || thinkingKey in refused) post(url, headers, body) else try {
                 post(url, headers, JSONObject(body.toString()).apply {
@@ -612,6 +648,9 @@ class Brain(
 
     private fun geminiImage(image: ByteArray) = JSONObject().put("inlineData",
         JSONObject().put("mimeType", "image/jpeg").put("data", Base64.encodeToString(image, Base64.NO_WRAP)))
+
+    private fun geminiAudio(wav: ByteArray) = JSONObject().put("inlineData",
+        JSONObject().put("mimeType", "audio/wav").put("data", Base64.encodeToString(wav, Base64.NO_WRAP)))
 
     /** What a server refused (a model's reasoning setting, the plan's namespaces), left out until Visor restarts. */
     private val refused = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -697,7 +736,14 @@ class Brain(
         JSONObject().put("url", "data:image/jpeg;base64," + Base64.encodeToString(image, Base64.NO_WRAP)),
     )
 
+    private fun openAiAudio(wav: ByteArray): JSONObject = JSONObject().put("type", "input_audio").put("input_audio",
+        JSONObject().put("data", Base64.encodeToString(wav, Base64.NO_WRAP)).put("format", "wav"),
+    )
+
     private companion object {
+        const val AUDIO_PROMPT = " The wearer's spoken question is attached as audio from the glasses' microphone. It may " +
+            "begin with the wake phrase \"Hey Meta\"; ignore the wake phrase and answer what follows, in the language the wearer spoke."
+        const val AUDIO_TURN_TEXT = "Answer what the wearer says in this audio."
         val CAMERA_WORD_SPACES = Regex("[\\s\\p{Z}]+")
         val CAMERA_WAKE_PREFIX = Regex("^hey meta(?:, ?| )")
 

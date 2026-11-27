@@ -129,8 +129,16 @@ class VisorToggles @Inject constructor(
             assistant.config.on { it.enabled }, { on -> assistant.update { it.copy(enabled = on) } },
         ),
         VisorToggle(
+            "audio_input", R.string.ai_audio_input, null, Topic.META_AI,
+            assistant.config.on { it.audioInput }, { on -> assistant.update { it.copy(audioInput = on) } },
+        ),
+        VisorToggle(
             "vision", R.string.ai_vision, null, Topic.META_AI,
             assistant.config.on { it.vision }, { on -> assistant.update { it.copy(vision = on) } },
+        ),
+        VisorToggle(
+            "always_photo", R.string.ai_always_photo, null, Topic.META_AI,
+            assistant.config.on { it.alwaysPhoto }, { on -> assistant.update { it.copy(alwaysPhoto = on) } },
         ),
         VisorToggle(
             "voice_photos", R.string.ai_voice_photos, null, Topic.META_AI,
@@ -156,10 +164,14 @@ class VisorToggles @Inject constructor(
         VisorToggle("phone_steady", R.string.phone_steady, null, Topic.CAMERA, steady.on, steady::set),
     )
 
-    /** The switches the chosen provider has no use for: a server Visor does not know has no web search it can ask for. */
+    /** The switches the chosen provider or camera setting has no use for. */
     val unoffered: StateFlow<Set<String>> = assistant.config.map(::unofferedOf).stateIn(scope, SharingStarted.Eagerly, unofferedOf(assistant.config.value))
 
-    private fun unofferedOf(c: AssistantConfig): Set<String> = if (c.provider.search != null) emptySet() else setOf("web")
+    private fun unofferedOf(c: AssistantConfig): Set<String> = buildSet {
+        if (c.provider.search == null) add("web")
+        if (!c.provider.audio) add("audio_input")
+        if (!c.vision) add("always_photo")
+    }
 
     fun byId(id: String): VisorToggle? = all.firstOrNull { it.id == id }
 }

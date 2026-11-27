@@ -344,6 +344,7 @@
     <string name="meta_ai_on_glasses">Выполнено на очках</string>
     <string name="meta_ai_too_late">Слишком поздно для очков</string>
     <string name="meta_ai_phone">Телефон</string>
+    <string name="meta_ai_voice_question">Голосовой вопрос</string>
     <string name="meta_ai_call">Звонок: %1$s</string>
     <string name="meta_ai_text">SMS: %1$s</string>
     <string name="meta_ai_reply">Ответ: %1$s</string>
@@ -657,6 +658,7 @@
     <string name="ai_chatgpt_expired">Вы вышли: войдите снова</string>
     <string name="ai_chatgpt_failed">Не удалось войти: %1$s</string>
     <string name="ai_web_unavailable">Эта модель не умеет искать в интернете</string>
+    <string name="ai_audio_unavailable">Эта модель не принимает аудио</string>
     <string name="ai_key_checking">Спрашиваем у провайдера…</string>
     <plurals name="ai_key_works">
         <item quantity="one">Работает · %d модель</item>
@@ -689,7 +691,9 @@
     <string name="ai_tts_trying">Произносит…</string>
     <string name="ai_glasses_voice">Собственный голос очков</string>
     <string name="ai_glasses_voice_sub">Если выключено, ответы озвучивает голос телефона.</string>
+    <string name="ai_audio_input">Отправлять аудио голоса</string>
     <string name="ai_vision">Использовать камеру</string>
+    <string name="ai_always_photo">Фото с каждым вопросом</string>
     <string name="ai_voice_photos">Фото голосом</string>
     <string name="ai_web">Искать в интернете</string>
     <string name="ai_quiet_actions">Без ответа, если действия удались</string>
