@@ -40,6 +40,12 @@ data class AssistantConfig(
     val answerWaitSeconds: Int = 45,
     // The ChatGPT account signed in for the ChatGPT provider, by its email; empty when signed out.
     val chatGpt: String = "",
+    // Live AI: null answers with speech recognition and the model above; a live provider connects over audio.
+    val liveProvider: Provider? = null,
+    val liveApiKey: String = "",
+    val liveBaseUrl: String = "https://api.openai.com/v1",
+    val liveModel: String = "",
+    val liveVoice: String = "",
 ) {
     /** A model can answer: a service needs its key or sign-in, an OpenAI-compatible server may need neither. */
     val hasModel: Boolean get() = when (provider) {
@@ -53,6 +59,28 @@ data class AssistantConfig(
 
     /** The model asked: the one chosen, or the provider's own default. */
     val answerModel: String get() = model.ifBlank { provider.defaultModel }
+
+    /** Live AI uses the same provider as the main model, so its key and server address are shared. */
+    val liveSameProvider: Boolean get() = liveProvider != null && liveProvider == provider
+
+    val effectiveLiveKey: String get() = if (liveSameProvider) apiKey else liveApiKey
+
+    val effectiveLiveApi: String get() = when (val p = liveProvider) {
+        null -> ""
+        Provider.OPENAI_COMPATIBLE -> if (liveSameProvider) baseUrl else liveBaseUrl
+        else -> p.api
+    }
+
+    val effectiveLiveModel: String get() = liveModel.ifBlank { liveProvider?.liveDefaultModel.orEmpty() }
+
+    val effectiveLiveVoice: String get() = liveVoice.ifBlank { liveProvider?.liveDefaultVoice.orEmpty() }
+
+    /** A live audio-to-audio model is chosen and ready to open a session. */
+    val hasLiveModel: Boolean get() = when (liveProvider) {
+        null -> false
+        Provider.OPENAI_COMPATIBLE -> effectiveLiveApi.isNotBlank() && effectiveLiveModel.isNotBlank()
+        else -> effectiveLiveKey.isNotBlank() && effectiveLiveModel.isNotBlank()
+    }
 }
 
 /** Who says the answer out loud. */
@@ -124,12 +152,47 @@ class AssistantConfigStore(context: Context) {
         slots.put(c.provider.name, JSONObject().put("key", c.apiKey).put("model", c.model).put("lines", c.linesModel))
         prefs.edit().putString(SLOTS, slots.toString()).apply()
         val slot = slots.optJSONObject(to.name)
+        // If Live AI was sharing the old provider's key, keep that key on Live AI now that the main provider moved.
+        val carriedLiveKey = if (c.liveProvider == c.provider && c.liveApiKey.isBlank()) c.apiKey else c.liveApiKey
+        val carriedLiveUrl = if (c.liveProvider == Provider.OPENAI_COMPATIBLE && c.provider == Provider.OPENAI_COMPATIBLE) c.baseUrl else c.liveBaseUrl
         update {
             it.copy(
                 provider = to,
                 apiKey = slot?.optString("key").orEmpty(),
                 model = slot?.optString("model").orEmpty(),
                 linesModel = slot?.optString("lines").orEmpty(),
+                liveApiKey = carriedLiveKey,
+                liveBaseUrl = carriedLiveUrl,
+            )
+        }
+    }
+
+    /** Another Live AI provider (or null for the main text model), keeping each provider's key, model and voice. */
+    fun switchLiveProvider(to: Provider?) {
+        val c = _config.value
+        if (c.liveProvider == to) return
+        val liveSlots = runCatching { JSONObject(prefs.getString(LIVE_SLOTS, null) ?: "{}") }.getOrDefault(JSONObject())
+        c.liveProvider?.let { prev ->
+            liveSlots.put(
+                prev.name,
+                JSONObject().put("key", c.effectiveLiveKey).put("model", c.liveModel).put("voice", c.liveVoice).put("url", c.effectiveLiveApi),
+            )
+            prefs.edit().putString(LIVE_SLOTS, liveSlots.toString()).apply()
+        }
+        if (to == null) {
+            update { it.copy(liveProvider = null) }
+            return
+        }
+        val slot = liveSlots.optJSONObject(to.name)
+        val mainSlots = runCatching { JSONObject(prefs.getString(SLOTS, null) ?: "{}") }.getOrDefault(JSONObject())
+        val key = slot?.optString("key").orEmpty().ifBlank { mainSlots.optJSONObject(to.name)?.optString("key").orEmpty() }
+        update {
+            it.copy(
+                liveProvider = to,
+                liveApiKey = key,
+                liveModel = slot?.optString("model").orEmpty(),
+                liveVoice = slot?.optString("voice").orEmpty(),
+                liveBaseUrl = if (to == Provider.OPENAI_COMPATIBLE) slot?.optString("url")?.takeIf { u -> u.isNotBlank() } ?: it.liveBaseUrl else it.liveBaseUrl,
             )
         }
     }
@@ -164,6 +227,11 @@ class AssistantConfigStore(context: Context) {
             .putInt("memory_minutes", next.memoryMinutes)
             .putInt("answer_wait_s", next.answerWaitSeconds)
             .putString("chatgpt", next.chatGpt)
+            .putString("live_provider", next.liveProvider?.name.orEmpty())
+            .putString("live_api_key", next.liveApiKey)
+            .putString("live_base_url", next.liveBaseUrl)
+            .putString("live_model", next.liveModel)
+            .putString("live_voice", next.liveVoice)
             .apply()
         _config.value = next
     }
@@ -172,6 +240,12 @@ class AssistantConfigStore(context: Context) {
         val d = AssistantConfig()
         val baseUrl = prefs.getString("base_url", d.baseUrl).orEmpty()
         val provider = runCatching { Provider.valueOf(prefs.getString("provider", null).orEmpty()) }.getOrDefault(d.provider)
+        val liveBaseUrl = prefs.getString("live_base_url", d.liveBaseUrl).orEmpty()
+        val rawLiveProvider = prefs.getString("live_provider", "").orEmpty()
+            .takeIf { it.isNotEmpty() }
+            ?.let { runCatching { Provider.valueOf(it) }.getOrNull() }
+            ?.takeIf { it.live }
+        val liveProvider = if (rawLiveProvider == Provider.OPENAI_COMPATIBLE) Provider.at(liveBaseUrl)?.takeIf { it.live } ?: rawLiveProvider else rawLiveProvider
         return AssistantConfig(
             enabled = prefs.getBoolean("enabled", d.enabled),
             // A known service's address typed in by hand is that service's preset.
@@ -196,6 +270,11 @@ class AssistantConfigStore(context: Context) {
             memoryMinutes = prefs.getInt("memory_minutes", d.memoryMinutes),
             answerWaitSeconds = prefs.getInt("answer_wait_s", d.answerWaitSeconds),
             chatGpt = prefs.getString("chatgpt", d.chatGpt).orEmpty(),
+            liveProvider = liveProvider,
+            liveApiKey = prefs.getString("live_api_key", d.liveApiKey).orEmpty(),
+            liveBaseUrl = liveBaseUrl,
+            liveModel = prefs.getString("live_model", d.liveModel).orEmpty(),
+            liveVoice = prefs.getString("live_voice", d.liveVoice).orEmpty(),
         )
     }
 
@@ -204,6 +283,7 @@ class AssistantConfigStore(context: Context) {
         const val SESSION_VOICES = "session_voices"
         const val NO_SEARCH = "no_search"
         const val SLOTS = "provider_slots"
+        const val LIVE_SLOTS = "live_provider_slots"
 
         fun searchKey(c: AssistantConfig) = "${c.provider.name} ${c.answerModel}"
     }

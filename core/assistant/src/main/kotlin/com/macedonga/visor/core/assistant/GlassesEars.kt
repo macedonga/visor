@@ -47,8 +47,7 @@ class GlassesEars(
     private var pipe: Array<ParcelFileDescriptor>? = null
     private var writer: Thread? = null
     private val queue = LinkedBlockingQueue<ShortArray>(800)
-    private var opus: MediaCodec? = null
-    private val info = MediaCodec.BufferInfo()
+    private var decoder: MicOpusDecoder? = null
 
     @Volatile
     private var accepting = false
@@ -58,13 +57,9 @@ class GlassesEars(
     private var closed = false
 
     // The glasses' audio clock: the newest packet's time, and where the current utterance began.
-    @Volatile
-    private var clockMs = 0L
+    private val clockMs: Long get() = decoder?.clockMs ?: 0L
     @Volatile
     private var speechFrom = 0L
-
-    // A chunk that did not parse, for the log.
-    private var odd: ByteArray? = null
 
     /** From now on audio is taken; the recogniser starts on the main thread and reads what was queued meanwhile. */
     fun start() {
@@ -75,7 +70,7 @@ class GlassesEars(
         if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             return onProblem("speech recognition needs the microphone permission; allow it under Meta AI")
         }
-        opus = runCatching { opusDecoder() }.getOrElse {
+        decoder = runCatching { MicOpusDecoder(onProblem) }.getOrElse {
             onProblem("no Opus decoder: ${it.message}")
             return
         }
@@ -83,46 +78,10 @@ class GlassesEars(
         main.post { listen() }
     }
 
-    /**
-     * One chunk from the glasses' s0 stream, repeated records of either `[u32 LE len][u32 LE ms][u32 BE opus len]
-     * [u32 BE range][opus]` (a follow-up) or `[u32 BE len][opus]` (the question itself, as the glasses send it in Italian,
-     * with no time: each packet's own length is counted). Audio-only glasses group their packets: `[u32 LE len][u32 LE ms]
-     * [5 bytes]`, then `[u32 LE opus len][opus]` up to len (#80).
-     */
+    /** One chunk from the glasses' s0 microphone stream. */
     fun hear(chunk: ByteArray) {
         if (!accepting) return
-        val b = ByteBuffer.wrap(chunk)
-        // A little-endian length read big-endian is far larger than the chunk, so this tells the two apart.
-        if (b.remaining() >= 5 && b.getInt(0) in 1..b.remaining() - 4) {
-            while (b.remaining() >= 5) {
-                val n = b.int
-                if (n <= 0 || n > b.remaining()) {
-                    if (odd == null) odd = chunk
-                    return
-                }
-                val packet = ByteArray(n).also { b.get(it) }
-                decode(packet, clockMs)
-                clockMs += opusDurationUs(packet) / 1000
-            }
-            return
-        }
-        while (b.remaining() >= 16) {
-            val at = b.position()
-            b.order(ByteOrder.LITTLE_ENDIAN)
-            val len = b.int
-            val ms = b.int.toLong() and 0xFFFFFFFFL
-            b.order(ByteOrder.BIG_ENDIAN)
-            val opusLen = b.int
-            b.int
-            if (opusLen in 1..b.remaining()) {
-                val packet = ByteArray(opusLen).also { b.get(it) }
-                clockMs = ms
-                decode(packet, ms)
-            } else if (!grouped(b, at, len, ms)) {
-                if (odd == null) odd = chunk
-                return
-            }
-        }
+        decoder?.decode(chunk) { samples, _ -> queue.offer(samples) }
     }
 
     /** 16 kHz 16-bit mono PCM, from the glasses' microphone as a headset rather than from s0. */
@@ -130,32 +89,11 @@ class GlassesEars(
         if (accepting) queue.offer(samples)
     }
 
-    /** A grouped record starting at [at]; false unless its packets fill it exactly. */
-    private fun grouped(b: ByteBuffer, at: Int, len: Int, ms: Long): Boolean {
-        val end = at + 4 + len
-        if (len < GROUP_HEAD + 5 || end > b.limit()) return false
-        b.order(ByteOrder.LITTLE_ENDIAN).position(at + 4 + GROUP_HEAD)
-        val packets = ArrayList<ByteArray>()
-        while (b.position() + 4 <= end) {
-            val n = b.int
-            if (n <= 0 || n > end - b.position()) return false
-            packets += ByteArray(n).also { b.get(it) }
-        }
-        if (b.position() != end) return false
-        var t = ms
-        for (packet in packets) {
-            clockMs = t
-            decode(packet, t)
-            t += opusDurationUs(packet) / 1000
-        }
-        return true
-    }
-
     /** The stream ended: what is queued still goes to the recogniser, then it hears the end and gives its result. */
     fun finish() {
         if (!accepting) return
         accepting = false
-        odd?.let { c -> onProblem("a microphone chunk of ${c.size} bytes did not parse: " + c.toHexString(0, minOf(64, c.size))) }
+        decoder?.reportOdd()
         queue.offer(END)
     }
 
@@ -163,12 +101,6 @@ class GlassesEars(
     fun stop() {
         accepting = false
         main.post { close() }
-    }
-
-    @Synchronized
-    private fun decode(packet: ByteArray, ms: Long) {
-        val codec = opus ?: return
-        runCatching { codec.decode16k(packet, ms * 1000, info).forEach { queue.offer(it) } }
     }
 
     private fun listen() {
@@ -233,10 +165,8 @@ class GlassesEars(
             r.destroy()
         }
         recognizer = null
-        synchronized(this) {
-            opus?.let { runCatching { it.stop() }; it.release() }
-            opus = null
-        }
+        decoder?.close()
+        decoder = null
         onDone()
     }
 
@@ -335,13 +265,112 @@ class GlassesEars(
 
     private companion object {
         const val RATE = 16_000
-        // A grouped record's head after its length: the time and five bytes not decoded yet.
-        const val GROUP_HEAD = 9
         const val RESTARTS = 5
         const val RESTART_WINDOW_MS = 5_000L
         val END = ShortArray(0)
         /** Languages the on-device recogniser turned out not to hold, for the life of the process. */
         val notOnDevice: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    }
+}
+
+/**
+ * Unpacks and decodes the glasses' s0 Opus microphone stream to 16 kHz 16-bit mono PCM. Chunks carry repeated records
+ * of either `[u32 LE len][u32 LE ms][u32 BE opus len][u32 BE range][opus]` (a follow-up or Live AI) or `[u32 BE len][opus]`
+ * (a plain question, with no time: each packet's own length is counted). Audio-only glasses group their packets:
+ * `[u32 LE len][u32 LE ms][5 bytes]`, then `[u32 LE opus len][opus]` up to len (#80).
+ */
+internal class MicOpusDecoder(private val onProblem: (String) -> Unit) {
+    private val codec = opusDecoder()
+    private val info = MediaCodec.BufferInfo()
+    private var odd: ByteArray? = null
+    @Volatile
+    private var closed = false
+
+    @Volatile
+    var clockMs = 0L
+        private set
+
+    @Synchronized
+    fun decode(chunk: ByteArray, onSamples: (samples: ShortArray, clockMs: Long) -> Unit) {
+        if (closed) return
+        val b = ByteBuffer.wrap(chunk)
+        // A little-endian length read big-endian is far larger than the chunk, so this tells the two apart.
+        if (b.remaining() >= 5 && b.getInt(0) in 1..b.remaining() - 4) {
+            while (b.remaining() >= 5) {
+                val n = b.int
+                if (n <= 0 || n > b.remaining()) {
+                    if (odd == null) odd = chunk
+                    return
+                }
+                val packet = ByteArray(n).also { b.get(it) }
+                decodePacket(packet, clockMs, onSamples)
+                clockMs += opusDurationUs(packet) / 1000
+            }
+            return
+        }
+        while (b.remaining() >= 16) {
+            val at = b.position()
+            b.order(ByteOrder.LITTLE_ENDIAN)
+            val len = b.int
+            val ms = b.int.toLong() and 0xFFFFFFFFL
+            b.order(ByteOrder.BIG_ENDIAN)
+            val opusLen = b.int
+            b.int
+            if (opusLen in 1..b.remaining()) {
+                val packet = ByteArray(opusLen).also { b.get(it) }
+                clockMs = ms
+                decodePacket(packet, ms, onSamples)
+            } else if (!grouped(b, at, len, ms, onSamples)) {
+                if (odd == null) odd = chunk
+                return
+            }
+        }
+    }
+
+    private fun grouped(
+        b: ByteBuffer, at: Int, len: Int, ms: Long, onSamples: (samples: ShortArray, clockMs: Long) -> Unit,
+    ): Boolean {
+        val end = at + 4 + len
+        if (len < GROUP_HEAD + 5 || end > b.limit()) return false
+        b.order(ByteOrder.LITTLE_ENDIAN).position(at + 4 + GROUP_HEAD)
+        val packets = ArrayList<ByteArray>()
+        while (b.position() + 4 <= end) {
+            val n = b.int
+            if (n <= 0 || n > end - b.position()) return false
+            packets += ByteArray(n).also { b.get(it) }
+        }
+        if (b.position() != end) return false
+        var t = ms
+        for (packet in packets) {
+            clockMs = t
+            decodePacket(packet, t, onSamples)
+            t += opusDurationUs(packet) / 1000
+        }
+        return true
+    }
+
+    private fun decodePacket(packet: ByteArray, ms: Long, onSamples: (samples: ShortArray, clockMs: Long) -> Unit) {
+        runCatching { codec.decode16k(packet, ms * 1000, info).forEach { onSamples(it, ms) } }
+    }
+
+    fun reportOdd() {
+        odd?.let { c ->
+            odd = null
+            onProblem("a microphone chunk of ${c.size} bytes did not parse: " + c.toHexString(0, minOf(64, c.size)))
+        }
+    }
+
+    @Synchronized
+    fun close() {
+        if (closed) return
+        closed = true
+        runCatching { codec.stop() }
+        codec.release()
+    }
+
+    private companion object {
+        // A grouped record's head after its length: the time and five bytes not decoded yet.
+        const val GROUP_HEAD = 9
     }
 }
 

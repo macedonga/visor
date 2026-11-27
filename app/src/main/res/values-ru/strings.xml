@@ -672,6 +672,8 @@
     <string name="ai_other_model">Ввести ID модели…</string>
     <string name="ai_lines_model">Модель для сводок дня</string>
     <string name="ai_same_model">Та же модель</string>
+    <string name="ai_live_same_sub">Распознавание речи и модель выше</string>
+    <string name="ai_live_audio_sub">Голосовая модель реального времени</string>
     <string name="ai_section_answers">Как отвечает</string>
     <string name="ai_voice">Голос</string>
     <string name="ai_voice_glasses">Голос очков</string>

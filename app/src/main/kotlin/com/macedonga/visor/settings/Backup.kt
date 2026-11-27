@@ -122,8 +122,10 @@ class Backups @Inject constructor(
                     .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.tts == TtsPath.GLASSES).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
                     .put("instructions", a.instructions).put("memoryMinutes", a.memoryMinutes)
                     .put("answerWaitSeconds", a.answerWaitSeconds)
-                    // The speech service's key stays out, like the model's.
-                    .put("tts", a.tts.name).put("ttsBaseUrl", a.ttsBaseUrl).put("ttsModel", a.ttsModel).put("ttsVoice", a.ttsVoice),
+                    // The speech service's and Live AI's keys stay out, like the model's.
+                    .put("tts", a.tts.name).put("ttsBaseUrl", a.ttsBaseUrl).put("ttsModel", a.ttsModel).put("ttsVoice", a.ttsVoice)
+                    .put("liveProvider", a.liveProvider?.name.orEmpty()).put("liveBaseUrl", a.liveBaseUrl)
+                    .put("liveModel", a.liveModel).put("liveVoice", a.liveVoice),
             )
             .put("notifications", JSONObject().put("enabled", notify.enabled.value).put("onlyLocked", notify.onlyLocked.value).put("muted", JSONArray(apps.muted.value.sorted())))
             .put("import", import.mode.value.name)
@@ -200,6 +202,14 @@ class Backups @Inject constructor(
                     instructions = o.optString("instructions", it.instructions),
                     memoryMinutes = o.optInt("memoryMinutes", it.memoryMinutes),
                     answerWaitSeconds = o.optInt("answerWaitSeconds", it.answerWaitSeconds),
+                    liveProvider = if (o.has("liveProvider")) {
+                        o.optString("liveProvider").takeIf { s -> s.isNotEmpty() }
+                            ?.let { s -> runCatching { Provider.valueOf(s) }.getOrNull() }
+                            ?.takeIf { p -> p.live }
+                    } else it.liveProvider,
+                    liveBaseUrl = o.optString("liveBaseUrl", it.liveBaseUrl),
+                    liveModel = o.optString("liveModel", it.liveModel),
+                    liveVoice = o.optString("liveVoice", it.liveVoice),
                 )
             }
         }

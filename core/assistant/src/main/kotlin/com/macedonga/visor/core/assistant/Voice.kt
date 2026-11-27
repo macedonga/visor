@@ -260,3 +260,167 @@ suspend fun playAloud(pcm: SpeechPcm) {
         track.release()
     }
 }
+
+internal fun pcmToBytes(samples: ShortArray): ByteArray {
+    val out = ByteArray(samples.size * 2)
+    ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(samples)
+    return out
+}
+
+internal fun bytesToPcm(bytes: ByteArray, length: Int = bytes.size): ShortArray {
+    val out = ShortArray(length / 2)
+    ByteBuffer.wrap(bytes, 0, out.size * 2).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(out)
+    return out
+}
+
+/**
+ * Stateful linear resampler for streaming 16-bit mono PCM across chunk boundaries without clicks or drift.
+ */
+internal class PcmResampler(private val from: Int, private val to: Int) {
+    private val fromL = from.toLong()
+    private val toL = to.toLong()
+    private var hasPrev = false
+    private var prev: Short = 0
+    // Phase in 1/to units of an input sample; always >= -toL after a non-empty chunk.
+    private var num = 0L
+
+    fun push(input: ShortArray): ShortArray {
+        if (input.isEmpty() || from == to) return input
+        if (!hasPrev) {
+            prev = input[0]
+            hasPrev = true
+            num = 0L
+        }
+        val limit = (input.size - 1).toLong() * toL
+        val count = if (num < limit) ((limit - num + fromL - 1) / fromL).toInt() else 0
+        val out = ShortArray(count)
+        var n = 0
+        while (num < limit) {
+            val j = Math.floorDiv(num, toL).toInt()
+            val rem = Math.floorMod(num, toL)
+            val a = if (j < 0) prev.toLong() else input[j].toLong()
+            val b = input[j + 1].toLong()
+            out[n++] = (a + (b - a) * rem / toL).toInt().toShort()
+            num += fromL
+        }
+        prev = input[input.size - 1]
+        num -= input.size.toLong() * toL
+        return out
+    }
+
+    fun flush(): ShortArray {
+        if (!hasPrev || from == to) return ShortArray(0)
+        val out = if (num <= 0L) shortArrayOf(prev) else ShortArray(0)
+        hasPrev = false
+        num = 0L
+        return out
+    }
+}
+
+/**
+ * Incremental Opus encoder for streaming model audio onto s0 as 20 ms 48 kHz mono packets while chunks still arrive.
+ */
+internal class StreamingOpusEncoder(fromRate: Int) {
+    private val resampler = PcmResampler(fromRate, RATE)
+    private val info = MediaCodec.BufferInfo()
+    private val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS).apply {
+        val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_OPUS, RATE, 1).apply {
+            setInteger(MediaFormat.KEY_BIT_RATE, 32_000)
+        }
+        configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+        start()
+    }
+    private var pending = ByteArray(0)
+    private var fedBytes = 0L
+    private var closed = false
+
+    @Synchronized
+    fun encode(samples: ShortArray): List<OpusPacket> {
+        if (closed || samples.isEmpty()) return emptyList()
+        val resampled = resampler.push(samples)
+        if (resampled.isEmpty()) return emptyList()
+        pending += pcmToBytes(resampled)
+        val packets = ArrayList<OpusPacket>()
+        var offset = 0
+        while (pending.size - offset >= FRAME_BYTES) {
+            feed(pending, offset, FRAME_BYTES, eos = false, packets)
+            offset += FRAME_BYTES
+        }
+        if (offset > 0) pending = pending.copyOfRange(offset, pending.size)
+        drain(packets, 0)
+        return packets
+    }
+
+    @Synchronized
+    fun finish(): List<OpusPacket> {
+        if (closed) return emptyList()
+        val tail = resampler.flush()
+        if (tail.isNotEmpty()) pending += pcmToBytes(tail)
+        val packets = ArrayList<OpusPacket>()
+        var offset = 0
+        while (offset < pending.size) {
+            val take = minOf(FRAME_BYTES, pending.size - offset) and 1.inv()
+            if (take <= 0) break
+            feed(pending, offset, take, eos = false, packets)
+            offset += take
+        }
+        pending = ByteArray(0)
+        feed(ByteArray(0), 0, 0, eos = true, packets)
+        var spins = 0
+        while (spins++ < 40) {
+            if (drain(packets, 5_000)) break
+        }
+        return packets
+    }
+
+    private fun feed(bytes: ByteArray, offset: Int, length: Int, eos: Boolean, packets: MutableList<OpusPacket>) {
+        var tries = 0
+        while (tries++ < 40) {
+            val index = codec.dequeueInputBuffer(5_000)
+            if (index >= 0) {
+                val buffer = checkNotNull(codec.getInputBuffer(index))
+                buffer.clear()
+                val take = minOf(buffer.capacity(), length) and 1.inv()
+                if (take > 0) buffer.put(bytes, offset, take)
+                val pts = fedBytes / 2 * 1_000_000L / RATE
+                fedBytes += take
+                codec.queueInputBuffer(index, 0, take, pts, if (eos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0)
+                drain(packets, 0)
+                return
+            }
+            drain(packets, 5_000)
+        }
+    }
+
+    /** True once the encoder signals end of stream. */
+    private fun drain(packets: MutableList<OpusPacket>, timeoutUs: Long): Boolean {
+        while (true) {
+            val out = codec.dequeueOutputBuffer(info, timeoutUs)
+            if (out < 0) return false
+            val buffer = codec.getOutputBuffer(out)
+            if (buffer != null && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0 && info.size > 0) {
+                val data = ByteArray(info.size)
+                buffer.position(info.offset)
+                buffer.get(data)
+                packets += OpusPacket(data, opusDurationUs(data))
+            }
+            val done = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+            codec.releaseOutputBuffer(out, false)
+            if (done) return true
+        }
+    }
+
+    @Synchronized
+    fun close() {
+        if (closed) return
+        closed = true
+        runCatching { codec.stop() }
+        codec.release()
+    }
+
+    private companion object {
+        const val RATE = 48_000
+        // 20 ms of 16-bit mono PCM at 48 kHz.
+        const val FRAME_BYTES = 960 * 2
+    }
+}

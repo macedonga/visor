@@ -625,6 +625,8 @@
     <string name="ai_other_model">输入模型 ID…</string>
     <string name="ai_lines_model">每日摘要所用模型</string>
     <string name="ai_same_model">与上面相同</string>
+    <string name="ai_live_same_sub">使用语音识别与上方模型</string>
+    <string name="ai_live_audio_sub">实时语音模型</string>
     <string name="ai_section_answers">回答方式</string>
     <string name="ai_voice">语音</string>
     <string name="ai_voice_glasses">眼镜自带</string>
