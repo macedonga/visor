@@ -257,6 +257,17 @@
     <string name="live_problem_vpn">Исключите Visor из VPN.</string>
     <string name="live_drops">Видео с очков часто обрывается</string>
     <string name="live_use_glasses_host">Использовать Wi-Fi очков</string>
+    <string name="live_problem_local_network">Visor нужен доступ к локальной сети.</string>
+    <string name="live_problem_no_network">Укажите сеть Wi-Fi в настройках вида с камеры.</string>
+    <string name="live_settings_wifi">Wi-Fi</string>
+    <string name="live_wifi_connection">Подключение</string>
+    <string name="live_wifi_direct">Wi-Fi Direct</string>
+    <string name="live_wifi_glasses">Wi-Fi очков</string>
+    <string name="live_wifi_network">Сеть Wi-Fi</string>
+    <string name="live_wifi_network_auto">Как на телефоне</string>
+    <string name="live_wifi_password_saved">Сохранён на очках</string>
+    <string name="live_wifi_password_hint">Пароль (оставьте пустым, если сохранён на очках)</string>
+    <string name="live_wifi_network_note">Очки подключаются к этому Wi-Fi и передают видео на телефон по локальной сети. Используйте сеть 2,4 ГГц: 5 ГГц с шириной 80 МГц подвешивает Wi-Fi очков.</string>
     <string name="language_voice">Голос</string>
     <string name="voice_ai_named">%1$s (ИИ-голос)</string>
     <string name="voice_pitch_higher">Тон выше</string>

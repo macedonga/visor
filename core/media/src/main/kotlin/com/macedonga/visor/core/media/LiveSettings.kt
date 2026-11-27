@@ -8,6 +8,16 @@ import kotlinx.coroutines.flow.asStateFlow
 /** What can be drawn over the picture, each on or off. */
 enum class LiveOverlay { READOUTS, HEAT, GRID }
 
+/** How the phone and glasses meet on Wi-Fi for the Live view. */
+enum class LiveWifi {
+    /** A Wi-Fi Direct group the phone owns; the glasses join it. */
+    DIRECT,
+    /** A network the glasses host; the phone joins it. */
+    GLASSES,
+    /** A regular Wi-Fi network the glasses join, streaming to the phone over the local network. */
+    NETWORK,
+}
+
 /** How the Live view is set up. Quality is automatic unless [manual]; the rest are the Advanced settings. */
 data class LiveSettings(
     val manual: Boolean = false,
@@ -21,9 +31,17 @@ data class LiveSettings(
     val rtmpUrl: String = "",
     val rtmpKey: String = "",
     val rtmpCodec: BroadcastCodec = BroadcastCodec.H264,
-    /** The glasses host the network and the phone joins it, instead of the glasses joining the phone's group. */
-    val glassesHost: Boolean = false,
-)
+    /** How the phone and glasses connect over Wi-Fi. */
+    val wifi: LiveWifi = LiveWifi.DIRECT,
+    /** The Wi-Fi network the glasses join when [wifi] is [LiveWifi.NETWORK]; empty uses the phone's network if saved on the glasses. */
+    val wifiSsid: String = "",
+    /** Its WPA2 passphrase; empty when [wifiOpen] is true or the glasses already keep it. */
+    val wifiPassword: String = "",
+    /** True when [wifiSsid] is an open network with no passphrase. */
+    val wifiOpen: Boolean = false,
+) {
+    val glassesHost: Boolean get() = wifi == LiveWifi.GLASSES
+}
 
 class LiveSettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("live", Context.MODE_PRIVATE)
@@ -44,7 +62,11 @@ class LiveSettingsStore(context: Context) {
             .putString("rtmp_url", next.rtmpUrl)
             .putString("rtmp_key", next.rtmpKey)
             .putString("rtmp_codec", next.rtmpCodec.name)
+            .putString("wifi", next.wifi.name)
             .putBoolean("glasses_host", next.glassesHost)
+            .putString("wifi_ssid", next.wifiSsid)
+            .putString("wifi_password", next.wifiPassword)
+            .putBoolean("wifi_open", next.wifiOpen)
             .apply()
         _settings.value = next
     }
@@ -62,7 +84,12 @@ class LiveSettingsStore(context: Context) {
             rtmpUrl = prefs.getString("rtmp_url", d.rtmpUrl).orEmpty(),
             rtmpKey = prefs.getString("rtmp_key", d.rtmpKey).orEmpty(),
             rtmpCodec = runCatching { BroadcastCodec.valueOf(prefs.getString("rtmp_codec", null).orEmpty()) }.getOrDefault(d.rtmpCodec),
-            glassesHost = prefs.getBoolean("glasses_host", d.glassesHost),
+            // Before "wifi", a boolean chose the glasses' own network or the phone's Wi-Fi Direct group.
+            wifi = prefs.getString("wifi", null)?.let { runCatching { LiveWifi.valueOf(it) }.getOrNull() }
+                ?: if (prefs.getBoolean("glasses_host", false)) LiveWifi.GLASSES else LiveWifi.DIRECT,
+            wifiSsid = prefs.getString("wifi_ssid", d.wifiSsid).orEmpty(),
+            wifiPassword = prefs.getString("wifi_password", d.wifiPassword).orEmpty(),
+            wifiOpen = prefs.getBoolean("wifi_open", d.wifiOpen),
         )
     }
 }

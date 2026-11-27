@@ -263,11 +263,17 @@ class DebugReceiver : BroadcastReceiver() {
             }
             // --ei n
             "LOG" -> resultData = log.lines.value.takeLast(intent.getIntExtra("n", 40)).joinToString("\n")
-            // --ez wifi --ei band 2|5|0 --es quality --ei bitrate --ei fps; --ez auto true for the Live view's own start.
+            // --ez wifi --ei band 2|5|0 --es quality --ei bitrate --ei fps --es ssid --es password --ez open --ez glasses_host; --ez auto true for the Live view's own start.
             "LIVE_START" -> if (intent.getBooleanExtra("auto", false)) {
                 live.start(liveSettings.settings.value)
                 resultData = "starting, automatic quality"
             } else {
+                val ssid = intent.getStringExtra("ssid").orEmpty()
+                val mode = when {
+                    ssid.isNotEmpty() || intent.getBooleanExtra("lan", false) -> com.macedonga.visor.core.media.LiveWifi.NETWORK
+                    intent.getBooleanExtra("glasses_host", false) -> com.macedonga.visor.core.media.LiveWifi.GLASSES
+                    else -> com.macedonga.visor.core.media.LiveWifi.DIRECT
+                }
                 live.start(
                     app = GlassesApp.LIVE_STREAMING,
                     session = SessionApp.FAIR_DEMO,
@@ -276,6 +282,10 @@ class DebugReceiver : BroadcastReceiver() {
                     frameRate = intent.getIntExtra("fps", 24),
                     overWifi = intent.getBooleanExtra("wifi", true),
                     groupBand = intent.getIntExtra("band", 2),
+                    wifi = mode,
+                    wifiSsid = ssid,
+                    wifiPassword = intent.getStringExtra("password").orEmpty(),
+                    wifiOpen = intent.getBooleanExtra("open", false),
                 )
                 resultData = "starting"
             }

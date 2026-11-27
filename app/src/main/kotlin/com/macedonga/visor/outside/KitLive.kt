@@ -8,7 +8,9 @@ import androidx.core.content.FileProvider
 import com.macedonga.visor.core.media.GlassesApp
 import com.macedonga.visor.core.media.LivePhase
 import com.macedonga.visor.core.media.LiveProblem
+import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.media.LiveStream
+import com.macedonga.visor.core.media.LiveWifi
 import com.macedonga.visor.core.media.SessionApp
 import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.media.videoSize
@@ -45,6 +47,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class KitLive @Inject constructor(
     @ApplicationContext private val context: Context,
     private val live: LiveStream,
+    private val settings: LiveSettingsStore,
     private val log: EventLog,
 ) {
     private var watchers = 0
@@ -89,7 +92,15 @@ class KitLive @Inject constructor(
     private fun join(caller: Caller, quality: StreamQuality, frameRate: Int) {
         val runs = live.running.value || live.status.value.phase !in setOf(LivePhase.IDLE, LivePhase.FAILED)
         if (!runs) {
-            live.start(GlassesApp.LIVE_STREAMING, SessionApp.FAIR_DEMO, quality, BITRATES.getValue(quality), frameRate, overWifi = true)
+            val s = settings.settings.value
+            val lan = s.wifi == LiveWifi.NETWORK
+            live.start(
+                GlassesApp.LIVE_STREAMING, SessionApp.FAIR_DEMO, quality, BITRATES.getValue(quality), frameRate, overWifi = true,
+                wifi = if (lan) LiveWifi.NETWORK else LiveWifi.DIRECT,
+                wifiSsid = if (lan) s.wifiSsid else "",
+                wifiPassword = if (lan) s.wifiPassword else "",
+                wifiOpen = if (lan) s.wifiOpen else false,
+            )
             startedHere = true
         } else {
             // The watcher joins mid-stream: a keyframe now beats waiting for the next one.

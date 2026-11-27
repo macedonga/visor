@@ -1,5 +1,6 @@
 package com.macedonga.visor.media
 
+import android.content.Context
 import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -8,6 +9,9 @@ import androidx.lifecycle.viewModelScope
 import com.macedonga.visor.R
 import com.macedonga.visor.core.assistant.Assistant
 import com.macedonga.visor.core.connection.GlassesConnection
+import com.macedonga.visor.core.connection.GlassesWifi
+import com.macedonga.visor.core.connection.isDisplayProduct
+import com.macedonga.visor.core.connection.productId
 import com.macedonga.visor.core.media.BroadcastCodec
 import com.macedonga.visor.core.media.BroadcastTarget
 import com.macedonga.visor.core.media.LADDER
@@ -15,10 +19,14 @@ import com.macedonga.visor.core.media.LiveOverlay
 import com.macedonga.visor.core.media.LiveSettings
 import com.macedonga.visor.core.media.LiveSettingsStore
 import com.macedonga.visor.core.media.LiveStream
+import com.macedonga.visor.core.media.LiveWifi
 import com.macedonga.visor.core.media.RecordStart
+import com.macedonga.visor.core.media.phoneWifiSsid
+import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.gallery.duration
 import com.macedonga.visor.ui.VisorIcons
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -41,10 +49,12 @@ data class Notice(
 
 @HiltViewModel
 class LiveViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     val live: LiveStream,
     val connection: GlassesConnection,
     val settings: LiveSettingsStore,
     val assistant: Assistant,
+    private val wifi: GlassesWifi,
 ) : ViewModel() {
     val outputs = live.outputs
 
@@ -57,6 +67,22 @@ class LiveViewModel @Inject constructor(
 
     fun stop() = live.stop()
 
+    /** The network the phone is on, when Android gives its name. */
+    fun phoneNetwork(): String? = phoneWifiSsid(context)
+
+    /** Saved Wi-Fi networks on Display glasses when connected, else empty. */
+    suspend fun savedNetworks(): List<String> {
+        val state = connection.state.value
+        if (state.link != LinkState.READY || !isDisplayProduct(productId(state.info?.build))) return emptyList()
+        return try {
+            wifi.saved().orEmpty()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     /** Whether the Live has a reason to go on with nobody watching: something is being made of it. */
     fun keepsGoing(): Boolean = outputs.recording.value != null || outputs.broadcast.running
 
@@ -66,7 +92,7 @@ class LiveViewModel @Inject constructor(
 
     /** From now on the glasses host the Wi-Fi, and the stream running now moves there. */
     fun useGlassesHost() {
-        settings.update { it.copy(glassesHost = true) }
+        settings.update { it.copy(wifi = LiveWifi.GLASSES) }
         live.useGlassesHost()
         _notice.value = null
     }
