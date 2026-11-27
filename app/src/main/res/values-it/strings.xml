@@ -243,6 +243,17 @@
     <string name="live_problem_vpn">Escludi Visor dalla VPN.</string>
     <string name="live_drops">Lo streaming si interrompe spesso</string>
     <string name="live_use_glasses_host">Usa il Wi-Fi degli occhiali</string>
+    <string name="live_problem_local_network">Visor ha bisogno dell\'accesso alla rete locale.</string>
+    <string name="live_problem_no_network">Imposta una rete Wi-Fi nelle impostazioni della visione live.</string>
+    <string name="live_settings_wifi">Wi-Fi</string>
+    <string name="live_wifi_connection">Connessione</string>
+    <string name="live_wifi_direct">Wi-Fi Direct</string>
+    <string name="live_wifi_glasses">Wi-Fi degli occhiali</string>
+    <string name="live_wifi_network">Rete Wi-Fi</string>
+    <string name="live_wifi_network_auto">Come il telefono</string>
+    <string name="live_wifi_password_saved">Salvata sugli occhiali</string>
+    <string name="live_wifi_password_hint">Password (lascia vuoto se salvata sugli occhiali)</string>
+    <string name="live_wifi_network_note">Gli occhiali si collegano a questo Wi-Fi e trasmettono al telefono sulla rete locale. Usa una rete a 2,4 GHz: il 5 GHz a 80 MHz blocca il Wi-Fi degli occhiali.</string>
     <string name="language_voice">Voce</string>
     <string name="voice_ai_named">%1$s (voce IA)</string>
     <string name="voice_pitch_higher">Tono più alto</string>

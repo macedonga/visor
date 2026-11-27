@@ -310,7 +310,8 @@ object ConnectionModule {
         hosts: SessionHostFactory,
         meter: LinkMeter,
         outputs: LiveOutputs,
-    ): LiveStream = LiveStream(context, connection, receiver, store, hosts, meter, outputs)
+        networks: GlassesWifi,
+    ): LiveStream = LiveStream(context, connection, receiver, store, hosts, meter, outputs, networks)
 
     @Provides
     @Singleton

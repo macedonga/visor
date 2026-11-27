@@ -69,6 +69,10 @@ import com.macedonga.visor.R
 import com.macedonga.visor.core.connection.HINGE_CLOSED
 import com.macedonga.visor.core.media.LivePhase
 import com.macedonga.visor.core.media.LiveProblem
+import com.macedonga.visor.core.media.LiveWifi
+import com.macedonga.visor.core.media.lanReachable
+import com.macedonga.visor.core.media.localNetworkAllowed
+import com.macedonga.visor.core.media.localNetworkPermissions
 import com.macedonga.visor.core.media.wifiDirectAllowed
 import com.macedonga.visor.core.media.wifiDirectPermissions
 import com.macedonga.visor.core.media.wifiIsOn
@@ -93,6 +97,7 @@ fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onO
     val activity = LocalActivity.current as? ComponentActivity
     val haptics = rememberHaptics()
     val stage = LocalStage.current
+    val settings by model.settings.settings.collectAsStateWithLifecycle()
     val status by model.live.status.collectAsStateWithLifecycle()
     val running by model.live.running.collectAsStateWithLifecycle()
     val decoded by model.live.decodedSize.collectAsStateWithLifecycle()
@@ -100,11 +105,14 @@ fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onO
     val broadcast by model.outputs.broadcast.state.collectAsStateWithLifecycle()
     val pip = rememberInPip(activity)
 
-    var allowed by remember { mutableStateOf(wifiDirectAllowed(context)) }
+    fun neededPermissions(wifi: LiveWifi) = if (wifi == LiveWifi.DIRECT) wifiDirectPermissions else localNetworkPermissions
+    fun checkAllowed(wifi: LiveWifi) = if (wifi == LiveWifi.DIRECT) wifiDirectAllowed(context) else localNetworkAllowed(context)
+
+    var allowed by remember { mutableStateOf(checkAllowed(model.settings.settings.value.wifi)) }
     // Refused for good, Allow opens Visor's page in the phone's settings.
     var refused by remember { mutableStateOf(false) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { answers ->
-        allowed = wifiDirectAllowed(context)
+        allowed = checkAllowed(model.settings.settings.value.wifi)
         refused = answers.any { (name, granted) -> !granted && activity?.shouldShowRequestPermissionRationale(name) == false }
         if (allowed) model.start()
     }
@@ -113,19 +121,26 @@ fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onO
     // Opening the screen starts the Live, and so does coming back to it after the screen was off and it stopped.
     var asked by remember { mutableStateOf(false) }
     LifecycleEventEffect(Lifecycle.Event.ON_START) {
+        val wifi = model.settings.settings.value.wifi
+        allowed = checkAllowed(wifi)
         if (model.live.status.value.phase != LivePhase.IDLE || model.live.running.value) return@LifecycleEventEffect
-        allowed = wifiDirectAllowed(context)
         if (allowed) {
             model.start()
         } else if (!asked) {
             asked = true
-            ask.launch(wifiDirectPermissions)
+            ask.launch(neededPermissions(wifi))
         }
     }
-    // Back from the Wi-Fi panel with Wi-Fi on, the Live starts again.
+    // Back from the Wi-Fi panel with Wi-Fi on, or from settings after picking a network, the Live starts again.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         val s = model.live.status.value
-        if (s.phase == LivePhase.FAILED && s.problem == LiveProblem.WIFI_OFF && wifiIsOn(context)) model.start()
+        val cur = model.settings.settings.value
+        when {
+            s.phase == LivePhase.FAILED && s.problem == LiveProblem.WIFI_OFF &&
+                (if (cur.wifi == LiveWifi.NETWORK) lanReachable(context) else wifiIsOn(context)) -> model.start()
+            s.phase == LivePhase.FAILED && s.problem == LiveProblem.NO_NETWORK &&
+                (cur.wifi != LiveWifi.NETWORK || (cur.wifiSsid.isNotBlank() && (cur.wifiOpen || cur.wifiPassword.isNotEmpty()))) -> model.start()
+        }
     }
 
     val video = rememberLiveVideo(model.live)
@@ -210,7 +225,6 @@ fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onO
     }
     Immersive(activity, hidden = !closing)
     // The glasses' microphones play only while the Live is on screen.
-    val settings by model.settings.settings.collectAsStateWithLifecycle()
     LifecycleStartEffect(settings.listen) {
         model.outputs.listening = settings.listen
         onStopOrDispose { model.outputs.listening = false }
@@ -269,9 +283,10 @@ fun LiveScreen(onClose: (streamed: Boolean) -> Unit, onSettings: () -> Unit, onO
         if (shown) LiveGlow(glow, window, step)
         if (bloom.value < 1f) {
             Arrival(
-                status, allowed, stageH, bloom.value, closing,
-                onAllow = { if (refused) openAppPage(context) else ask.launch(wifiDirectPermissions) },
+                status, settings.wifi, allowed, stageH, bloom.value, closing,
+                onAllow = { if (refused) openAppPage(context) else ask.launch(neededPermissions(model.settings.settings.value.wifi)) },
                 onWifi = { runCatching { context.startActivity(Intent(Settings.Panel.ACTION_WIFI)) } },
+                onSettings = onSettings,
                 onRetry = model::start,
                 onClose = close,
             )

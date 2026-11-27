@@ -106,6 +106,7 @@ import com.macedonga.visor.core.media.LiveOverlay
 import com.macedonga.visor.core.media.LivePhase
 import com.macedonga.visor.core.media.LiveProblem
 import com.macedonga.visor.core.media.LiveStatus
+import com.macedonga.visor.core.media.LiveWifi
 import com.macedonga.visor.core.media.STOP_BATTERY_LOW
 import com.macedonga.visor.core.media.STOP_TEMPLES_CLOSED
 import com.macedonga.visor.core.media.STOP_THERMAL
@@ -268,12 +269,14 @@ private const val GLOW_DRIFT_SECONDS = 0.7f
 @Composable
 internal fun Arrival(
     status: LiveStatus,
+    wifi: LiveWifi,
     allowed: Boolean,
     stageHeight: Float,
     bloom: Float,
     leaving: Boolean,
     onAllow: () -> Unit,
     onWifi: () -> Unit,
+    onSettings: () -> Unit,
     onRetry: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -300,15 +303,18 @@ internal fun Arrival(
             if (!leaving) {
                 if (failed) {
                     Text(stringResource(R.string.live_failed), style = Visor.type.heading, color = colors.textPrimary, modifier = Modifier.asHeading())
-                    val problem = if (!allowed) LiveProblem.WIFI_DIRECT_DENIED else status.problem
+                    val problem = if (!allowed) {
+                        if (wifi == LiveWifi.DIRECT) LiveProblem.WIFI_DIRECT_DENIED else LiveProblem.LOCAL_NETWORK_DENIED
+                    } else status.problem
                     Text(
                         stringResource(problemWords(problem)),
                         style = Visor.type.label, color = colors.textSecondary, textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
                     )
                     when (problem) {
-                        LiveProblem.WIFI_DIRECT_DENIED -> ActionPill(stringResource(R.string.allow), onAllow)
+                        LiveProblem.WIFI_DIRECT_DENIED, LiveProblem.LOCAL_NETWORK_DENIED -> ActionPill(stringResource(R.string.allow), onAllow)
                         LiveProblem.WIFI_OFF -> ActionPill(stringResource(R.string.live_wifi_on), onWifi)
+                        LiveProblem.NO_NETWORK -> ActionPill(stringResource(R.string.settings_title), onSettings)
                         else -> ActionPill(stringResource(R.string.try_again), onRetry)
                     }
                 } else {
@@ -317,8 +323,12 @@ internal fun Arrival(
             }
         }
         if (!leaving) {
-            Box(Modifier.windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
                 RoundIcon(VisorIcons.Close, stringResource(R.string.live_close), onClose, size = 48.dp)
+                if (failed) RoundIcon(VisorIcons.Settings, stringResource(R.string.settings_title), onSettings, size = 48.dp)
             }
         }
     }
@@ -361,7 +371,9 @@ private fun problemWords(problem: LiveProblem?): Int = when (problem) {
     LiveProblem.IN_CASE -> R.string.live_problem_in_case
     LiveProblem.WIFI_OFF -> R.string.live_problem_wifi_off
     LiveProblem.WIFI_DIRECT_DENIED -> R.string.live_problem_wifi_direct
+    LiveProblem.LOCAL_NETWORK_DENIED -> R.string.live_problem_local_network
     LiveProblem.NO_KEY -> R.string.live_problem_no_key
+    LiveProblem.NO_NETWORK -> R.string.live_problem_no_network
     LiveProblem.JOIN_FAILED -> R.string.live_problem_join
     LiveProblem.SESSION_FAILED -> R.string.live_problem_session
     LiveProblem.NO_VIDEO -> R.string.live_problem_no_video

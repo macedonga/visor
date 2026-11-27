@@ -238,6 +238,17 @@
     <string name="live_problem_vpn">请将 Visor 从 VPN 中排除。</string>
     <string name="live_drops">画面持续掉线</string>
     <string name="live_use_glasses_host">使用眼镜的 Wi-Fi</string>
+    <string name="live_problem_local_network">Visor 需要本地网络权限。</string>
+    <string name="live_problem_no_network">请在实时画面设置中配置 Wi-Fi 网络。</string>
+    <string name="live_settings_wifi">Wi-Fi</string>
+    <string name="live_wifi_connection">连接方式</string>
+    <string name="live_wifi_direct">Wi-Fi 直连</string>
+    <string name="live_wifi_glasses">眼镜 Wi-Fi</string>
+    <string name="live_wifi_network">Wi-Fi 网络</string>
+    <string name="live_wifi_network_auto">与手机相同</string>
+    <string name="live_wifi_password_saved">使用眼镜已保存的密码</string>
+    <string name="live_wifi_password_hint">密码（若眼镜已保存可留空）</string>
+    <string name="live_wifi_network_note">眼镜会加入此 Wi-Fi 并通过局域网向手机推流。建议使用 2.4 GHz 网络：80 MHz 频宽的 5 GHz 网络会导致眼镜 Wi-Fi 卡死。</string>
     <string name="language_voice">语音</string>
     <string name="voice_ai_named">%1$s（AI 音色）</string>
     <string name="voice_pitch_higher">音调偏高</string>

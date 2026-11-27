@@ -25,6 +25,7 @@ import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.SocketFactory
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.delay
@@ -50,6 +51,10 @@ class WifiUnavailable(message: String, val kind: ImportProblem.Kind = ImportProb
 class JoinResult(val status: Int, val address: String?, val port: Int) {
     val ok: Boolean get() = status == 1 && !address.isNullOrEmpty() && port > 0
     val statusName: String get() = JOIN_STATUS.getOrElse(status) { "status $status" }
+    /** True when trying again shortly can help, not on bad input, disabled Wi-Fi, or throttling. */
+    val retryable: Boolean get() = status == 2 || status == 3 || status == 6 || status == 8
+    /** True after a Wi-Fi firmware restart or busy radio, which recovers over ~30 s. */
+    val transient: Boolean get() = status == 2 || status == 8
 }
 
 private val JOIN_STATUS = listOf(
@@ -71,18 +76,25 @@ const val BW_80MHZ = 3
  */
 private suspend fun joinAccessPoint(connection: DataXConnection, ssid: String, passphrase: String, bandwidth: Int = BW_UNSPECIFIED) {
     val raw = UUID.randomUUID().toBytes()
-    val payload = Wire.fieldString(1, ssid) + Wire.fieldString(2, passphrase) + Wire.fieldBytes(3, raw) +
+    val payload = Wire.fieldString(1, ssid) +
+        (if (passphrase.isNotEmpty()) Wire.fieldString(2, passphrase) else ByteArray(0)) +
+        Wire.fieldBytes(3, raw) +
         Wire.fieldVarintNonZero(4, bandwidth.toLong())
     connection.sendOnService(SVC_ATC, MT_JOIN_ACCESS_POINT, payload)
+}
+
+/** Pick a reachable address from repeated NetworkAddress entries: IPv4 first, else non-link-local IPv6, else first. */
+private fun pickAddress(raw: List<ByteArray>): String? {
+    val all = raw.map { Wire.parse(it).bytes(3).decodeToString().substringBefore('/').trim() }.filter { it.isNotEmpty() }
+    return all.firstOrNull { '.' in it && ':' !in it }
+        ?: all.firstOrNull { !it.startsWith("fe80:", ignoreCase = true) }
+        ?: all.firstOrNull()
 }
 
 /** JoinAccessPointResult: 1 status, 2 addresses (NetworkAddress, the address as text in 3), 3 port. */
 private fun parseJoinResult(payload: ByteArray): JoinResult {
     val f = Wire.parse(payload)
-    val address = f.repeatedBytes(2)
-        .map { Wire.parse(it).bytes(3).decodeToString() }
-        .firstOrNull { it.isNotEmpty() }
-    return JoinResult(f.varint(1).toInt(), address, f.varint(3).toInt())
+    return JoinResult(f.varint(1).toInt(), pickAddress(f.repeatedBytes(2)), f.varint(3).toInt())
 }
 
 /** JoinAccessPoint and its answer; null if none came in [timeoutMs]. [before] runs first, on the same turn. */
@@ -132,10 +144,7 @@ suspend fun createSoftAp(connection: DataXConnection, ssid: String, password: St
 /** Their reply; the credentials they used, else [ssid] and [password], and port 20203 when they leave it out. */
 fun parseSoftApInfo(payload: ByteArray, ssid: String, password: String): SoftApInfo {
     val f = Wire.parse(payload)
-    val address = f.repeatedBytes(2)
-        .map { Wire.parse(it).bytes(3).decodeToString() }
-        .firstOrNull { it.isNotEmpty() }
-        ?.substringBefore('/')
+    val address = pickAddress(f.repeatedBytes(2))
     val credentials = f.repeatedBytes(3).firstOrNull()?.let(Wire::parse)
     val theirSsid = credentials?.bytes(1)?.decodeToString().orEmpty()
     val theirPassword = credentials?.bytes(2)?.decodeToString().orEmpty()
@@ -200,7 +209,55 @@ val wifiDirectPermissions: Array<String> = when {
 fun wifiDirectAllowed(context: Context): Boolean =
     wifiDirectPermissions.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
+/** What reaching the glasses over a local network or SoftAP needs at runtime: local network access from Android 17. */
+val localNetworkPermissions: Array<String> = when {
+    Build.VERSION.SDK_INT >= 37 -> arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK)
+    else -> emptyArray()
+}
+
+fun localNetworkAllowed(context: Context): Boolean =
+    localNetworkPermissions.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
 fun wifiIsOn(context: Context): Boolean = context.getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+
+/** The SSID of the Wi-Fi network the phone is on, when Android gives it. */
+@Suppress("DEPRECATION")
+fun phoneWifiSsid(context: Context): String? =
+    context.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+        ?.removeSurrounding("\"")
+        ?.takeIf { it.isNotBlank() && it != "<unknown ssid>" }
+
+/** True when the phone has a path to a LAN or routed network: Wi-Fi on, Ethernet, or a VPN. */
+fun lanReachable(context: Context): Boolean {
+    if (wifiIsOn(context)) return true
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
+    val caps = cm.activeNetwork?.let(cm::getNetworkCapabilities) ?: return false
+    return caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+}
+
+/**
+ * Socket factory for reaching the glasses on a regular Wi-Fi network. Null uses the phone's default route
+ * (Wi-Fi with internet, Ethernet, or VPN); when the phone is on an offline Wi-Fi while cellular is default,
+ * this binds to the Wi-Fi network so local addresses stay reachable.
+ */
+@Suppress("DEPRECATION")
+fun lanSocketFactory(context: Context): SocketFactory? {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+    val active = cm.activeNetwork?.let(cm::getNetworkCapabilities)
+    if (active != null && (
+            active.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                active.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
+                active.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+            )
+    ) {
+        return null
+    }
+    val wifi = cm.allNetworks.firstOrNull { net ->
+        val caps = cm.getNetworkCapabilities(net)
+        caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    } ?: return null
+    return wifi.socketFactory.takeIf { runCatching { it.createSocket().close() }.isSuccess }
+}
 
 /** The frequency of the network the phone itself is on, or 0. */
 @Suppress("DEPRECATION")

@@ -244,6 +244,17 @@
     <string name="live_problem_vpn">Exclude Visor from the VPN.</string>
     <string name="live_drops">The stream keeps dropping</string>
     <string name="live_use_glasses_host">Use the glasses\' Wi-Fi</string>
+    <string name="live_problem_local_network">Visor needs local network access.</string>
+    <string name="live_problem_no_network">Set a Wi-Fi network in Live view settings.</string>
+    <string name="live_settings_wifi">Wi-Fi</string>
+    <string name="live_wifi_connection">Connection</string>
+    <string name="live_wifi_direct">Wi-Fi Direct</string>
+    <string name="live_wifi_glasses">Glasses\' Wi-Fi</string>
+    <string name="live_wifi_network">Wi-Fi network</string>
+    <string name="live_wifi_network_auto">Same as phone</string>
+    <string name="live_wifi_password_saved">Saved on glasses</string>
+    <string name="live_wifi_password_hint">Password (leave blank if saved on glasses)</string>
+    <string name="live_wifi_network_note">The glasses join this Wi-Fi and stream to the phone over the local network. Use a 2.4 GHz network: 5 GHz at 80 MHz stalls the glasses\' Wi-Fi.</string>
     <string name="language_voice">Voice</string>
     <string name="voice_ai_named">%1$s (AI voice)</string>
     <string name="voice_pitch_higher">Higher pitch</string>

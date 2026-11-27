@@ -30,6 +30,7 @@ import com.macedonga.visor.core.design.Visor
 import com.macedonga.visor.core.media.BroadcastCodec
 import com.macedonga.visor.core.media.LiveOverlay
 import com.macedonga.visor.core.media.LiveSettingsStore
+import com.macedonga.visor.core.media.LiveWifi
 import com.macedonga.visor.core.media.StreamQuality
 import com.macedonga.visor.core.session.LinkState
 import com.macedonga.visor.core.settings.GlassesSettings
@@ -133,7 +134,9 @@ class Backups @Inject constructor(
                 JSONObject()
                     .put("manual", l.manual).put("quality", l.quality.name).put("bitrate", l.bitrate).put("frameRate", l.frameRate)
                     .put("overlays", JSONArray(l.overlays.map { it.name })).put("replaySeconds", l.replaySeconds)
-                    .put("listen", l.listen).put("rtmpUrl", l.rtmpUrl).put("rtmpCodec", l.rtmpCodec.name).put("glassesHost", l.glassesHost),
+                    .put("listen", l.listen).put("rtmpUrl", l.rtmpUrl).put("rtmpCodec", l.rtmpCodec.name)
+                    // The Wi-Fi password stays out, like the stream key.
+                    .put("wifi", l.wifi.name).put("glassesHost", l.glassesHost).put("wifiSsid", l.wifiSsid).put("wifiOpen", l.wifiOpen),
             )
             .put("pins", JSONArray(pins.ids.value))
             // The servers without their keys and sign-ins, which stay on this phone.
@@ -242,7 +245,11 @@ class Backups @Inject constructor(
                     listen = o.optBoolean("listen", it.listen),
                     rtmpUrl = o.optString("rtmpUrl", it.rtmpUrl),
                     rtmpCodec = runCatching { BroadcastCodec.valueOf(o.getString("rtmpCodec")) }.getOrDefault(it.rtmpCodec),
-                    glassesHost = o.optBoolean("glassesHost", it.glassesHost),
+                    // Older backups carry only the glassesHost boolean.
+                    wifi = LiveWifi.entries.firstOrNull { w -> w.name == o.optString("wifi") }
+                        ?: if (!o.has("glassesHost")) it.wifi else if (o.optBoolean("glassesHost")) LiveWifi.GLASSES else LiveWifi.DIRECT,
+                    wifiSsid = o.optString("wifiSsid", it.wifiSsid),
+                    wifiOpen = o.optBoolean("wifiOpen", it.wifiOpen),
                 )
             }
         }
