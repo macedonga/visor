@@ -114,7 +114,9 @@ fun Viewer(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val start = remember { items.indexOfFirst { it.key == startKey }.coerceAtLeast(0) }
-    val pager = rememberPagerState(start) { items.size }
+    // Pager callbacks can outlive the composition that supplied them.
+    val pagerItems by rememberUpdatedState(items)
+    val pager = rememberPagerState(start) { pagerItems.size }
     val current = items.getOrNull(pager.currentPage)
     val shownNow by rememberUpdatedState(current)
     val originNow by rememberUpdatedState(origin)
@@ -181,7 +183,8 @@ fun Viewer(
         }
         HorizontalPager(
             state = pager,
-            key = { items[it].key },
+            // A pending layout can still ask for a removed page. Real item keys are strings.
+            key = { pagerItems.getOrNull(it)?.key ?: it },
             verticalAlignment = Alignment.Top,
             beyondViewportPageCount = 1,
             userScrollEnabled = opening.value > 0.99f && !closing && dismiss.value == 0f && reveal.value == 0f && !zoomed,
@@ -221,7 +224,7 @@ fun Viewer(
                     )
                 },
         ) { index ->
-            val item = items[index]
+            val item = pagerItems.getOrNull(index) ?: return@HorizontalPager
             val isCurrent = index == pager.currentPage
             Page(
                 item = item,
