@@ -311,7 +311,7 @@ fun MetaAiScreen(onSettings: () -> Unit, onMemories: () -> Unit, onSession: (Str
         Actions(
             what, turns, asking,
             onDismiss = { pressed = null },
-            onCopy = { turn -> copy(context, turn.answer, turn.question) },
+            onCopy = { turn -> copy(context, turn.answer, turn.question.ifBlank { context.getString(R.string.meta_ai_voice_question) }) },
             onShare = { share(context, it) },
             onAgain = { model.askAgain(it.interactionId) },
             onContinue = { c ->
@@ -352,7 +352,7 @@ private fun Actions(
                 is Pressed.OnTurn -> {
                     val turn = pressed.turn
                     Text(
-                        turn.question,
+                        turn.questionWords(),
                         style = Visor.type.body,
                         color = colors.textSecondary,
                         maxLines = 2,
@@ -403,7 +403,9 @@ private fun ActionRow(icon: ImageVector, text: String, onClick: () -> Unit) {
 
 /** The question and its answer as text, with the photo when there is one. */
 private fun share(context: Context, turn: TurnRecord) {
-    val intent = Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_TEXT, turn.question + "\n\n" + turn.answer)
+    val asked = turn.question.ifBlank { if (turn.audio.isNotEmpty()) context.getString(R.string.meta_ai_voice_question) else "" }
+    val body = if (asked.isNotEmpty()) "$asked\n\n${turn.answer}" else turn.answer
+    val intent = Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_TEXT, body)
     val photo = turn.image.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.exists() }
     if (photo != null) {
         intent.type = "image/jpeg"

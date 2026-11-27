@@ -38,6 +38,8 @@ class GlassesEars(
     private val onPartial: ((String) -> Unit)? = null,
     /** The recogniser's confidence in the utterance [onUtterance] gets next, from 0 to 1, when it says. */
     private val onConfidence: (Float) -> Unit = {},
+    /** Keep the decoded 16 kHz audio for [wav], even if the phone cannot run speech recognition. */
+    private val keepAudio: Boolean = false,
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -50,8 +52,15 @@ class GlassesEars(
     private var opus: MediaCodec? = null
     private val info = MediaCodec.BufferInfo()
 
+    private class Piece(val atMs: Long, val samples: ShortArray)
+    private val recorded = ArrayDeque<Piece>()
+    private var recordedSamples = 0
+    private var takenUntilMs = Long.MIN_VALUE
+
     @Volatile
     private var accepting = false
+    @Volatile
+    private var recognizing = false
     private var usingOnDevice = false
     private var reconnected = false
     @Volatile
@@ -69,18 +78,24 @@ class GlassesEars(
     /** From now on audio is taken; the recogniser starts on the main thread and reads what was queued meanwhile. */
     fun start() {
         if (accepting || closed) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return onProblem("hearing the glasses needs Android 13 or newer")
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) return onProblem("this phone has no speech recognition")
-        // The recogniser wants the microphone permission even when the audio is handed to it.
-        if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            return onProblem("speech recognition needs the microphone permission; allow it under Meta AI")
+        val canRecognize = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            SpeechRecognizer.isRecognitionAvailable(context) &&
+            context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!canRecognize && !keepAudio) {
+            when {
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU -> onProblem("hearing the glasses needs Android 13 or newer")
+                !SpeechRecognizer.isRecognitionAvailable(context) -> onProblem("this phone has no speech recognition")
+                else -> onProblem("speech recognition needs the microphone permission; allow it under Meta AI")
+            }
+            return
         }
         opus = runCatching { opusDecoder() }.getOrElse {
             onProblem("no Opus decoder: ${it.message}")
             return
         }
         accepting = true
-        main.post { listen() }
+        recognizing = canRecognize
+        if (canRecognize) main.post { listen() }
     }
 
     /**
@@ -127,7 +142,9 @@ class GlassesEars(
 
     /** 16 kHz 16-bit mono PCM, from the glasses' microphone as a headset rather than from s0. */
     fun hearPcm(samples: ShortArray) {
-        if (accepting) queue.offer(samples)
+        if (!accepting) return
+        if (keepAudio) keep(samples, clockMs).also { clockMs += samples.size * 1000L / RATE }
+        if (recognizing) queue.offer(samples)
     }
 
     /** A grouped record starting at [at]; false unless its packets fill it exactly. */
@@ -155,8 +172,9 @@ class GlassesEars(
     fun finish() {
         if (!accepting) return
         accepting = false
+        drain()
         odd?.let { c -> onProblem("a microphone chunk of ${c.size} bytes did not parse: " + c.toHexString(0, minOf(64, c.size))) }
-        queue.offer(END)
+        if (recognizing) queue.offer(END) else main.post { close() }
     }
 
     /** Everything stops now, results or not. */
@@ -165,10 +183,94 @@ class GlassesEars(
         main.post { close() }
     }
 
+    /**
+     * The recorded audio as 16 kHz 16-bit mono WAV: from [fromMs] to [toMs] when an utterance's span is given, else
+     * everything heard since the last take. Null when shorter than [minMs] or silent.
+     */
+    fun wav(fromMs: Long? = null, toMs: Long? = null, minMs: Long = MIN_AUDIO_MS): ByteArray? {
+        val samples = synchronized(recorded) {
+            if (recorded.isEmpty()) return null
+            val last = recorded.last()
+            val end = toMs ?: (last.atMs + last.samples.size * 1000L / RATE)
+            val start = when {
+                fromMs != null && fromMs < end -> maxOf(takenUntilMs, fromMs - PRE_ROLL_MS)
+                fromMs != null -> maxOf(takenUntilMs, end - MAX_UTTERANCE_MS)
+                else -> takenUntilMs
+            }
+            val pieces = recorded.filter { it.atMs + it.samples.size * 1000L / RATE > start && it.atMs <= end }
+            val total = pieces.sumOf { it.samples.size }
+            if (total < minMs * RATE / 1000) return null
+            val all = ShortArray(total).also { out ->
+                var at = 0
+                for (p in pieces) {
+                    p.samples.copyInto(out, at)
+                    at += p.samples.size
+                }
+            }
+            val firstLoud = all.indexOfFirst { kotlin.math.abs(it.toInt()) >= SILENCE_FLOOR }
+            if (firstLoud < 0) return null
+            val trimFrom = if (fromMs == null) (firstLoud - (PRE_ROLL_MS * RATE / 1000).toInt()).coerceAtLeast(0) else 0
+            val trimmed = if (trimFrom > 0) all.copyOfRange(trimFrom, all.size) else all
+            if (trimmed.size < minMs * RATE / 1000) return null
+            takenUntilMs = maxOf(takenUntilMs, end)
+            trimmed
+        }
+        return wav16k(samples)
+    }
+
+    private fun keep(samples: ShortArray, ms: Long) {
+        if (samples.isEmpty()) return
+        synchronized(recorded) {
+            recorded.addLast(Piece(ms, samples))
+            recordedSamples += samples.size
+            while (recordedSamples > MAX_RECORDED_SAMPLES && recorded.size > 1) {
+                recordedSamples -= recorded.removeFirst().samples.size
+            }
+        }
+    }
+
     @Synchronized
     private fun decode(packet: ByteArray, ms: Long) {
         val codec = opus ?: return
-        runCatching { codec.decode16k(packet, ms * 1000, info).forEach { queue.offer(it) } }
+        var t = ms
+        runCatching {
+            codec.decode16k(packet, ms * 1000, info).forEach { pcm ->
+                if (keepAudio) {
+                    keep(pcm, t)
+                    t += pcm.size * 1000L / RATE
+                }
+                if (recognizing) queue.offer(pcm)
+            }
+        }
+    }
+
+    @Synchronized
+    private fun drain() {
+        val codec = opus ?: return
+        runCatching {
+            val i = codec.dequeueInputBuffer(2_000)
+            if (i >= 0) codec.queueInputBuffer(i, 0, 0, clockMs * 1000, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            var t = clockMs
+            while (true) {
+                val o = codec.dequeueOutputBuffer(info, 1_000)
+                if (o < 0) break
+                val out = codec.getOutputBuffer(o)
+                if (out != null && info.size > 0) {
+                    out.position(info.offset)
+                    out.limit(info.offset + info.size)
+                    val full = ShortArray(info.size / 2)
+                    out.order(ByteOrder.nativeOrder()).asShortBuffer().get(full)
+                    val pcm = ShortArray(full.size / 3) { k -> ((full[k * 3] + full[k * 3 + 1] + full[k * 3 + 2]) / 3).toShort() }
+                    if (keepAudio) {
+                        keep(pcm, t)
+                        t += pcm.size * 1000L / RATE
+                    }
+                    if (recognizing) queue.offer(pcm)
+                }
+                codec.releaseOutputBuffer(o, false)
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+            }
+        }
     }
 
     private fun listen() {
@@ -339,10 +441,26 @@ class GlassesEars(
         const val GROUP_HEAD = 9
         const val RESTARTS = 5
         const val RESTART_WINDOW_MS = 5_000L
+        const val MIN_AUDIO_MS = 200L
+        const val PRE_ROLL_MS = 500L
+        const val MAX_UTTERANCE_MS = 15_000L
+        const val MAX_RECORDED_SAMPLES = 30 * RATE
+        const val SILENCE_FLOOR = 150
         val END = ShortArray(0)
         /** Languages the on-device recogniser turned out not to hold, for the life of the process. */
         val notOnDevice: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
+}
+
+/** 16-bit mono PCM at 16 kHz in a RIFF WAVE container, for providers that take WAV audio input. */
+internal fun wav16k(samples: ShortArray): ByteArray {
+    val dataBytes = samples.size * 2
+    val b = ByteBuffer.allocate(44 + dataBytes).order(ByteOrder.LITTLE_ENDIAN)
+    b.put("RIFF".toByteArray()).putInt(36 + dataBytes).put("WAVE".toByteArray())
+    b.put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1).putInt(16_000).putInt(32_000).putShort(2).putShort(16)
+    b.put("data".toByteArray()).putInt(dataBytes)
+    for (s in samples) b.putShort(s)
+    return b.array()
 }
 
 /** A recogniser language tag with a region, which the on-device models need. */

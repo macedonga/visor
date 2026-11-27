@@ -119,7 +119,7 @@ class Backups @Inject constructor(
                 "assistant",
                 JSONObject()
                     .put("enabled", a.enabled).put("provider", a.provider.name).put("model", a.model).put("linesModel", a.linesModel)
-                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("vision", a.vision).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.tts == TtsPath.GLASSES).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
+                    .put("baseUrl", a.baseUrl).put("webSearch", a.webSearch).put("audioInput", a.audioInput).put("vision", a.vision).put("alwaysPhoto", a.alwaysPhoto).put("voicePhotos", a.voicePhotos).put("glassesVoice", a.tts == TtsPath.GLASSES).put("quietAfterActions", a.quietAfterActions).put("speechLanguage", a.speechLanguage)
                     .put("instructions", a.instructions).put("memoryMinutes", a.memoryMinutes)
                     .put("answerWaitSeconds", a.answerWaitSeconds)
                     // The speech service's key stays out, like the model's.
@@ -187,7 +187,9 @@ class Backups @Inject constructor(
                     linesModel = o.optString("linesModel", it.linesModel),
                     baseUrl = o.optString("baseUrl", it.baseUrl),
                     webSearch = o.optBoolean("webSearch", it.webSearch),
+                    audioInput = o.optBoolean("audioInput", it.audioInput),
                     vision = o.optBoolean("vision", it.vision),
+                    alwaysPhoto = o.optBoolean("alwaysPhoto", it.alwaysPhoto),
                     voicePhotos = o.optBoolean("voicePhotos", it.voicePhotos),
                     // Older backups carry only the glassesVoice boolean.
                     tts = TtsPath.entries.firstOrNull { p -> p.name == o.optString("tts") }

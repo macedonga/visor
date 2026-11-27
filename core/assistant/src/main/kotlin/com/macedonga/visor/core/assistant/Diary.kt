@@ -37,6 +37,8 @@ data class TurnRecord(
     val playedMs: Long = -1,
     // The photo the answer was given, as sent to the model.
     val image: String = "",
+    // The recorded question, as WAV sent straight to the model.
+    val audio: String = "",
     // The conversation it belongs to: questions within the memory window of each other, or a Live AI session.
     val conversation: String = "",
     val source: TurnSource = TurnSource.GLASSES,
@@ -56,11 +58,12 @@ data class Memory(val id: String, val text: String, val at: Long)
 
 /**
  * Everything asked of the assistant, kept on the phone by day until it is deleted: one file per day with its turns
- * and its lines, the photos the answers were given, and what the assistant remembers.
+ * and its lines, the photos and audio the answers were given, and what the assistant remembers.
  */
 class Diary(private val dir: File, legacyTurns: File, legacyPhotos: File) {
 
     val photos = File(dir, "photos")
+    val audio = File(dir, "audio")
     private val days = File(dir, "days")
     private val memoryFile = File(dir, "memories.json")
     // One writer at a time: saves share the .tmp file and must land in order.
@@ -82,6 +85,7 @@ class Diary(private val dir: File, legacyTurns: File, legacyPhotos: File) {
     init {
         days.mkdirs()
         photos.mkdirs()
+        audio.mkdirs()
         if (legacyTurns.exists()) adopt(legacyTurns, legacyPhotos)
         load()
     }
@@ -101,7 +105,7 @@ class Diary(private val dir: File, legacyTurns: File, legacyPhotos: File) {
 
     fun turn(id: String): TurnRecord? = _turns.value.firstOrNull { it.interactionId == id }
 
-    /** Takes [ids] out of the diary; their photos stay until [forgetPhotos], so an Undo can bring them back whole. */
+    /** Takes [ids] out of the diary; their files stay until [forgetPhotos], so an Undo can bring them back whole. */
     fun delete(ids: Set<String>): List<TurnRecord> {
         val gone = _turns.value.filter { it.interactionId in ids }
         if (gone.isEmpty()) return gone
@@ -128,10 +132,12 @@ class Diary(private val dir: File, legacyTurns: File, legacyPhotos: File) {
         turns.map { it.date }.toSet().forEach(::touch)
     }
 
-    /** The photos of turns deleted for good. */
+    /** The photos and audio of turns deleted for good. */
     fun forgetPhotos(turns: List<TurnRecord>) {
-        val kept = _turns.value.map { it.image }.toSet()
-        scope.launch { turns.map { it.image }.filter { it.isNotEmpty() && it !in kept }.forEach { File(it).delete() } }
+        val kept = _turns.value.flatMap { listOf(it.image, it.audio) }.toSet()
+        scope.launch {
+            turns.flatMap { listOf(it.image, it.audio) }.filter { it.isNotEmpty() && it !in kept }.forEach { File(it).delete() }
+        }
     }
 
     /**
@@ -280,7 +286,7 @@ val TurnRecord.date: LocalDate get() = Instant.ofEpochMilli(at).atZone(ZoneId.sy
 private fun TurnRecord.toJson(): JSONObject = JSONObject()
     .put("id", interactionId).put("at", at).put("question", question).put("answer", answer)
     .put("problem", problem).put("modelMs", modelMs).put("sentMs", sentMs).put("playedMs", playedMs)
-    .put("image", image).put("conversation", conversation).put("source", source.name).put("session", session)
+    .put("image", image).put("audio", audio).put("conversation", conversation).put("source", source.name).put("session", session)
     .put("remembered", JSONArray(remembered))
     .put("actions", JSONArray(actions.map {
         JSONObject().put("server", it.server).put("what", it.what).put("ok", it.ok).put("kind", it.kind).put("subject", it.subject)
@@ -290,7 +296,8 @@ private fun turnFrom(o: JSONObject): TurnRecord? = runCatching {
     TurnRecord(
         interactionId = o.getString("id"), at = o.getLong("at"), question = o.optString("question"), answer = o.optString("answer"),
         problem = o.optString("problem"), modelMs = o.optLong("modelMs"), sentMs = o.optLong("sentMs"),
-        playedMs = o.optLong("playedMs", -1), image = o.optString("image"), conversation = o.optString("conversation"),
+        playedMs = o.optLong("playedMs", -1), image = o.optString("image"), audio = o.optString("audio"),
+        conversation = o.optString("conversation"),
         source = runCatching { TurnSource.valueOf(o.optString("source")) }.getOrDefault(TurnSource.GLASSES),
         session = o.optString("session"),
         remembered = o.optJSONArray("remembered")?.strings().orEmpty(),

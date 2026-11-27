@@ -106,11 +106,11 @@ enum class Topic(val title: Int, val icon: ImageVector, val sections: List<Pair<
 /** A tile's icon: the setting's own where it has one, else its topic's. */
 fun tileIcon(id: String): ImageVector = when (id) {
     "g:sg_do_not_disturb" -> VisorIcons.Moon
-    "g:wakeword_enabled" -> VisorIcons.Voice
+    "g:wakeword_enabled", "v:audio_input" -> VisorIcons.Voice
     "v:notifications" -> VisorIcons.Bell
     "g:battery_saver_mode_enabled" -> VisorIcons.Battery
     "g:wear_detection_enabled" -> VisorIcons.Glasses
-    "g:camera_use_enabled" -> VisorIcons.Camera
+    "g:camera_use_enabled", "v:always_photo" -> VisorIcons.Camera
     "g:sg_headphone_mode_enabled", "g:spatial_media_enabled" -> VisorIcons.Speaker
     else -> when (val p = pinOf(id)) {
         is GlassesPin -> Topic.of(p.key)?.icon

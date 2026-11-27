@@ -20,8 +20,11 @@ internal interface LiveAiHost {
     /** A NetEvent on the message channel. */
     suspend fun event(id: Int, body: ByteArray)
 
-    /** One turn: the model sees the camera and hears [question]; the answer is spoken as [subInteraction]. */
-    suspend fun answer(subInteraction: String, question: String)
+    /** One turn: the model sees the camera and hears [question] (or [audio]); the answer is spoken as [subInteraction]. */
+    suspend fun answer(subInteraction: String, question: String, audio: ByteArray? = null)
+
+    /** Whether turns send the recorded microphone audio straight to the model. */
+    fun wantAudio(): Boolean
 
     /** Opens and closes the [LiveAiCamera]. */
     fun cameraOn()
@@ -94,7 +97,7 @@ internal class LiveAi(
         }
         keepAirSession("AsrStartListening", id)
         ears?.stop()
-        ears = GlassesEars(context, locale, onUtterance = ::heard, onProblem = { host.note("Live AI: $it") }).also { it.start() }
+        ears = GlassesEars(context, locale, onUtterance = ::heard, onProblem = { host.note("Live AI: $it") }, keepAudio = host.wantAudio()).also { it.start() }
         keepalive?.cancel()
         keepalive = scope.launch { keepAlive() }
     }
@@ -135,6 +138,7 @@ internal class LiveAi(
     private fun heard(text: String, startMs: Long, endMs: Long) {
         if (!active) return
         val sub = UUID.randomUUID().toString()
+        val audio = if (host.wantAudio()) ears?.wav(startMs, endMs) else null
         host.note("Live AI: heard \"$text\" ($startMs to $endMs ms)")
         val id = interaction
         scope.launch {
@@ -144,7 +148,7 @@ internal class LiveAi(
             if (!active || interaction != id) return@launch
             _phase.value = LiveAiPhase.THINKING
             try {
-                host.answer(sub, text)
+                host.answer(sub, text, audio)
             } finally {
                 if (active && interaction == id) _phase.value = LiveAiPhase.LISTENING
             }

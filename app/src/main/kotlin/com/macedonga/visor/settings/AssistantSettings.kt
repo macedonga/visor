@@ -185,6 +185,7 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
         if (plan && config.chatGpt.isNotEmpty() && !noteShown) sheet = "plan_note"
     }
     val noSearch by model.store.noSearch.collectAsStateWithLifecycle()
+    val noAudio by model.store.noAudio.collectAsStateWithLifecycle()
 
     var trial by remember { mutableStateOf("") }
     var trialError by remember { mutableStateOf<Throwable?>(null) }
@@ -352,7 +353,12 @@ fun AssistantSettingsScreen(open: (NavKey) -> Unit, model: AssistantViewModel = 
                             busy = ttsTrying,
                         )
                     } else null,
+                    if (config.provider.audio) row {
+                        val refused = config.audioInput && "${config.provider.name} ${config.answerModel}" in noAudio
+                        VisorToggleRow(model.toggles.byId("audio_input")!!, problem = if (refused) stringResource(R.string.ai_audio_unavailable) else null)
+                    } else null,
                     { VisorToggleRow(model.toggles.byId("vision")!!) },
+                    if (config.vision) row { VisorToggleRow(model.toggles.byId("always_photo")!!) } else null,
                     if (partner || config.voicePhotos) row { VisorToggleRow(model.toggles.byId("voice_photos")!!) } else null,
                     if (config.provider.search != null) row {
                         val refused = config.webSearch && "${config.provider.name} ${config.answerModel}" in noSearch

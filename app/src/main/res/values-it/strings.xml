@@ -330,6 +330,7 @@
     <string name="meta_ai_on_glasses">Fatto dagli occhiali</string>
     <string name="meta_ai_too_late">Troppo tardi per gli occhiali</string>
     <string name="meta_ai_phone">Telefono</string>
+    <string name="meta_ai_voice_question">Domanda a voce</string>
     <string name="meta_ai_call">Chiama %1$s</string>
     <string name="meta_ai_text">Scrivi a %1$s</string>
     <string name="meta_ai_reply">Rispondi a %1$s</string>
@@ -631,6 +632,7 @@
     <string name="ai_chatgpt_expired">Disconnesso: accedi di nuovo</string>
     <string name="ai_chatgpt_failed">Accesso non riuscito: %1$s</string>
     <string name="ai_web_unavailable">Questo modello non può cercare sul web</string>
+    <string name="ai_audio_unavailable">Questo modello non accetta audio</string>
     <string name="ai_key_checking">Chiedo al fornitore…</string>
     <plurals name="ai_key_works">
         <item quantity="one">Funziona · %d modello</item>
@@ -661,7 +663,9 @@
     <string name="ai_tts_trying">La sta dicendo…</string>
     <string name="ai_glasses_voice">Voce degli occhiali</string>
     <string name="ai_glasses_voice_sub">Spento, le risposte sono dette con la voce del telefono.</string>
+    <string name="ai_audio_input">Invia l\'audio della voce</string>
     <string name="ai_vision">Usa la fotocamera</string>
+    <string name="ai_always_photo">Foto a ogni domanda</string>
     <string name="ai_voice_photos">Foto con la voce</string>
     <string name="ai_web">Cerca sul web</string>
     <string name="ai_quiet_actions">Nessuna risposta se le azioni riescono</string>

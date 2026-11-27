@@ -324,6 +324,7 @@
     <string name="meta_ai_on_glasses">已在眼镜上完成</string>
     <string name="meta_ai_too_late">太迟了，眼镜已错过</string>
     <string name="meta_ai_phone">手机</string>
+    <string name="meta_ai_voice_question">语音提问</string>
     <string name="meta_ai_call">呼叫%1$s</string>
     <string name="meta_ai_text">给%1$s发短信</string>
     <string name="meta_ai_reply">回复%1$s</string>
@@ -613,6 +614,7 @@
     <string name="ai_chatgpt_expired">已退出登录：请重新登录</string>
     <string name="ai_chatgpt_failed">登录失败：%1$s</string>
     <string name="ai_web_unavailable">此模型无法搜索网页</string>
+    <string name="ai_audio_unavailable">此模型不支持音频输入</string>
     <string name="ai_key_checking">正在向服务商验证…</string>
     <plurals name="ai_key_works">
         <item quantity="other">可用 · %d 个模型</item>
@@ -642,7 +644,9 @@
     <string name="ai_tts_trying">正在播放…</string>
     <string name="ai_glasses_voice">眼镜自带语音</string>
     <string name="ai_glasses_voice_sub">关闭后，回答会用手机的声音朗读。</string>
+    <string name="ai_audio_input">直接发送语音音频</string>
     <string name="ai_vision">使用相机</string>
+    <string name="ai_always_photo">每次提问都附带照片</string>
     <string name="ai_voice_photos">语音拍照</string>
     <string name="ai_web">搜索网页</string>
     <string name="ai_quiet_actions">操作成功时保持安静</string>
